@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+:root {
+  --color-primary: #7CC042;
+  --color-primary-dark: #5a9a2e;
+  --color-primary-light: #e8f5d9;
+  --color-primary-lighter: #f3fae9;
+  --color-charcoal: #32373C;
+  --color-grey: #828282;
+}
+
+body {
+  background: #f9fafb;
+  color: #111827;
+  font-family: Arial, Helvetica, sans-serif;
+}
