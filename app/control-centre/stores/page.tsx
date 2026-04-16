@@ -240,7 +240,7 @@ export default function StoresPage() {
 
   function handleDownloadTemplate() {
     // Headers-only worksheet
-    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS as readonly string[]]);
+    const ws = XLSX.utils.aoa_to_sheet([[...TEMPLATE_HEADERS]]);
     // Reasonable column widths so headers are readable when opened
     ws['!cols'] = TEMPLATE_HEADERS.map(h => ({ wch: Math.max(14, h.length + 2) }));
     const wb = XLSX.utils.book_new();
