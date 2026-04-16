@@ -43,6 +43,8 @@ export const DEFAULT_PERMISSIONS: Array<Omit<PermissionDef, 'createdAt' | 'isSys
   { key: 'manage_reps', name: 'Manage Reps', description: 'Manage reps masterfile', category: 'Control Centre' },
   { key: 'manage_warehouses', name: 'Manage Warehouses', description: 'Manage warehouses masterfile', category: 'Control Centre' },
   { key: 'import_excel', name: 'Import Excel', description: 'Upload Excel files to control masterfiles', category: 'Control Centre' },
+  { key: 'view_aged_stock', name: 'View Aged Stock', description: 'View the aged stock dashboard (scoped to assigned clients)', category: 'Aged Stock' },
+  { key: 'load_aged_stock', name: 'Load Aged Stock', description: 'Upload & commit aged stock lists', category: 'Aged Stock' },
 ];
 
 /**
@@ -68,13 +70,15 @@ export const DEFAULT_ROLES: Array<Omit<Role, 'createdAt' | 'isSystem'>> = [
       'manage_reps',
       'manage_warehouses',
       'import_excel',
+      'view_aged_stock',
+      'load_aged_stock',
     ],
   },
   {
     id: 'rep',
     name: 'Rep',
     description: 'Field representative — read-only dashboard access',
-    permissionKeys: ['view_dashboard'],
+    permissionKeys: ['view_dashboard', 'view_aged_stock'],
   },
   {
     id: 'customer',

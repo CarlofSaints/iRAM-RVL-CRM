@@ -32,6 +32,9 @@ yarn-error.log*
 # transient files used by Claude Code workflow
 COMMIT_MSG.txt
 
+# local-only dev scripts (parser test harnesses, one-off probes, etc.)
+/scripts/
+
 # env files
 .env*.local
 

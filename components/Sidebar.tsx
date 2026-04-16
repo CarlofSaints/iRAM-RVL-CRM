@@ -59,7 +59,17 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
   const visibleControlLinks = controlLinks.filter(l => has(l.perm));
   const showControlSection = visibleControlLinks.length > 0;
 
+  // Aged Stock — Dashboard + Load. The dashboard perm is the cheaper one;
+  // users with load_aged_stock always get view_aged_stock by convention.
+  const agedStockLinks: Array<{ href: string; label: string; perm: string }> = [
+    { href: '/aged-stock', label: 'Dashboard', perm: 'view_aged_stock' },
+    { href: '/aged-stock/load', label: 'Load Aged Stock', perm: 'load_aged_stock' },
+  ];
+  const visibleAgedStockLinks = agedStockLinks.filter(l => has(l.perm));
+  const showAgedStockSection = visibleAgedStockLinks.length > 0;
+
   const [controlOpen, setControlOpen] = useState(pathname.startsWith('/control-centre'));
+  const [agedStockOpen, setAgedStockOpen] = useState(pathname.startsWith('/aged-stock'));
   const [collapsed, setCollapsed] = useState(false);
 
   // Hydrate collapsed state from localStorage on mount
@@ -165,6 +175,32 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
               <div className="flex flex-col gap-0.5 mt-0.5">
                 <SubNavLink href="/control-centre" label="Overview" active={pathname === '/control-centre'} />
                 {visibleControlLinks.map(l => (
+                  <SubNavLink key={l.href} href={l.href} label={l.label} active={pathname === l.href} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Aged Stock — only when user has at least one relevant perm */}
+        {showAgedStockSection && (
+          <>
+            <button
+              onClick={() => setAgedStockOpen(v => !v)}
+              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                pathname.startsWith('/aged-stock')
+                  ? 'bg-[var(--color-primary)] text-white'
+                  : 'text-gray-300 hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              Aged Stock
+              <svg className={`w-4 h-4 transition-transform ${agedStockOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {agedStockOpen && (
+              <div className="flex flex-col gap-0.5 mt-0.5">
+                {visibleAgedStockLinks.map(l => (
                   <SubNavLink key={l.href} href={l.href} label={l.label} active={pathname === l.href} />
                 ))}
               </div>

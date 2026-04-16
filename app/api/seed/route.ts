@@ -50,7 +50,22 @@ export async function POST(req: NextRequest) {
     roles.push(role);
     rolesSeeded++;
   }
-  if (rolesSeeded > 0) await saveRoles(roles);
+
+  // Migration: keep super-admin in sync with ALL DEFAULT_PERMISSIONS so new
+  // system permissions (e.g. view_all_clients) propagate on re-seed.
+  let rolesPatched = 0;
+  const superAdmin = roles.find(r => r.id === 'super-admin');
+  if (superAdmin) {
+    const allKeys = DEFAULT_PERMISSIONS.map(p => p.key);
+    const current = new Set(superAdmin.permissionKeys);
+    const missing = allKeys.filter(k => !current.has(k));
+    if (missing.length) {
+      superAdmin.permissionKeys = [...superAdmin.permissionKeys, ...missing];
+      rolesPatched++;
+    }
+  }
+
+  if (rolesSeeded > 0 || rolesPatched > 0) await saveRoles(roles);
 
   // === Seed / Migrate Users ===
   const users = await loadUsers();
@@ -117,6 +132,7 @@ export async function POST(req: NextRequest) {
     ok: true,
     permissionsSeeded,
     rolesSeeded,
+    rolesPatched,
     usersAdded,
     usersMigrated,
     warehousesAdded,
