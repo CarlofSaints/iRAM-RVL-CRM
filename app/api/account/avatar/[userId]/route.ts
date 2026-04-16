@@ -25,9 +25,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ user
     if (!result || result.statusCode !== 200) {
       return NextResponse.json({ error: 'Avatar not found' }, { status: 404 });
     }
+    const contentType =
+      result.headers.get('content-type') ??
+      result.blob?.contentType ??
+      'application/octet-stream';
     return new Response(result.stream, {
       headers: {
-        'Content-Type': result.contentType ?? 'application/octet-stream',
+        'Content-Type': contentType,
         // Browsers re-fetch when ?t= changes anyway, so we can cache aggressively
         'Cache-Control': 'private, max-age=300',
       },
