@@ -27,7 +27,10 @@ export default function RepsPage() {
   const [addPhone, setAddPhone] = useState('');
   const [addEmail, setAddEmail] = useState('');
   const [addRegion, setAddRegion] = useState('');
+  const [addAsUser, setAddAsUser] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
+
+  const DEFAULT_REP_PASSWORD = 'rvl2026';
 
   const [editItem, setEditItem] = useState<Rep | null>(null);
   const [editName, setEditName] = useState('');
@@ -48,6 +51,10 @@ export default function RepsPage() {
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
+    if (addAsUser && !addEmail.trim()) {
+      notify('Email is required when adding as a user', 'error');
+      return;
+    }
     setAddLoading(true);
     try {
       const res = await authFetch('/api/control/reps', {
@@ -56,8 +63,33 @@ export default function RepsPage() {
         body: JSON.stringify({ name: addName, surname: addSurname, phone: addPhone, email: addEmail, region: addRegion }),
       });
       if (!res.ok) { notify('Failed to add rep', 'error'); return; }
-      notify('Rep added');
+
+      if (addAsUser) {
+        const userRes = await authFetch('/api/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: addName,
+            surname: addSurname,
+            email: addEmail,
+            password: DEFAULT_REP_PASSWORD,
+            role: 'rep',
+            forcePasswordChange: true,
+            sendWelcome: true,
+          }),
+        });
+        if (userRes.ok) {
+          notify('Rep added and user account created — welcome email sent');
+        } else {
+          const err = await userRes.json().catch(() => ({}));
+          notify(`Rep added, but user creation failed: ${err.error || 'unknown error'}`, 'error');
+        }
+      } else {
+        notify('Rep added');
+      }
+
       setAddName(''); setAddSurname(''); setAddPhone(''); setAddEmail(''); setAddRegion('');
+      setAddAsUser(false);
       fetchItems();
     } finally { setAddLoading(false); }
   }
@@ -171,8 +203,8 @@ export default function RepsPage() {
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs text-gray-500 font-medium">Email</label>
-            <input type="email" value={addEmail} onChange={e => setAddEmail(e.target.value)}
+            <label className="text-xs text-gray-500 font-medium">Email{addAsUser && <span className="text-red-500"> *</span>}</label>
+            <input type="email" value={addEmail} onChange={e => setAddEmail(e.target.value)} required={addAsUser}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
           </div>
           <div className="flex flex-col gap-1">
@@ -180,7 +212,21 @@ export default function RepsPage() {
             <input value={addRegion} onChange={e => setAddRegion(e.target.value)}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
           </div>
-          <div className="flex items-end">
+          <div className="sm:col-span-2 lg:col-span-3 flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-gray-100 mt-2">
+            <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={addAsUser}
+                onChange={e => setAddAsUser(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
+              />
+              <span>
+                <span className="font-medium">Add as a user</span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  Creates a portal user with the <strong>Rep</strong> role and emails them a welcome message with login details.
+                </span>
+              </span>
+            </label>
             <button type="submit" disabled={addLoading}
               className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-50 text-white text-sm font-bold px-5 py-2 rounded-lg transition-colors">
               {addLoading ? 'Adding...' : 'Add Rep'}

@@ -1,10 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import Image from 'next/image';
 import { Session, avatarSrcFor } from '@/lib/useAuth';
+
+const COLLAPSE_KEY = 'rvl_sidebar_collapsed';
 
 interface SidebarProps {
   session: Session;
@@ -58,18 +60,59 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
   const showControlSection = visibleControlLinks.length > 0;
 
   const [controlOpen, setControlOpen] = useState(pathname.startsWith('/control-centre'));
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Hydrate collapsed state from localStorage on mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setCollapsed(localStorage.getItem(COLLAPSE_KEY) === '1');
+  }, []);
+
+  // Sync body class + persist whenever collapsed changes
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle('sidebar-collapsed', collapsed);
+    try { localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0'); } catch { /* empty */ }
+  }, [collapsed]);
 
   return (
-    <aside className="w-64 bg-[var(--color-charcoal)] min-h-screen flex flex-col fixed left-0 top-0 z-40">
-      {/* Logo / Brand */}
-      <div className="px-5 py-5 border-b border-white/10">
-        <div className="flex items-center gap-3">
+    <>
+      {/* Floating burger — only visible when collapsed */}
+      {collapsed && (
+        <button
+          onClick={() => setCollapsed(false)}
+          aria-label="Open menu"
+          className="fixed top-4 left-4 z-50 w-10 h-10 rounded-lg bg-[var(--color-charcoal)] text-white flex items-center justify-center shadow-lg hover:opacity-90 transition-opacity"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+      )}
+
+      <aside
+        className={`w-64 bg-[var(--color-charcoal)] min-h-screen flex flex-col fixed left-0 top-0 z-40 transition-transform duration-200 ${
+          collapsed ? '-translate-x-full' : 'translate-x-0'
+        }`}
+      >
+      {/* Logo / Brand + collapse button */}
+      <div className="px-5 py-5 border-b border-white/10 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <Image src="/iram-logo.png" alt="iRam" width={40} height={40} className="rounded" />
-          <div>
-            <div className="text-white font-bold text-sm tracking-wide">iRAM RVL</div>
+          <div className="min-w-0">
+            <div className="text-white font-bold text-sm tracking-wide truncate">iRAM RVL</div>
             <div className="text-gray-400 text-xs">CRM</div>
           </div>
         </div>
+        <button
+          onClick={() => setCollapsed(true)}
+          aria-label="Collapse menu"
+          className="text-gray-400 hover:text-white p-1.5 rounded hover:bg-white/10 transition-colors flex-shrink-0"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
       </div>
 
       {/* User info — clickable to /account */}
@@ -146,6 +189,7 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
           Sign Out
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

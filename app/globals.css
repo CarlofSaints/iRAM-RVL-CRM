@@ -14,3 +14,11 @@ body {
   color: #111827;
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Sidebar collapse — every page uses <main className="ml-64 ..."> */
+main.ml-64 {
+  transition: margin-left 200ms ease;
+}
+body.sidebar-collapsed main.ml-64 {
+  margin-left: 0;
+}
