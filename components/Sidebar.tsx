@@ -82,9 +82,10 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
         <button
           onClick={() => setCollapsed(false)}
           aria-label="Open menu"
-          className="fixed top-4 left-4 z-50 w-10 h-10 rounded-lg bg-[var(--color-charcoal)] text-white flex items-center justify-center shadow-lg hover:opacity-90 transition-opacity"
+          title="Open menu"
+          className="fixed top-3 left-3 z-50 w-9 h-9 rounded-md bg-white text-gray-600 border border-gray-200 flex items-center justify-center shadow-sm hover:bg-gray-50 hover:text-[var(--color-primary)] hover:border-[var(--color-primary)] transition-colors"
         >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>

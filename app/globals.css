@@ -17,8 +17,9 @@ body {
 
 /* Sidebar collapse — every page uses <main className="ml-64 ..."> */
 main.ml-64 {
-  transition: margin-left 200ms ease;
+  transition: margin-left 200ms ease, padding-top 200ms ease;
 }
 body.sidebar-collapsed main.ml-64 {
   margin-left: 0;
+  padding-top: 3.5rem; /* clear the floating burger (top-3 + h-9 = 48px) */
 }
