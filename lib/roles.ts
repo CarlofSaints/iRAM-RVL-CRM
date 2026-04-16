@@ -34,6 +34,7 @@ export interface PermissionDef {
 export const DEFAULT_PERMISSIONS: Array<Omit<PermissionDef, 'createdAt' | 'isSystem'>> = [
   { key: 'view_dashboard', name: 'View Dashboard', description: 'View main dashboard', category: 'Dashboard' },
   { key: 'view_dashboard_scoped', name: 'View Dashboard (Scoped)', description: 'View dashboard limited to linked client', category: 'Dashboard' },
+  { key: 'view_all_clients', name: 'View All Clients', description: 'See data for every client — bypasses per-user client assignments', category: 'Dashboard' },
   { key: 'manage_users', name: 'Manage Users', description: 'Add / edit / remove users', category: 'Admin' },
   { key: 'manage_roles', name: 'Manage Roles & Permissions', description: 'Add / edit / remove roles & permissions', category: 'Admin' },
   { key: 'manage_clients', name: 'Manage Clients / Suppliers', description: 'Manage clients/suppliers masterfile', category: 'Control Centre' },

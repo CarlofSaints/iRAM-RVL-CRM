@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
     roleName: role?.name ?? user.role,
     permissions,
     linkedClientId: user.linkedClientId,
+    assignedClientIds: user.assignedClientIds ?? [],
     avatarUpdatedAt: user.avatarUpdatedAt,
     subscriptionTier: user.subscription?.tier ?? 'standard',
     forcePasswordChange: user.forcePasswordChange,

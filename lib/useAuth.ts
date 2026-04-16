@@ -16,6 +16,10 @@ export interface Session {
   permissions: string[];
   /** Customer users only — references the linked clients/suppliers record. */
   linkedClientId?: string;
+  /** Clients this user has been assigned to (non-customer roles). Used by the
+   *  dashboard / data views to scope what they see. Super Admins ignore this
+   *  because they have the `view_all_clients` permission. */
+  assignedClientIds?: string[];
   /** ISO timestamp of last avatar change — when set, avatar is available via the proxy URL. */
   avatarUpdatedAt?: string;
   /** Current subscription tier. Defaults to 'standard'. */

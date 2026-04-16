@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   const guard = await requirePermission(req, 'manage_users');
   if (guard instanceof NextResponse) return guard;
 
-  const { name, surname, email, password, role, linkedClientId, forcePasswordChange, sendWelcome } = await req.json();
+  const { name, surname, email, password, role, linkedClientId, assignedClientIds, forcePasswordChange, sendWelcome } = await req.json();
   if (!name || !surname || !email || !password || !role) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
@@ -46,6 +46,9 @@ export async function POST(req: NextRequest) {
     password: hashed,
     role,
     linkedClientId: role === 'customer' ? linkedClientId : undefined,
+    assignedClientIds: role === 'customer'
+      ? undefined
+      : (Array.isArray(assignedClientIds) ? assignedClientIds.filter((x: unknown) => typeof x === 'string') : []),
     forcePasswordChange: forcePasswordChange !== false,
     firstLoginAt: null,
     createdAt: new Date().toISOString(),

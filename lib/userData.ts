@@ -22,6 +22,9 @@ export interface User {
   role: string;
   /** Only set when role === 'customer'. References a clients/suppliers record id. */
   linkedClientId?: string;
+  /** Client access list for non-customer roles. Empty/undefined = no client data access
+   *  (unless the user has the view_all_clients permission, which bypasses this). */
+  assignedClientIds?: string[];
   /** Private Blob key for the user's avatar (e.g. users/{id}/avatar-{ts}.png).
    *  Read via /api/account/avatar/[userId] which streams from the private store. */
   avatarKey?: string;
