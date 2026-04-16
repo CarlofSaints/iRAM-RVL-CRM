@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
+import Link from 'next/link';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
 import * as XLSX from 'xlsx';
@@ -201,7 +202,11 @@ export default function ClientsPage() {
             <tbody>
               {filtered.map(item => (
                 <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                  <td className="px-6 py-3 font-medium text-gray-900">{item.name}</td>
+                  <td className="px-6 py-3 font-medium">
+                    <Link href={`/control-centre/clients/${item.id}`} className="text-[var(--color-primary)] hover:underline">
+                      {item.name}
+                    </Link>
+                  </td>
                   <td className="px-6 py-3 text-gray-600">
                     <div className="flex flex-wrap gap-1">
                       {item.vendorNumbers.map((v, i) => (

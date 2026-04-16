@@ -27,6 +27,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
+
+# transient files used by Claude Code workflow
+COMMIT_MSG.txt
 
 # env files
 .env*.local
