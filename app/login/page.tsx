@@ -37,7 +37,7 @@ export default function LoginPage() {
         roleName: data.roleName,
         permissions: data.permissions ?? [],
         linkedClientId: data.linkedClientId,
-        avatarUrl: data.avatarUrl,
+        avatarUpdatedAt: data.avatarUpdatedAt,
         subscriptionTier: data.subscriptionTier ?? 'standard',
       }));
 

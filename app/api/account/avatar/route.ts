@@ -10,7 +10,8 @@ const ALLOWED = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', '
 
 /**
  * POST /api/account/avatar — upload a profile picture (multipart/form-data, field "file").
- * Stored as a public Vercel Blob so <img> tags can load it directly.
+ * Stored in the project's private Vercel Blob store. Read back via the proxy
+ * endpoint /api/account/avatar/[userId].
  */
 export async function POST(req: NextRequest) {
   const guard = await requireLogin(req);
@@ -36,17 +37,16 @@ export async function POST(req: NextRequest) {
   }
 
   const ext = file.type.split('/')[1].replace('jpeg', 'jpg');
+  const now = new Date().toISOString();
   const key = `users/${guard.userId}/avatar-${Date.now()}.${ext}`;
 
-  let blobUrl: string;
   try {
-    const result = await put(key, file, {
-      access: 'public',
+    await put(key, file, {
+      access: 'private',
       contentType: file.type,
       addRandomSuffix: false,
       allowOverwrite: true,
     });
-    blobUrl = result.url;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `Upload failed: ${msg}` }, { status: 500 });
@@ -56,15 +56,16 @@ export async function POST(req: NextRequest) {
   const me = users.find(u => u.id === guard.userId);
   if (!me) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
-  me.avatarUrl = blobUrl;
+  me.avatarKey = key;
+  me.avatarUpdatedAt = now;
   await saveUsers(users);
 
-  return NextResponse.json({ ok: true, avatarUrl: blobUrl });
+  return NextResponse.json({ ok: true, avatarUpdatedAt: now });
 }
 
 /**
  * DELETE /api/account/avatar — clear the avatar (revert to initials).
- * Doesn't delete the Blob — just removes the URL from the user record.
+ * Doesn't delete the underlying Blob — just removes the pointer from the user record.
  */
 export async function DELETE(req: NextRequest) {
   const guard = await requireLogin(req);
@@ -74,7 +75,8 @@ export async function DELETE(req: NextRequest) {
   const me = users.find(u => u.id === guard.userId);
   if (!me) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
-  delete me.avatarUrl;
+  delete me.avatarKey;
+  delete me.avatarUpdatedAt;
   await saveUsers(users);
 
   return NextResponse.json({ ok: true });

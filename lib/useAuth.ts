@@ -16,10 +16,19 @@ export interface Session {
   permissions: string[];
   /** Customer users only — references the linked clients/suppliers record. */
   linkedClientId?: string;
-  /** Public Blob URL of the user's profile picture. */
-  avatarUrl?: string;
+  /** ISO timestamp of last avatar change — when set, avatar is available via the proxy URL. */
+  avatarUpdatedAt?: string;
   /** Current subscription tier. Defaults to 'standard'. */
   subscriptionTier?: 'standard' | 'pro';
+}
+
+/**
+ * Build the avatar image URL for a given user. Returns undefined when no avatar
+ * has been uploaded. Uses /api/account/avatar/[userId] proxy + cache-busting timestamp.
+ */
+export function avatarSrcFor(userId: string, updatedAt: string | undefined | null): string | undefined {
+  if (!updatedAt) return undefined;
+  return `/api/account/avatar/${encodeURIComponent(userId)}?t=${encodeURIComponent(updatedAt)}`;
 }
 
 const SESSION_KEY = 'rvl_session';

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import { Toast, ToastData } from '@/components/Toast';
-import { useAuth, authFetch, updateSession } from '@/lib/useAuth';
+import { useAuth, authFetch, updateSession, avatarSrcFor } from '@/lib/useAuth';
 
 type Tab = 'profile' | 'security' | 'billing';
 
@@ -13,7 +13,8 @@ interface AccountData {
   surname: string;
   email: string;
   role: string;
-  avatarUrl?: string;
+  avatarUpdatedAt?: string;
+  hasAvatar?: boolean;
   subscription: { tier: 'standard' | 'pro'; upgradedAt?: string; requestedUpgradeAt?: string };
   createdAt: string;
 }
@@ -79,8 +80,8 @@ export default function AccountPage() {
         return;
       }
       notify('Profile picture updated');
-      setData(d => (d ? { ...d, avatarUrl: json.avatarUrl } : d));
-      updateSession({ avatarUrl: json.avatarUrl });
+      setData(d => (d ? { ...d, avatarUpdatedAt: json.avatarUpdatedAt, hasAvatar: true } : d));
+      updateSession({ avatarUpdatedAt: json.avatarUpdatedAt });
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -92,8 +93,8 @@ export default function AccountPage() {
     const res = await authFetch('/api/account/avatar', { method: 'DELETE' });
     if (!res.ok) { notify('Failed to remove', 'error'); return; }
     notify('Profile picture removed');
-    setData(d => (d ? { ...d, avatarUrl: undefined } : d));
-    updateSession({ avatarUrl: undefined });
+    setData(d => (d ? { ...d, avatarUpdatedAt: undefined, hasAvatar: false } : d));
+    updateSession({ avatarUpdatedAt: undefined });
   }
 
   async function handleEmailChange(e: React.FormEvent) {
@@ -157,6 +158,7 @@ export default function AccountPage() {
   const initials = getInitials(data.name, data.surname);
   const tier = data.subscription?.tier ?? 'standard';
   const requested = !!data.subscription?.requestedUpgradeAt && tier !== 'pro';
+  const avatarSrc = data.hasAvatar ? avatarSrcFor(data.id, data.avatarUpdatedAt) : undefined;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -167,10 +169,10 @@ export default function AccountPage() {
         {/* Header card */}
         <div className="bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] px-6 py-5">
           <div className="flex items-center gap-5">
-            {data.avatarUrl ? (
+            {avatarSrc ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={data.avatarUrl}
+                src={avatarSrc}
                 alt={fullName}
                 className="w-16 h-16 rounded-full object-cover border-2 border-gray-100"
               />
@@ -220,10 +222,10 @@ export default function AccountPage() {
               <section>
                 <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Profile Picture</h2>
                 <div className="flex items-center gap-5">
-                  {data.avatarUrl ? (
+                  {avatarSrc ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={data.avatarUrl}
+                      src={avatarSrc}
                       alt={fullName}
                       className="w-24 h-24 rounded-full object-cover border-2 border-gray-100"
                     />
@@ -246,9 +248,9 @@ export default function AccountPage() {
                       disabled={uploading}
                       className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-50 text-white text-sm font-bold px-5 py-2 rounded-lg transition-colors"
                     >
-                      {uploading ? 'Uploading...' : data.avatarUrl ? 'Change Picture' : 'Upload Picture'}
+                      {uploading ? 'Uploading...' : avatarSrc ? 'Change Picture' : 'Upload Picture'}
                     </button>
-                    {data.avatarUrl && (
+                    {avatarSrc && (
                       <button
                         type="button"
                         onClick={handleAvatarRemove}

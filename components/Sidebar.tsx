@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import Image from 'next/image';
-import { Session } from '@/lib/useAuth';
+import { Session, avatarSrcFor } from '@/lib/useAuth';
 
 interface SidebarProps {
   session: Session;
@@ -79,10 +79,10 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
           pathname === '/account' ? 'bg-white/10' : 'hover:bg-white/5'
         }`}
       >
-        {session.avatarUrl ? (
+        {avatarSrcFor(session.id, session.avatarUpdatedAt) ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={session.avatarUrl}
+            src={avatarSrcFor(session.id, session.avatarUpdatedAt)!}
             alt={session.name}
             className="w-10 h-10 rounded-full object-cover border border-white/20 flex-shrink-0"
           />

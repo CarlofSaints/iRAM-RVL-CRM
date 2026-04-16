@@ -22,8 +22,11 @@ export interface User {
   role: string;
   /** Only set when role === 'customer'. References a clients/suppliers record id. */
   linkedClientId?: string;
-  /** Public Vercel Blob URL of the user's profile picture. */
-  avatarUrl?: string;
+  /** Private Blob key for the user's avatar (e.g. users/{id}/avatar-{ts}.png).
+   *  Read via /api/account/avatar/[userId] which streams from the private store. */
+  avatarKey?: string;
+  /** ISO timestamp of last avatar change — used as a cache-buster query param. */
+  avatarUpdatedAt?: string;
   /** Subscription tier + upgrade timestamps. Defaults to standard when undefined. */
   subscription?: UserSubscription;
   forcePasswordChange: boolean;
