@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { loadUsers, saveUsers } from '@/lib/userData';
 import { loadRoles, requirePermission } from '@/lib/rolesData';
+import { sendUpgradeConfirmedEmail } from '@/lib/email';
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -35,7 +36,39 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       users[idx].password = await bcrypt.hash(body.password, 10);
       users[idx].forcePasswordChange = body.forcePasswordChange !== false;
     }
+
+    // Subscription tier flip
+    let upgradedToPro = false;
+    if (body.subscriptionTier === 'pro' || body.subscriptionTier === 'standard') {
+      const tier = body.subscriptionTier;
+      const current = users[idx].subscription;
+      if (tier === 'pro') {
+        upgradedToPro = current?.tier !== 'pro';
+        users[idx].subscription = {
+          tier: 'pro',
+          upgradedAt: upgradedToPro ? new Date().toISOString() : current?.upgradedAt,
+          // clear pending-request flag once upgraded
+          requestedUpgradeAt: undefined,
+        };
+      } else {
+        users[idx].subscription = {
+          tier: 'standard',
+          upgradedAt: undefined,
+          requestedUpgradeAt: undefined,
+        };
+      }
+    }
+
     await saveUsers(users);
+
+    // Fire-and-forget confirmation email if we just flipped to Pro
+    if (upgradedToPro && body.sendConfirmation !== false) {
+      try {
+        await sendUpgradeConfirmedEmail(users[idx].email, `${users[idx].name} ${users[idx].surname}`);
+      } catch (err) {
+        console.error('[users] Upgrade confirmation email failed:', err);
+      }
+    }
 
     const { password: _p, ...safe } = users[idx];
     return NextResponse.json(safe);

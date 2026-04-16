@@ -1,8 +1,22 @@
-Fix: avatar proxy 401 — drop requireLogin from image route
+Add Pro tier admin UI to user management
 
-<img src=...> tags can't attach custom headers, so requireLogin()
-(which checks x-user-id) rejected every browser avatar request and
-rendered as a broken image / alt text.
+Previously the /account Upgrade button recorded requestedUpgradeAt
+and emailed super-admins, but flipping a user to Pro required
+hand-editing the Blob JSON. This wires the admin side.
 
-Removed the guard — accessing an avatar still requires knowing the
-user ID. Same trust model as GitHub/Slack avatars.
+API:
+- PATCH /api/users/[id] accepts subscriptionTier ('pro' | 'standard')
+  and optional sendConfirmation flag. On flip-to-Pro: stamps
+  upgradedAt, clears requestedUpgradeAt. On downgrade: clears both.
+- Sends "Welcome to Pro" confirmation email on upgrade by default.
+
+Email:
+- New sendUpgradeConfirmedEmail() in lib/email.ts (iRam-green shell).
+
+Admin UI (/admin/users):
+- New Plan column with PRO (gold gradient) / Standard badges, plus
+  a "Requested" pill next to Standard when requestedUpgradeAt is set.
+- Per-row "Upgrade to Pro" / "Approve Pro" / "Downgrade" buttons
+  with confirm dialog.
+- Pending-request count pill in section header.
+- "Show pending Pro requests only" filter checkbox.

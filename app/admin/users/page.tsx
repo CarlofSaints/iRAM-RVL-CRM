@@ -5,6 +5,12 @@ import Sidebar from '@/components/Sidebar';
 import { Toast, ToastData } from '@/components/Toast';
 import { useEffect, useState } from 'react';
 
+interface UserSubscription {
+  tier: 'standard' | 'pro';
+  upgradedAt?: string;
+  requestedUpgradeAt?: string;
+}
+
 interface User {
   id: string;
   name: string;
@@ -12,6 +18,7 @@ interface User {
   email: string;
   role: string;
   linkedClientId?: string;
+  subscription?: UserSubscription;
   forcePasswordChange: boolean;
   firstLoginAt: string | null;
   createdAt: string;
@@ -52,6 +59,12 @@ export default function AdminUsersPage() {
   const [showAddPw, setShowAddPw] = useState(false);
   const [sendWelcome, setSendWelcome] = useState(true);
   const [addLoading, setAddLoading] = useState(false);
+
+  // Filters
+  const [showPendingOnly, setShowPendingOnly] = useState(false);
+
+  // Subscription flip state (per user, to disable row button while in-flight)
+  const [flippingId, setFlippingId] = useState<string | null>(null);
 
   // Edit modal
   const [editUser, setEditUser] = useState<User | null>(null);
@@ -188,6 +201,41 @@ export default function AdminUsersPage() {
     else notify('Failed to delete user', 'error');
   }
 
+  async function handleFlipTier(user: User, targetTier: 'standard' | 'pro') {
+    const currentTier = user.subscription?.tier ?? 'standard';
+    if (currentTier === targetTier) return;
+
+    const label = targetTier === 'pro' ? 'Upgrade to Pro' : 'Downgrade to Standard';
+    const sendConfirmationByDefault = targetTier === 'pro';
+    const confirmMsg = targetTier === 'pro'
+      ? `Upgrade ${user.name} ${user.surname} to Pro? They'll receive a confirmation email.`
+      : `Downgrade ${user.name} ${user.surname} to Standard?`;
+    if (!confirm(confirmMsg)) return;
+
+    setFlippingId(user.id);
+    try {
+      const res = await authFetch(`/api/users/${user.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscriptionTier: targetTier,
+          sendConfirmation: sendConfirmationByDefault,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        notify(data.error || `${label} failed`, 'error');
+        return;
+      }
+      notify(targetTier === 'pro'
+        ? `${user.name} upgraded to Pro — confirmation email sent`
+        : `${user.name} downgraded to Standard`);
+      refresh();
+    } finally {
+      setFlippingId(null);
+    }
+  }
+
   if (loading || !session) return null;
 
   return (
@@ -274,7 +322,26 @@ export default function AdminUsersPage() {
 
         {/* Users Table */}
         <section className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide p-6 pb-0">All Users</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3 p-6 pb-0">
+            <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">All Users</h2>
+            {(() => {
+              const pendingCount = users.filter(u => u.subscription?.requestedUpgradeAt).length;
+              return (
+                <div className="flex items-center gap-3">
+                  {pendingCount > 0 && (
+                    <span className="text-xs font-semibold text-amber-800 bg-amber-100 border border-amber-200 px-2.5 py-1 rounded-full">
+                      {pendingCount} pending Pro request{pendingCount === 1 ? '' : 's'}
+                    </span>
+                  )}
+                  <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
+                    <input type="checkbox" checked={showPendingOnly} onChange={e => setShowPendingOnly(e.target.checked)}
+                      className="accent-[var(--color-primary)]" />
+                    Show pending Pro requests only
+                  </label>
+                </div>
+              );
+            })()}
+          </div>
           <div className="overflow-x-auto mt-4">
             <table className="w-full text-sm">
               <thead>
@@ -282,39 +349,80 @@ export default function AdminUsersPage() {
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Role</th>
+                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Plan</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Linked Client</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">First Login</th>
                   <th className="px-6 py-3" />
                 </tr>
               </thead>
               <tbody>
-                {users.map(u => (
-                  <tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-3 font-medium text-gray-900">{u.name} {u.surname}</td>
-                    <td className="px-6 py-3 text-gray-600">{u.email}</td>
-                    <td className="px-6 py-3">
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                        ROLE_BADGE_CLASSES[u.role] ?? 'bg-gray-100 text-gray-600'
-                      }`}>
-                        {roleLabel(u.role)}
-                      </span>
-                    </td>
-                    <td className="px-6 py-3 text-gray-600 text-xs">
-                      {u.role === 'customer' ? clientName(u.linkedClientId) : '—'}
-                    </td>
-                    <td className="px-6 py-3 text-gray-500 text-xs">
-                      {u.firstLoginAt ? new Date(u.firstLoginAt).toLocaleDateString() : 'Never'}
-                    </td>
-                    <td className="px-6 py-3">
-                      <div className="flex gap-2 justify-end">
-                        <button onClick={() => openEdit(u)}
-                          className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
-                        <button onClick={() => handleDelete(u)}
-                          className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {users
+                  .filter(u => !showPendingOnly || !!u.subscription?.requestedUpgradeAt)
+                  .map(u => {
+                    const tier = u.subscription?.tier ?? 'standard';
+                    const pending = !!u.subscription?.requestedUpgradeAt;
+                    const isFlipping = flippingId === u.id;
+                    return (
+                      <tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-3 font-medium text-gray-900">{u.name} {u.surname}</td>
+                        <td className="px-6 py-3 text-gray-600">{u.email}</td>
+                        <td className="px-6 py-3">
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                            ROLE_BADGE_CLASSES[u.role] ?? 'bg-gray-100 text-gray-600'
+                          }`}>
+                            {roleLabel(u.role)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-3">
+                          <div className="flex items-center gap-2">
+                            {tier === 'pro' ? (
+                              <span className="text-xs font-bold px-2 py-0.5 rounded-full text-white bg-gradient-to-r from-amber-500 to-yellow-600">
+                                PRO
+                              </span>
+                            ) : (
+                              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                                Standard
+                              </span>
+                            )}
+                            {pending && (
+                              <span className="text-[10px] font-semibold text-amber-800 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                                Requested
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-3 text-gray-600 text-xs">
+                          {u.role === 'customer' ? clientName(u.linkedClientId) : '—'}
+                        </td>
+                        <td className="px-6 py-3 text-gray-500 text-xs">
+                          {u.firstLoginAt ? new Date(u.firstLoginAt).toLocaleDateString() : 'Never'}
+                        </td>
+                        <td className="px-6 py-3">
+                          <div className="flex gap-3 justify-end items-center">
+                            {tier === 'standard' ? (
+                              <button
+                                onClick={() => handleFlipTier(u, 'pro')}
+                                disabled={isFlipping}
+                                className="text-xs font-semibold text-amber-700 hover:text-amber-900 disabled:opacity-50">
+                                {isFlipping ? '...' : pending ? 'Approve Pro' : 'Upgrade to Pro'}
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleFlipTier(u, 'standard')}
+                                disabled={isFlipping}
+                                className="text-xs font-medium text-gray-500 hover:text-gray-700 disabled:opacity-50">
+                                {isFlipping ? '...' : 'Downgrade'}
+                              </button>
+                            )}
+                            <button onClick={() => openEdit(u)}
+                              className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
+                            <button onClick={() => handleDelete(u)}
+                              className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
               </tbody>
             </table>
           </div>

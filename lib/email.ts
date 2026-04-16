@@ -83,6 +83,23 @@ export async function sendUpgradeRequestEmail(
   });
 }
 
+export async function sendUpgradeConfirmedEmail(to: string, name: string) {
+  const appUrl = getAppUrl();
+  const body = `
+    <p style="margin:0 0 14px;">Hi <strong>${name}</strong>,</p>
+    <p style="margin:0 0 14px;">Your subscription has been upgraded to <strong>Pro</strong>. Pro features are now available on your account.</p>
+    <p style="margin:0 0 20px;color:#555;font-size:14px;">If you have any questions, reply to this email or get in touch with your iRam account manager.</p>
+    <a href="${appUrl}/account" style="background:${PRIMARY};color:#fff;text-decoration:none;padding:12px 24px;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Open Account</a>
+  `;
+
+  return getResend().emails.send({
+    from: FROM,
+    to,
+    subject: 'iRam RVL CRM — Welcome to Pro',
+    html: emailShell(body),
+  });
+}
+
 export async function sendPasswordResetEmail(to: string, name: string, password: string) {
   const appUrl = getAppUrl();
   const body = `
