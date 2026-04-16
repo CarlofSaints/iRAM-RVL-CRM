@@ -5,13 +5,16 @@ import { requireLogin, requirePermission } from '@/lib/rolesData';
 
 export const dynamic = 'force-dynamic';
 
-const VALID_TYPES: ControlType[] = ['clients', 'stores', 'products', 'reps', 'warehouses'];
+const VALID_TYPES: ControlType[] = ['clients', 'stores', 'products', 'reps', 'warehouses', 'channels'];
 
 function isValidType(type: string): type is ControlType {
   return VALID_TYPES.includes(type as ControlType);
 }
 
 function permForType(type: ControlType): string {
+  // Channels are part of the stores feature — gate under manage_stores so we don't
+  // need a new permission key (and a re-seed) just for this.
+  if (type === 'channels') return 'manage_stores';
   return `manage_${type}`;
 }
 

@@ -1,0 +1,29 @@
+Stores: template support, manager email, channels manager
+
+Match the RVL CRM_Store List MASTER.xlsx template format and add
+operational tooling around the import/edit flow.
+
+Backend:
+- Add 'channels' as a new ControlType, gated under manage_stores
+  (so existing super-admin/rvl-manager get access without a re-seed).
+
+Schema:
+- New managerEmail field on Store record.
+
+Stores page:
+- Download Template button — empty xlsx with the master file's
+  headers (STORE NAME, SITE CODE, REGION, CHANNEL, MANAGER NAME,
+  MANAGER PHONE, EMAIL, LINKED WAREHOUSE).
+- Excel parser rewritten — case-insensitive headers, tolerates the
+  MANAGERPHONE no-space variant, coerces numeric phones to strings.
+- Channel field is now a dropdown sourced from channels list.
+  Edit modal shows "(legacy)" if a store references a deleted channel.
+- New Manager Email column + form fields throughout.
+- Auto-create new channels found in upload (saves manual onboarding).
+- Channels manager collapsible section: add/edit/delete channel
+  values, shows per-channel usage count, warns before deleting in-use
+  channels (existing stores keep the name as plain text).
+
+Tooling:
+- inspect-template.js (gitignore-able dev script — used to inspect
+  the master template; safe to delete).
