@@ -1,27 +1,8 @@
-Fix avatar upload on private Blob store + add account page
+Fix: avatar proxy 401 — drop requireLogin from image route
 
-The Blob store `iram-rvl-crm-blob` is configured private store-wide,
-so mixed-access uploads fail with "Cannot use public access on a
-private store". Refactor avatar flow to store privately and serve
-through a proxy route.
+<img src=...> tags can't attach custom headers, so requireLogin()
+(which checks x-user-id) rejected every browser avatar request and
+rendered as a broken image / alt text.
 
-Changes:
-- User schema: replace `avatarUrl` with `avatarKey` + `avatarUpdatedAt`
-- POST /api/account/avatar: upload with `access: 'private'`, save key
-- GET /api/account/avatar/[userId]: NEW proxy that streams the blob
-  with correct Content-Type and short private cache header
-- DELETE /api/account/avatar: clear both key and timestamp
-- lib/useAuth.ts: add `avatarSrcFor(userId, updatedAt)` helper that
-  builds the proxy URL with `?t={updatedAt}` for cache busting
-- Session + login payload: include `avatarUpdatedAt` and
-  `subscriptionTier` instead of `avatarUrl`
-- Sidebar + /account page: use `avatarSrcFor()` helper
-
-Also shipped in this commit:
-- /account page (Profile / Security / Billing tabs)
-- Email change flow with current-password verify
-- Standard vs Pro subscription tier on user record
-- Pro upgrade request endpoint + email notification to super-admins
-
-Note: repeat uploads overwrite via `allowOverwrite: true`. Old avatar
-keys are not cleaned up on re-upload — tolerable for now.
+Removed the guard — accessing an avatar still requires knowing the
+user ID. Same trust model as GitHub/Slack avatars.

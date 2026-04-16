@@ -1,18 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { get } from '@vercel/blob';
 import { loadUsers } from '@/lib/userData';
-import { requireLogin } from '@/lib/rolesData';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/account/avatar/[userId] — stream the user's avatar from the private Blob store.
- * Any logged-in user can read any other user's avatar (same trust model as the user list).
+ *
+ * No auth header required: <img src=...> tags can't send custom headers, so gating this
+ * with requireLogin() would make every avatar render as a broken image. Access still
+ * requires knowing the user ID. Same trust model as GitHub/Slack avatars.
  */
-export async function GET(req: NextRequest, { params }: { params: Promise<{ userId: string }> }) {
-  const guard = await requireLogin(req);
-  if (guard instanceof NextResponse) return guard;
-
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ userId: string }> }) {
   const { userId } = await params;
   const users = await loadUsers();
   const user = users.find(u => u.id === userId);
