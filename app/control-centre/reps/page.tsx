@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
+import { useAuth, authFetch } from '@/lib/useAuth';
 import * as XLSX from 'xlsx';
 
 interface Rep {
@@ -15,6 +16,7 @@ interface Rep {
 }
 
 export default function RepsPage() {
+  useAuth('manage_reps');
   const [items, setItems] = useState<Rep[]>([]);
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState<ToastData | null>(null);
@@ -38,7 +40,7 @@ export default function RepsPage() {
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
 
   async function fetchItems() {
-    const res = await fetch('/api/control/reps', { cache: 'no-store' });
+    const res = await authFetch('/api/control/reps', { cache: 'no-store' });
     if (res.ok) setItems(await res.json());
   }
 
@@ -48,7 +50,7 @@ export default function RepsPage() {
     e.preventDefault();
     setAddLoading(true);
     try {
-      const res = await fetch('/api/control/reps', {
+      const res = await authFetch('/api/control/reps', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: addName, surname: addSurname, phone: addPhone, email: addEmail, region: addRegion }),
@@ -74,7 +76,7 @@ export default function RepsPage() {
     if (!editItem) return;
     setEditLoading(true);
     try {
-      const res = await fetch('/api/control/reps', {
+      const res = await authFetch('/api/control/reps', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: editItem.id, name: editName, surname: editSurname, phone: editPhone, email: editEmail, region: editRegion }),
@@ -88,7 +90,7 @@ export default function RepsPage() {
 
   async function handleDelete(item: Rep) {
     if (!confirm(`Delete ${item.name} ${item.surname}?`)) return;
-    const res = await fetch(`/api/control/reps?id=${item.id}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/control/reps?id=${item.id}`, { method: 'DELETE' });
     if (res.ok) { notify('Rep deleted'); fetchItems(); }
     else notify('Failed to delete', 'error');
   }
@@ -112,7 +114,7 @@ export default function RepsPage() {
 
       if (!records.length) { notify('No valid rows found', 'error'); return; }
 
-      const res = await fetch('/api/control/reps', {
+      const res = await authFetch('/api/control/reps', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(records),

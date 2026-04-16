@@ -34,6 +34,11 @@ export default function LoginPage() {
       localStorage.setItem('rvl_session', JSON.stringify({
         id: data.id, name: data.name, surname: data.surname,
         email: data.email, role: data.role,
+        roleName: data.roleName,
+        permissions: data.permissions ?? [],
+        linkedClientId: data.linkedClientId,
+        avatarUrl: data.avatarUrl,
+        subscriptionTier: data.subscriptionTier ?? 'standard',
       }));
 
       if (data.forcePasswordChange) {

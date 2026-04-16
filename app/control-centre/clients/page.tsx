@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
+import { useAuth, authFetch } from '@/lib/useAuth';
 import * as XLSX from 'xlsx';
 
 interface Client {
@@ -13,6 +14,7 @@ interface Client {
 }
 
 export default function ClientsPage() {
+  useAuth('manage_clients');
   const [items, setItems] = useState<Client[]>([]);
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState<ToastData | null>(null);
@@ -34,7 +36,7 @@ export default function ClientsPage() {
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
 
   async function fetchItems() {
-    const res = await fetch('/api/control/clients', { cache: 'no-store' });
+    const res = await authFetch('/api/control/clients', { cache: 'no-store' });
     if (res.ok) setItems(await res.json());
   }
 
@@ -45,7 +47,7 @@ export default function ClientsPage() {
     setAddLoading(true);
     try {
       const vendorNumbers = addVendorNums.split(',').map(v => v.trim()).filter(Boolean);
-      const res = await fetch('/api/control/clients', {
+      const res = await authFetch('/api/control/clients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: addName, vendorNumbers, type: addType }),
@@ -70,7 +72,7 @@ export default function ClientsPage() {
     setEditLoading(true);
     try {
       const vendorNumbers = editVendorNums.split(',').map(v => v.trim()).filter(Boolean);
-      const res = await fetch('/api/control/clients', {
+      const res = await authFetch('/api/control/clients', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: editItem.id, name: editName, vendorNumbers, type: editType }),
@@ -84,7 +86,7 @@ export default function ClientsPage() {
 
   async function handleDelete(item: Client) {
     if (!confirm(`Delete ${item.name}?`)) return;
-    const res = await fetch(`/api/control/clients?id=${item.id}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/control/clients?id=${item.id}`, { method: 'DELETE' });
     if (res.ok) { notify('Client deleted'); fetchItems(); }
     else notify('Failed to delete', 'error');
   }
@@ -107,7 +109,7 @@ export default function ClientsPage() {
 
       if (!records.length) { notify('No valid rows found in file', 'error'); return; }
 
-      const res = await fetch('/api/control/clients', {
+      const res = await authFetch('/api/control/clients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(records),

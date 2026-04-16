@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { authFetch } from '@/lib/useAuth';
 
 interface CardData {
   label: string;
@@ -17,7 +18,7 @@ export default function ControlCentreOverview() {
     const types = ['clients', 'stores', 'products', 'reps', 'warehouses'];
     types.forEach(async (type) => {
       try {
-        const res = await fetch(`/api/control/${type}`, { cache: 'no-store' });
+        const res = await authFetch(`/api/control/${type}`, { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
           setCounts(prev => ({ ...prev, [type]: data.length }));

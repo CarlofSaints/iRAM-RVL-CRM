@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
+import { useAuth, authFetch } from '@/lib/useAuth';
 import * as XLSX from 'xlsx';
 
 interface Product {
@@ -15,6 +16,7 @@ interface Product {
 }
 
 export default function ProductsPage() {
+  useAuth('manage_products');
   const [items, setItems] = useState<Product[]>([]);
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState<ToastData | null>(null);
@@ -38,7 +40,7 @@ export default function ProductsPage() {
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
 
   async function fetchItems() {
-    const res = await fetch('/api/control/products', { cache: 'no-store' });
+    const res = await authFetch('/api/control/products', { cache: 'no-store' });
     if (res.ok) setItems(await res.json());
   }
 
@@ -48,7 +50,7 @@ export default function ProductsPage() {
     e.preventDefault();
     setAddLoading(true);
     try {
-      const res = await fetch('/api/control/products', {
+      const res = await authFetch('/api/control/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -78,7 +80,7 @@ export default function ProductsPage() {
     if (!editItem) return;
     setEditLoading(true);
     try {
-      const res = await fetch('/api/control/products', {
+      const res = await authFetch('/api/control/products', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -95,7 +97,7 @@ export default function ProductsPage() {
 
   async function handleDelete(item: Product) {
     if (!confirm(`Delete ${item.description}?`)) return;
-    const res = await fetch(`/api/control/products?id=${item.id}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/control/products?id=${item.id}`, { method: 'DELETE' });
     if (res.ok) { notify('Product deleted'); fetchItems(); }
     else notify('Failed to delete', 'error');
   }
@@ -119,7 +121,7 @@ export default function ProductsPage() {
 
       if (!records.length) { notify('No valid rows found', 'error'); return; }
 
-      const res = await fetch('/api/control/products', {
+      const res = await authFetch('/api/control/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(records),

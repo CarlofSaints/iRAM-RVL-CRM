@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
+import { useAuth, authFetch } from '@/lib/useAuth';
 
 interface Warehouse {
   id: string;
@@ -12,6 +13,7 @@ interface Warehouse {
 }
 
 export default function WarehousesPage() {
+  useAuth('manage_warehouses');
   const [items, setItems] = useState<Warehouse[]>([]);
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState<ToastData | null>(null);
@@ -30,7 +32,7 @@ export default function WarehousesPage() {
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
 
   async function fetchItems() {
-    const res = await fetch('/api/control/warehouses', { cache: 'no-store' });
+    const res = await authFetch('/api/control/warehouses', { cache: 'no-store' });
     if (res.ok) setItems(await res.json());
   }
 
@@ -40,7 +42,7 @@ export default function WarehousesPage() {
     e.preventDefault();
     setAddLoading(true);
     try {
-      const res = await fetch('/api/control/warehouses', {
+      const res = await authFetch('/api/control/warehouses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: addName, code: addCode, region: addRegion }),
@@ -64,7 +66,7 @@ export default function WarehousesPage() {
     if (!editItem) return;
     setEditLoading(true);
     try {
-      const res = await fetch('/api/control/warehouses', {
+      const res = await authFetch('/api/control/warehouses', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: editItem.id, name: editName, code: editCode, region: editRegion }),
@@ -78,7 +80,7 @@ export default function WarehousesPage() {
 
   async function handleDelete(item: Warehouse) {
     if (!confirm(`Delete warehouse ${item.name} (${item.code})?`)) return;
-    const res = await fetch(`/api/control/warehouses?id=${item.id}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/control/warehouses?id=${item.id}`, { method: 'DELETE' });
     if (res.ok) { notify('Warehouse deleted'); fetchItems(); }
     else notify('Failed to delete', 'error');
   }

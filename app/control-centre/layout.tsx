@@ -4,7 +4,8 @@ import { useAuth } from '@/lib/useAuth';
 import Sidebar from '@/components/Sidebar';
 
 export default function ControlCentreLayout({ children }: { children: React.ReactNode }) {
-  const { session, loading, logout } = useAuth('admin');
+  // Any logged-in user. Each child page enforces its own specific permission.
+  const { session, loading, logout } = useAuth();
 
   if (loading || !session) return null;
 

@@ -57,6 +57,32 @@ export async function sendWelcomeEmail(to: string, name: string, password: strin
   });
 }
 
+export async function sendUpgradeRequestEmail(
+  toAdmins: string[],
+  requester: { name: string; email: string; role: string }
+) {
+  if (toAdmins.length === 0) return;
+  const appUrl = getAppUrl();
+  const body = `
+    <p style="margin:0 0 14px;">A user has requested to upgrade their subscription.</p>
+    <table style="background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:14px 16px;width:100%;margin-bottom:20px;">
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Name</td><td style="font-size:13px;"><strong>${requester.name}</strong></td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Email</td><td style="font-size:13px;">${requester.email}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Role</td><td style="font-size:13px;">${requester.role}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Plan requested</td><td style="font-size:13px;">Pro</td></tr>
+    </table>
+    <p style="margin:0 0 20px;color:#555;font-size:13px;">Open the user record in admin to complete the upgrade.</p>
+    <a href="${appUrl}/admin/users" style="background:${PRIMARY};color:#fff;text-decoration:none;padding:12px 24px;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Open User Management</a>
+  `;
+
+  return getResend().emails.send({
+    from: FROM,
+    to: toAdmins,
+    subject: `iRam RVL CRM — Pro upgrade requested by ${requester.name}`,
+    html: emailShell(body),
+  });
+}
+
 export async function sendPasswordResetEmail(to: string, name: string, password: string) {
   const appUrl = getAppUrl();
   const body = `

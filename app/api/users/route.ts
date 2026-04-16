@@ -3,11 +3,14 @@ import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 import { loadUsers, saveUsers, User } from '@/lib/userData';
 import { sendWelcomeEmail } from '@/lib/email';
-import { Role } from '@/lib/roles';
+import { loadRoles, requireLogin, requirePermission } from '@/lib/rolesData';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const guard = await requireLogin(req);
+  if (guard instanceof NextResponse) return guard;
+
   const users = (await loadUsers()).map(({ password: _p, ...u }) => u);
   return NextResponse.json(users, {
     headers: { 'Cache-Control': 'no-store' },
@@ -15,9 +18,18 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { name, surname, email, password, role, forcePasswordChange, sendWelcome } = await req.json();
-  if (!name || !surname || !email || !password) {
+  const guard = await requirePermission(req, 'manage_users');
+  if (guard instanceof NextResponse) return guard;
+
+  const { name, surname, email, password, role, linkedClientId, forcePasswordChange, sendWelcome } = await req.json();
+  if (!name || !surname || !email || !password || !role) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
+  }
+
+  // Validate role exists
+  const roles = await loadRoles();
+  if (!roles.find(r => r.id === role)) {
+    return NextResponse.json({ error: 'Invalid role' }, { status: 400 });
   }
 
   const users = await loadUsers();
@@ -26,14 +38,14 @@ export async function POST(req: NextRequest) {
   }
 
   const hashed = await bcrypt.hash(password, 10);
-  const userRole: Role = role || 'admin';
   const user: User = {
     id: randomUUID(),
     name,
     surname,
     email,
     password: hashed,
-    role: userRole,
+    role,
+    linkedClientId: role === 'customer' ? linkedClientId : undefined,
     forcePasswordChange: forcePasswordChange !== false,
     firstLoginAt: null,
     createdAt: new Date().toISOString(),

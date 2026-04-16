@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { loadControl, saveControl, ControlType } from '@/lib/controlData';
+import { requireLogin, requirePermission } from '@/lib/rolesData';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,11 +11,18 @@ function isValidType(type: string): type is ControlType {
   return VALID_TYPES.includes(type as ControlType);
 }
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ type: string }> }) {
+function permForType(type: ControlType): string {
+  return `manage_${type}`;
+}
+
+export async function GET(req: NextRequest, { params }: { params: Promise<{ type: string }> }) {
   const { type } = await params;
   if (!isValidType(type)) {
     return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
   }
+
+  const guard = await requireLogin(req);
+  if (guard instanceof NextResponse) return guard;
 
   const items = await loadControl(type);
   return NextResponse.json(items, {
@@ -27,6 +35,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ typ
   if (!isValidType(type)) {
     return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
   }
+
+  const guard = await requirePermission(req, permForType(type));
+  if (guard instanceof NextResponse) return guard;
 
   const body = await req.json();
 
@@ -64,6 +75,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ty
     return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
   }
 
+  const guard = await requirePermission(req, permForType(type));
+  if (guard instanceof NextResponse) return guard;
+
   const body = await req.json();
   const { id, ...updates } = body;
   if (!id) {
@@ -86,6 +100,9 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ t
   if (!isValidType(type)) {
     return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
   }
+
+  const guard = await requirePermission(req, permForType(type));
+  if (guard instanceof NextResponse) return guard;
 
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');

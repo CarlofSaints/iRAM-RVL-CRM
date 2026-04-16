@@ -1,7 +1,6 @@
 'use client';
 
-import { useAuth } from '@/lib/useAuth';
-import { Role, ROLE_LABELS } from '@/lib/roles';
+import { useAuth, authFetch } from '@/lib/useAuth';
 import Sidebar from '@/components/Sidebar';
 import { Toast, ToastData } from '@/components/Toast';
 import { useEffect, useState } from 'react';
@@ -11,15 +10,35 @@ interface User {
   name: string;
   surname: string;
   email: string;
-  role: Role;
+  role: string;
+  linkedClientId?: string;
   forcePasswordChange: boolean;
   firstLoginAt: string | null;
   createdAt: string;
 }
 
+interface RoleOption {
+  id: string;
+  name: string;
+}
+
+interface ClientOption {
+  id: string;
+  name: string;
+}
+
+const ROLE_BADGE_CLASSES: Record<string, string> = {
+  'super-admin': 'bg-green-100 text-green-700',
+  'rvl-manager': 'bg-blue-100 text-blue-700',
+  'rep': 'bg-orange-100 text-orange-700',
+  'customer': 'bg-purple-100 text-purple-700',
+};
+
 export default function AdminUsersPage() {
-  const { session, loading, logout } = useAuth('super-user');
+  const { session, loading, logout } = useAuth('manage_users');
   const [users, setUsers] = useState<User[]>([]);
+  const [roles, setRoles] = useState<RoleOption[]>([]);
+  const [clients, setClients] = useState<ClientOption[]>([]);
   const [toast, setToast] = useState<ToastData | null>(null);
 
   // Add user form
@@ -27,7 +46,8 @@ export default function AdminUsersPage() {
   const [addSurname, setAddSurname] = useState('');
   const [addEmail, setAddEmail] = useState('');
   const [addPw, setAddPw] = useState('');
-  const [addRole, setAddRole] = useState<Role>('admin');
+  const [addRole, setAddRole] = useState<string>('rep');
+  const [addLinkedClient, setAddLinkedClient] = useState('');
   const [addForcePwChange, setAddForcePwChange] = useState(true);
   const [showAddPw, setShowAddPw] = useState(false);
   const [sendWelcome, setSendWelcome] = useState(true);
@@ -38,7 +58,8 @@ export default function AdminUsersPage() {
   const [editName, setEditName] = useState('');
   const [editSurname, setEditSurname] = useState('');
   const [editEmail, setEditEmail] = useState('');
-  const [editRole, setEditRole] = useState<Role>('admin');
+  const [editRole, setEditRole] = useState<string>('rep');
+  const [editLinkedClient, setEditLinkedClient] = useState('');
   const [editPw, setEditPw] = useState('');
   const [showEditPw, setShowEditPw] = useState(false);
   const [sendReset, setSendReset] = useState(false);
@@ -47,31 +68,55 @@ export default function AdminUsersPage() {
   const notify = (message: string, type: 'success' | 'error' = 'success') =>
     setToast({ message, type });
 
-  async function fetchUsers() {
-    const res = await fetch('/api/users', { cache: 'no-store' });
-    if (res.ok) setUsers(await res.json());
+  const roleLabel = (id: string) => roles.find(r => r.id === id)?.name ?? id;
+  const clientName = (id?: string) => (id ? clients.find(c => c.id === id)?.name ?? '—' : '—');
+
+  async function refresh() {
+    const [uRes, rRes, cRes] = await Promise.all([
+      authFetch('/api/users', { cache: 'no-store' }),
+      authFetch('/api/roles', { cache: 'no-store' }),
+      authFetch('/api/control/clients', { cache: 'no-store' }),
+    ]);
+    if (uRes.ok) setUsers(await uRes.json());
+    if (rRes.ok) setRoles(await rRes.json());
+    if (cRes.ok) setClients(await cRes.json());
   }
 
-  useEffect(() => { if (session) fetchUsers(); }, [session]);
+  useEffect(() => {
+    if (session) refresh();
+  }, [session]);
+
+  // Default the add-role dropdown to the first non-super-admin role once loaded
+  useEffect(() => {
+    if (roles.length && !roles.find(r => r.id === addRole)) {
+      const preferred = roles.find(r => r.id === 'rep') ?? roles[0];
+      if (preferred) setAddRole(preferred.id);
+    }
+  }, [roles, addRole]);
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
+    if (addRole === 'customer' && !addLinkedClient) {
+      notify('Please select a linked client for this customer', 'error');
+      return;
+    }
     setAddLoading(true);
     try {
-      const res = await fetch('/api/users', {
+      const res = await authFetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: addName, surname: addSurname, email: addEmail,
-          password: addPw, role: addRole, forcePasswordChange: addForcePwChange,
-          sendWelcome,
+          password: addPw, role: addRole,
+          linkedClientId: addRole === 'customer' ? addLinkedClient : undefined,
+          forcePasswordChange: addForcePwChange, sendWelcome,
         }),
       });
       const data = await res.json();
       if (!res.ok) { notify(data.error || 'Failed to create user', 'error'); return; }
 
       if (sendWelcome) {
-        await fetch(`/api/users/${data.id}/notify`, {
+        await authFetch(`/api/users/${data.id}/notify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ plainPassword: addPw, type: 'welcome', name: `${addName} ${addSurname}`, email: addEmail }),
@@ -79,8 +124,9 @@ export default function AdminUsersPage() {
       }
       notify(`User ${addName} ${addSurname} created${sendWelcome ? ' — welcome email sent' : ''}`);
       setAddName(''); setAddSurname(''); setAddEmail(''); setAddPw('');
-      setAddRole('admin'); setAddForcePwChange(true); setSendWelcome(true);
-      fetchUsers();
+      setAddRole('rep'); setAddLinkedClient('');
+      setAddForcePwChange(true); setSendWelcome(true);
+      refresh();
     } finally {
       setAddLoading(false);
     }
@@ -92,6 +138,7 @@ export default function AdminUsersPage() {
     setEditSurname(user.surname);
     setEditEmail(user.email);
     setEditRole(user.role);
+    setEditLinkedClient(user.linkedClientId ?? '');
     setEditPw('');
     setShowEditPw(false);
     setSendReset(false);
@@ -100,14 +147,19 @@ export default function AdminUsersPage() {
   async function handleEdit(e: React.FormEvent) {
     e.preventDefault();
     if (!editUser) return;
+    if (editRole === 'customer' && !editLinkedClient) {
+      notify('Please select a linked client for this customer', 'error');
+      return;
+    }
     setEditLoading(true);
     try {
       const body: Record<string, unknown> = {
         name: editName, surname: editSurname, email: editEmail, role: editRole,
+        linkedClientId: editRole === 'customer' ? editLinkedClient : null,
       };
       if (editPw) body.password = editPw;
 
-      const res = await fetch(`/api/users/${editUser.id}`, {
+      const res = await authFetch(`/api/users/${editUser.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -115,7 +167,7 @@ export default function AdminUsersPage() {
       if (!res.ok) { notify('Failed to update user', 'error'); return; }
 
       if (editPw && sendReset) {
-        await fetch(`/api/users/${editUser.id}/notify`, {
+        await authFetch(`/api/users/${editUser.id}/notify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ plainPassword: editPw, type: 'reset', name: `${editName} ${editSurname}`, email: editEmail }),
@@ -123,7 +175,7 @@ export default function AdminUsersPage() {
       }
       notify(`User updated${editPw && sendReset ? ' — reset email sent' : ''}`);
       setEditUser(null);
-      fetchUsers();
+      refresh();
     } finally {
       setEditLoading(false);
     }
@@ -131,14 +183,12 @@ export default function AdminUsersPage() {
 
   async function handleDelete(user: User) {
     if (!confirm(`Delete user ${user.name} ${user.surname}? This cannot be undone.`)) return;
-    const res = await fetch(`/api/users/${user.id}`, { method: 'DELETE' });
-    if (res.ok) { notify('User deleted'); fetchUsers(); }
+    const res = await authFetch(`/api/users/${user.id}`, { method: 'DELETE' });
+    if (res.ok) { notify('User deleted'); refresh(); }
     else notify('Failed to delete user', 'error');
   }
 
   if (loading || !session) return null;
-
-  const roles: Role[] = ['super-user', 'supervisor', 'admin'];
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -182,14 +232,26 @@ export default function AdminUsersPage() {
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-gray-500 font-medium">Role</label>
-              <select value={addRole} onChange={e => setAddRole(e.target.value as Role)}
+              <select value={addRole} onChange={e => setAddRole(e.target.value)}
                 className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]">
                 {roles.map(r => (
-                  <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                  <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
               </select>
             </div>
-            <div className="flex flex-col gap-3 justify-end">
+            {addRole === 'customer' && (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-gray-500 font-medium">Linked Client / Supplier</label>
+                <select value={addLinkedClient} onChange={e => setAddLinkedClient(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]">
+                  <option value="">— Select a client —</option>
+                  {clients.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="flex flex-col gap-3 justify-end sm:col-span-2">
               <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
                 <input type="checkbox" checked={addForcePwChange} onChange={e => setAddForcePwChange(e.target.checked)}
                   className="accent-[var(--color-primary)]" />
@@ -220,6 +282,7 @@ export default function AdminUsersPage() {
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Role</th>
+                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Linked Client</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">First Login</th>
                   <th className="px-6 py-3" />
                 </tr>
@@ -231,12 +294,13 @@ export default function AdminUsersPage() {
                     <td className="px-6 py-3 text-gray-600">{u.email}</td>
                     <td className="px-6 py-3">
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                        u.role === 'super-user' ? 'bg-purple-100 text-purple-700' :
-                        u.role === 'supervisor' ? 'bg-blue-100 text-blue-700' :
-                        'bg-gray-100 text-gray-600'
+                        ROLE_BADGE_CLASSES[u.role] ?? 'bg-gray-100 text-gray-600'
                       }`}>
-                        {ROLE_LABELS[u.role]}
+                        {roleLabel(u.role)}
                       </span>
+                    </td>
+                    <td className="px-6 py-3 text-gray-600 text-xs">
+                      {u.role === 'customer' ? clientName(u.linkedClientId) : '—'}
                     </td>
                     <td className="px-6 py-3 text-gray-500 text-xs">
                       {u.firstLoginAt ? new Date(u.firstLoginAt).toLocaleDateString() : 'Never'}
@@ -282,13 +346,25 @@ export default function AdminUsersPage() {
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-gray-500 font-medium">Role</label>
-                <select value={editRole} onChange={e => setEditRole(e.target.value as Role)}
+                <select value={editRole} onChange={e => setEditRole(e.target.value)}
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]">
                   {roles.map(r => (
-                    <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                    <option key={r.id} value={r.id}>{r.name}</option>
                   ))}
                 </select>
               </div>
+              {editRole === 'customer' && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-gray-500 font-medium">Linked Client / Supplier</label>
+                  <select value={editLinkedClient} onChange={e => setEditLinkedClient(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]">
+                    <option value="">— Select a client —</option>
+                    {clients.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-gray-500 font-medium">New Password <span className="text-gray-400 font-normal">(leave blank to keep current)</span></label>
                 <div className="relative">

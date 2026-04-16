@@ -1,38 +1,100 @@
-export type Role = 'super-user' | 'supervisor' | 'admin';
+// Dynamic roles & permissions.
+// Role IDs + permission keys are no longer hardcoded unions — they live in Vercel Blob
+// (roles.json, permissions.json) and can be edited by Super Admin.
+//
+// This file defines:
+//   - Types (Role, PermissionDef)
+//   - Seed/default constants used by /api/seed
+//   - hasPermission(perms, key) — pure array-contains check on the session's resolved permissions
 
-export const ROLE_HIERARCHY: Role[] = ['admin', 'supervisor', 'super-user'];
+export type Permission = string;
 
-export type Permission =
-  | 'manage_users'
-  | 'import_aged_stock'
-  | 'manage_control_files'
-  | 'send_picking_lists'
-  | 'capture_warehouse_receipts'
-  | 'capture_upliftment'
-  | 'print_reports'
-  | 'warehouse_dispatch';
-
-const PERMISSIONS: Record<Permission, Role[]> = {
-  manage_users: ['super-user'],
-  import_aged_stock: ['super-user'],
-  manage_control_files: ['super-user', 'supervisor', 'admin'],
-  send_picking_lists: ['super-user', 'supervisor'],
-  capture_warehouse_receipts: ['super-user', 'supervisor'],
-  capture_upliftment: ['super-user', 'supervisor', 'admin'],
-  print_reports: ['super-user', 'supervisor'],
-  warehouse_dispatch: ['super-user', 'supervisor'],
-};
-
-export function hasPermission(role: Role, permission: Permission): boolean {
-  return PERMISSIONS[permission]?.includes(role) ?? false;
+export interface Role {
+  id: string;
+  name: string;
+  description: string;
+  permissionKeys: string[];
+  isSystem: boolean;
+  createdAt: string;
 }
 
-export function hasMinRole(role: Role, minRole: Role): boolean {
-  return ROLE_HIERARCHY.indexOf(role) >= ROLE_HIERARCHY.indexOf(minRole);
+export interface PermissionDef {
+  key: string;
+  name: string;
+  description: string;
+  category: string;
+  isSystem: boolean;
+  createdAt: string;
 }
 
-export const ROLE_LABELS: Record<Role, string> = {
-  'super-user': 'Super User',
-  'supervisor': 'Supervisor',
-  'admin': 'Admin',
+/**
+ * System-seeded permissions. Cannot be deleted via UI. `isSystem: true` flag is
+ * set when seeded; newer user-created perms have `isSystem: false`.
+ */
+export const DEFAULT_PERMISSIONS: Array<Omit<PermissionDef, 'createdAt' | 'isSystem'>> = [
+  { key: 'view_dashboard', name: 'View Dashboard', description: 'View main dashboard', category: 'Dashboard' },
+  { key: 'view_dashboard_scoped', name: 'View Dashboard (Scoped)', description: 'View dashboard limited to linked client', category: 'Dashboard' },
+  { key: 'manage_users', name: 'Manage Users', description: 'Add / edit / remove users', category: 'Admin' },
+  { key: 'manage_roles', name: 'Manage Roles & Permissions', description: 'Add / edit / remove roles & permissions', category: 'Admin' },
+  { key: 'manage_clients', name: 'Manage Clients / Suppliers', description: 'Manage clients/suppliers masterfile', category: 'Control Centre' },
+  { key: 'manage_stores', name: 'Manage Stores', description: 'Manage stores masterfile', category: 'Control Centre' },
+  { key: 'manage_products', name: 'Manage Products', description: 'Manage products masterfile', category: 'Control Centre' },
+  { key: 'manage_reps', name: 'Manage Reps', description: 'Manage reps masterfile', category: 'Control Centre' },
+  { key: 'manage_warehouses', name: 'Manage Warehouses', description: 'Manage warehouses masterfile', category: 'Control Centre' },
+  { key: 'import_excel', name: 'Import Excel', description: 'Upload Excel files to control masterfiles', category: 'Control Centre' },
+];
+
+/**
+ * System-seeded roles. Role IDs are stable identifiers used on users. Cannot be
+ * deleted, but their permissionKeys can be edited by Super Admin.
+ */
+export const DEFAULT_ROLES: Array<Omit<Role, 'createdAt' | 'isSystem'>> = [
+  {
+    id: 'super-admin',
+    name: 'Super Admin',
+    description: 'Full platform access including role & permission management',
+    permissionKeys: DEFAULT_PERMISSIONS.map(p => p.key),
+  },
+  {
+    id: 'rvl-manager',
+    name: 'RVL Manager',
+    description: 'Operations lead — manages all control files and imports data',
+    permissionKeys: [
+      'view_dashboard',
+      'manage_clients',
+      'manage_stores',
+      'manage_products',
+      'manage_reps',
+      'manage_warehouses',
+      'import_excel',
+    ],
+  },
+  {
+    id: 'rep',
+    name: 'Rep',
+    description: 'Field representative — read-only dashboard access',
+    permissionKeys: ['view_dashboard'],
+  },
+  {
+    id: 'customer',
+    name: 'Customer',
+    description: 'External client user — scoped dashboard tied to their linked client record',
+    permissionKeys: ['view_dashboard_scoped'],
+  },
+];
+
+/**
+ * Map of legacy role strings → new role IDs. Used by seed migration only.
+ */
+export const LEGACY_ROLE_MIGRATION: Record<string, string> = {
+  'super-user': 'super-admin',
+  'supervisor': 'rvl-manager',
+  'admin': 'rvl-manager',
 };
+
+/**
+ * Pure check against the session's already-resolved permission list.
+ */
+export function hasPermission(perms: string[] | undefined, key: string): boolean {
+  return !!perms && perms.includes(key);
+}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
+import { useAuth, authFetch } from '@/lib/useAuth';
 import * as XLSX from 'xlsx';
 
 interface Store {
@@ -17,6 +18,7 @@ interface Store {
 }
 
 export default function StoresPage() {
+  useAuth('manage_stores');
   const [items, setItems] = useState<Store[]>([]);
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState<ToastData | null>(null);
@@ -44,7 +46,7 @@ export default function StoresPage() {
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
 
   async function fetchItems() {
-    const res = await fetch('/api/control/stores', { cache: 'no-store' });
+    const res = await authFetch('/api/control/stores', { cache: 'no-store' });
     if (res.ok) setItems(await res.json());
   }
 
@@ -54,7 +56,7 @@ export default function StoresPage() {
     e.preventDefault();
     setAddLoading(true);
     try {
-      const res = await fetch('/api/control/stores', {
+      const res = await authFetch('/api/control/stores', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -87,7 +89,7 @@ export default function StoresPage() {
     if (!editItem) return;
     setEditLoading(true);
     try {
-      const res = await fetch('/api/control/stores', {
+      const res = await authFetch('/api/control/stores', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -105,7 +107,7 @@ export default function StoresPage() {
 
   async function handleDelete(item: Store) {
     if (!confirm(`Delete ${item.name}?`)) return;
-    const res = await fetch(`/api/control/stores?id=${item.id}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/control/stores?id=${item.id}`, { method: 'DELETE' });
     if (res.ok) { notify('Store deleted'); fetchItems(); }
     else notify('Failed to delete', 'error');
   }
@@ -131,7 +133,7 @@ export default function StoresPage() {
 
       if (!records.length) { notify('No valid rows found', 'error'); return; }
 
-      const res = await fetch('/api/control/stores', {
+      const res = await authFetch('/api/control/stores', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(records),

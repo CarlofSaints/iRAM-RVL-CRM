@@ -1,7 +1,16 @@
 import fs from 'fs';
 import path from 'path';
 import { put, get } from '@vercel/blob';
-import { Role } from './roles';
+
+export type SubscriptionTier = 'standard' | 'pro';
+
+export interface UserSubscription {
+  tier: SubscriptionTier;
+  /** Set when an admin / billing flow flips a user to Pro. */
+  upgradedAt?: string;
+  /** Set when the user clicks "Upgrade to Pro" — pending admin action. */
+  requestedUpgradeAt?: string;
+}
 
 export interface User {
   id: string;
@@ -9,7 +18,14 @@ export interface User {
   surname: string;
   email: string;
   password: string;
-  role: Role;
+  /** Role ID — matches an entry in roles.json. No longer a hardcoded union. */
+  role: string;
+  /** Only set when role === 'customer'. References a clients/suppliers record id. */
+  linkedClientId?: string;
+  /** Public Vercel Blob URL of the user's profile picture. */
+  avatarUrl?: string;
+  /** Subscription tier + upgrade timestamps. Defaults to standard when undefined. */
+  subscription?: UserSubscription;
   forcePasswordChange: boolean;
   firstLoginAt: string | null;
   createdAt: string;

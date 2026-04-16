@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { loadUsers } from '@/lib/userData';
 import { sendWelcomeEmail, sendPasswordResetEmail } from '@/lib/email';
+import { requirePermission } from '@/lib/rolesData';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const guard = await requirePermission(req, 'manage_users');
+  if (guard instanceof NextResponse) return guard;
+
   const { id } = await params;
   const { plainPassword, type, name: bodyName, email: bodyEmail } = await req.json();
 

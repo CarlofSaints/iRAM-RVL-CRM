@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import Image from 'next/image';
 import { Session } from '@/lib/useAuth';
-import { Role, hasMinRole, hasPermission } from '@/lib/roles';
 
 interface SidebarProps {
   session: Session;
@@ -44,8 +43,21 @@ function SubNavLink({ href, label, active }: { href: string; label: string; acti
 
 export default function Sidebar({ session, onLogout }: SidebarProps) {
   const pathname = usePathname();
+  const perms = session.permissions ?? [];
+  const has = (k: string) => perms.includes(k);
+
+  // Per-link permission map for Control Centre children
+  const controlLinks: Array<{ href: string; label: string; perm: string }> = [
+    { href: '/control-centre/clients', label: 'Clients / Suppliers', perm: 'manage_clients' },
+    { href: '/control-centre/stores', label: 'Stores', perm: 'manage_stores' },
+    { href: '/control-centre/products', label: 'Products', perm: 'manage_products' },
+    { href: '/control-centre/reps', label: 'Reps', perm: 'manage_reps' },
+    { href: '/control-centre/warehouses', label: 'Warehouses', perm: 'manage_warehouses' },
+  ];
+  const visibleControlLinks = controlLinks.filter(l => has(l.perm));
+  const showControlSection = visibleControlLinks.length > 0;
+
   const [controlOpen, setControlOpen] = useState(pathname.startsWith('/control-centre'));
-  const role = session.role;
 
   return (
     <aside className="w-64 bg-[var(--color-charcoal)] min-h-screen flex flex-col fixed left-0 top-0 z-40">
@@ -60,18 +72,37 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
         </div>
       </div>
 
-      {/* User info */}
-      <div className="px-5 py-3 border-b border-white/10">
-        <div className="text-white text-sm font-medium">{session.name} {session.surname}</div>
-        <div className="text-gray-400 text-xs">{session.role === 'super-user' ? 'Super User' : session.role === 'supervisor' ? 'Supervisor' : 'Admin'}</div>
-      </div>
+      {/* User info — clickable to /account */}
+      <Link
+        href="/account"
+        className={`px-5 py-3 border-b border-white/10 flex items-center gap-3 transition-colors ${
+          pathname === '/account' ? 'bg-white/10' : 'hover:bg-white/5'
+        }`}
+      >
+        {session.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={session.avatarUrl}
+            alt={session.name}
+            className="w-10 h-10 rounded-full object-cover border border-white/20 flex-shrink-0"
+          />
+        ) : (
+          <div className="w-10 h-10 rounded-full bg-[var(--color-primary)] text-white flex items-center justify-center font-bold text-sm flex-shrink-0">
+            {`${(session.name?.[0] ?? '').toUpperCase()}${(session.surname?.[0] ?? '').toUpperCase()}` || '?'}
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="text-white text-sm font-medium truncate">{session.name} {session.surname}</div>
+          <div className="text-gray-400 text-xs truncate">{session.roleName ?? session.role}</div>
+        </div>
+      </Link>
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 flex flex-col gap-1 overflow-y-auto">
         <NavLink href="/dashboard" label="Dashboard" active={pathname === '/dashboard'} />
 
-        {/* Control Centre — all roles */}
-        {hasPermission(role, 'manage_control_files') && (
+        {/* Control Centre — only links the user has perm for */}
+        {showControlSection && (
           <>
             <button
               onClick={() => setControlOpen(v => !v)}
@@ -89,19 +120,20 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
             {controlOpen && (
               <div className="flex flex-col gap-0.5 mt-0.5">
                 <SubNavLink href="/control-centre" label="Overview" active={pathname === '/control-centre'} />
-                <SubNavLink href="/control-centre/clients" label="Clients / Suppliers" active={pathname === '/control-centre/clients'} />
-                <SubNavLink href="/control-centre/stores" label="Stores" active={pathname === '/control-centre/stores'} />
-                <SubNavLink href="/control-centre/products" label="Products" active={pathname === '/control-centre/products'} />
-                <SubNavLink href="/control-centre/reps" label="Reps" active={pathname === '/control-centre/reps'} />
-                <SubNavLink href="/control-centre/warehouses" label="Warehouses" active={pathname === '/control-centre/warehouses'} />
+                {visibleControlLinks.map(l => (
+                  <SubNavLink key={l.href} href={l.href} label={l.label} active={pathname === l.href} />
+                ))}
               </div>
             )}
           </>
         )}
 
-        {/* Admin — super-user only */}
-        {hasMinRole(role, 'super-user') && (
+        {/* Admin section */}
+        {has('manage_users') && (
           <NavLink href="/admin/users" label="User Management" active={pathname === '/admin/users'} />
+        )}
+        {has('manage_roles') && (
+          <NavLink href="/admin/roles" label="Roles & Permissions" active={pathname === '/admin/roles'} />
         )}
       </nav>
 
