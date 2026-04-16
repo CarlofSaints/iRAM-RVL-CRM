@@ -18,6 +18,7 @@ interface User {
   email: string;
   role: string;
   linkedClientId?: string;
+  assignedClientIds?: string[];
   subscription?: UserSubscription;
   forcePasswordChange: boolean;
   firstLoginAt: string | null;
@@ -32,6 +33,12 @@ interface RoleOption {
 interface ClientOption {
   id: string;
   name: string;
+  vendorNumbers?: string[];
+}
+
+function clientLabel(c: ClientOption): string {
+  const nums = (c.vendorNumbers ?? []).filter(Boolean);
+  return nums.length ? `${c.name} - ${nums.join(', ')}` : c.name;
 }
 
 const ROLE_BADGE_CLASSES: Record<string, string> = {
@@ -55,6 +62,8 @@ export default function AdminUsersPage() {
   const [addPw, setAddPw] = useState('');
   const [addRole, setAddRole] = useState<string>('rep');
   const [addLinkedClient, setAddLinkedClient] = useState('');
+  const [addAssignedClients, setAddAssignedClients] = useState<string[]>([]);
+  const [addClientSearch, setAddClientSearch] = useState('');
   const [addForcePwChange, setAddForcePwChange] = useState(true);
   const [showAddPw, setShowAddPw] = useState(false);
   const [sendWelcome, setSendWelcome] = useState(true);
@@ -73,6 +82,8 @@ export default function AdminUsersPage() {
   const [editEmail, setEditEmail] = useState('');
   const [editRole, setEditRole] = useState<string>('rep');
   const [editLinkedClient, setEditLinkedClient] = useState('');
+  const [editAssignedClients, setEditAssignedClients] = useState<string[]>([]);
+  const [editClientSearch, setEditClientSearch] = useState('');
   const [editPw, setEditPw] = useState('');
   const [showEditPw, setShowEditPw] = useState(false);
   const [sendReset, setSendReset] = useState(false);
@@ -82,7 +93,11 @@ export default function AdminUsersPage() {
     setToast({ message, type });
 
   const roleLabel = (id: string) => roles.find(r => r.id === id)?.name ?? id;
-  const clientName = (id?: string) => (id ? clients.find(c => c.id === id)?.name ?? '—' : '—');
+  const clientName = (id?: string) => {
+    if (!id) return '—';
+    const c = clients.find(x => x.id === id);
+    return c ? clientLabel(c) : '—';
+  };
 
   async function refresh() {
     const [uRes, rRes, cRes] = await Promise.all([
@@ -122,6 +137,7 @@ export default function AdminUsersPage() {
           name: addName, surname: addSurname, email: addEmail,
           password: addPw, role: addRole,
           linkedClientId: addRole === 'customer' ? addLinkedClient : undefined,
+          assignedClientIds: addRole === 'customer' ? undefined : addAssignedClients,
           forcePasswordChange: addForcePwChange, sendWelcome,
         }),
       });
@@ -137,7 +153,7 @@ export default function AdminUsersPage() {
       }
       notify(`User ${addName} ${addSurname} created${sendWelcome ? ' — welcome email sent' : ''}`);
       setAddName(''); setAddSurname(''); setAddEmail(''); setAddPw('');
-      setAddRole('rep'); setAddLinkedClient('');
+      setAddRole('rep'); setAddLinkedClient(''); setAddAssignedClients([]); setAddClientSearch('');
       setAddForcePwChange(true); setSendWelcome(true);
       refresh();
     } finally {
@@ -152,6 +168,8 @@ export default function AdminUsersPage() {
     setEditEmail(user.email);
     setEditRole(user.role);
     setEditLinkedClient(user.linkedClientId ?? '');
+    setEditAssignedClients(user.assignedClientIds ?? []);
+    setEditClientSearch('');
     setEditPw('');
     setShowEditPw(false);
     setSendReset(false);
@@ -169,6 +187,7 @@ export default function AdminUsersPage() {
       const body: Record<string, unknown> = {
         name: editName, surname: editSurname, email: editEmail, role: editRole,
         linkedClientId: editRole === 'customer' ? editLinkedClient : null,
+        assignedClientIds: editRole === 'customer' ? [] : editAssignedClients,
       };
       if (editPw) body.password = editPw;
 
@@ -294,9 +313,21 @@ export default function AdminUsersPage() {
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]">
                   <option value="">— Select a client —</option>
                   {clients.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
+                    <option key={c.id} value={c.id}>{clientLabel(c)}</option>
                   ))}
                 </select>
+              </div>
+            )}
+            {addRole !== 'customer' && (
+              <div className="sm:col-span-2">
+                <ClientAssignmentPicker
+                  clients={clients}
+                  selected={addAssignedClients}
+                  onChange={setAddAssignedClients}
+                  search={addClientSearch}
+                  onSearchChange={setAddClientSearch}
+                  note="Super Admins see all clients regardless of assignment."
+                />
               </div>
             )}
             <div className="flex flex-col gap-3 justify-end sm:col-span-2">
@@ -350,7 +381,7 @@ export default function AdminUsersPage() {
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Role</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Plan</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Linked Client</th>
+                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Client Access</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">First Login</th>
                   <th className="px-6 py-3" />
                 </tr>
@@ -392,7 +423,16 @@ export default function AdminUsersPage() {
                           </div>
                         </td>
                         <td className="px-6 py-3 text-gray-600 text-xs">
-                          {u.role === 'customer' ? clientName(u.linkedClientId) : '—'}
+                          {u.role === 'super-admin' ? (
+                            <span className="italic text-gray-500">All clients</span>
+                          ) : u.role === 'customer' ? (
+                            clientName(u.linkedClientId)
+                          ) : (() => {
+                            const n = u.assignedClientIds?.length ?? 0;
+                            if (n === 0) return <span className="text-gray-400">None</span>;
+                            if (n <= 2) return (u.assignedClientIds ?? []).map(clientName).join(', ');
+                            return `${n} clients`;
+                          })()}
                         </td>
                         <td className="px-6 py-3 text-gray-500 text-xs">
                           {u.firstLoginAt ? new Date(u.firstLoginAt).toLocaleDateString() : 'Never'}
@@ -468,10 +508,20 @@ export default function AdminUsersPage() {
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]">
                     <option value="">— Select a client —</option>
                     {clients.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
+                      <option key={c.id} value={c.id}>{clientLabel(c)}</option>
                     ))}
                   </select>
                 </div>
+              )}
+              {editRole !== 'customer' && (
+                <ClientAssignmentPicker
+                  clients={clients}
+                  selected={editAssignedClients}
+                  onChange={setEditAssignedClients}
+                  search={editClientSearch}
+                  onSearchChange={setEditClientSearch}
+                  note="Super Admins see all clients regardless of assignment."
+                />
               )}
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-gray-500 font-medium">New Password <span className="text-gray-400 font-normal">(leave blank to keep current)</span></label>
@@ -507,6 +557,92 @@ export default function AdminUsersPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+interface ClientAssignmentPickerProps {
+  clients: ClientOption[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+  search: string;
+  onSearchChange: (next: string) => void;
+  note?: string;
+}
+
+function ClientAssignmentPicker({
+  clients, selected, onChange, search, onSearchChange, note,
+}: ClientAssignmentPickerProps) {
+  const selectedSet = new Set(selected);
+  const q = search.trim().toLowerCase();
+  const visibleClients = q
+    ? clients.filter(c =>
+        c.name.toLowerCase().includes(q) ||
+        (c.vendorNumbers ?? []).some(v => v.toLowerCase().includes(q))
+      )
+    : clients;
+  const allVisibleSelected = visibleClients.length > 0
+    && visibleClients.every(c => selectedSet.has(c.id));
+
+  function toggle(id: string) {
+    if (selectedSet.has(id)) onChange(selected.filter(x => x !== id));
+    else onChange([...selected, id]);
+  }
+
+  function selectAllVisible() {
+    const next = new Set(selected);
+    visibleClients.forEach(c => next.add(c.id));
+    onChange(Array.from(next));
+  }
+
+  function clearAllVisible() {
+    const visibleIds = new Set(visibleClients.map(c => c.id));
+    onChange(selected.filter(id => !visibleIds.has(id)));
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <label className="text-xs text-gray-500 font-medium">
+          Assigned Clients / Suppliers
+          <span className="ml-2 text-gray-400 font-normal">
+            {selected.length} selected
+          </span>
+        </label>
+        <div className="flex gap-3 text-xs">
+          <button type="button" onClick={allVisibleSelected ? clearAllVisible : selectAllVisible}
+            className="text-blue-600 hover:text-blue-800 font-medium">
+            {allVisibleSelected ? 'Clear' : 'Select'} {q ? 'filtered' : 'all'}
+          </button>
+        </div>
+      </div>
+      <input
+        value={search}
+        onChange={e => onSearchChange(e.target.value)}
+        placeholder="Search by name or vendor number..."
+        className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+      />
+      <div className="border border-gray-200 rounded-lg max-h-52 overflow-y-auto bg-gray-50/40">
+        {clients.length === 0 ? (
+          <div className="px-3 py-4 text-xs text-gray-400 text-center">
+            No clients defined yet
+          </div>
+        ) : visibleClients.length === 0 ? (
+          <div className="px-3 py-4 text-xs text-gray-400 text-center">
+            No matches
+          </div>
+        ) : (
+          visibleClients.map(c => (
+            <label key={c.id}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0">
+              <input type="checkbox" checked={selectedSet.has(c.id)} onChange={() => toggle(c.id)}
+                className="accent-[var(--color-primary)]" />
+              <span className="flex-1 truncate">{clientLabel(c)}</span>
+            </label>
+          ))
+        )}
+      </div>
+      {note && <p className="text-xs text-gray-400">{note}</p>}
     </div>
   );
 }
