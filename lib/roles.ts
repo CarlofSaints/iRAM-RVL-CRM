@@ -45,6 +45,7 @@ export const DEFAULT_PERMISSIONS: Array<Omit<PermissionDef, 'createdAt' | 'isSys
   { key: 'import_excel', name: 'Import Excel', description: 'Upload Excel files to control masterfiles', category: 'Control Centre' },
   { key: 'view_aged_stock', name: 'View Aged Stock', description: 'View the aged stock dashboard (scoped to assigned clients)', category: 'Aged Stock' },
   { key: 'load_aged_stock', name: 'Load Aged Stock', description: 'Upload & commit aged stock lists', category: 'Aged Stock' },
+  { key: 'manage_pick_slips', name: 'Manage Pick Slips', description: 'Edit, send, and delete pick slips', category: 'Aged Stock' },
 ];
 
 /**
@@ -72,6 +73,7 @@ export const DEFAULT_ROLES: Array<Omit<Role, 'createdAt' | 'isSystem'>> = [
       'import_excel',
       'view_aged_stock',
       'load_aged_stock',
+      'manage_pick_slips',
     ],
   },
   {

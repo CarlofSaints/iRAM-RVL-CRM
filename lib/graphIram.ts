@@ -267,6 +267,71 @@ export async function uploadNewFile(
 }
 
 /**
+ * Rename a file in SharePoint. PATCH the item's `name` field.
+ */
+export async function renameFile(
+  driveId: string,
+  fileId: string,
+  newName: string
+): Promise<{ webUrl: string }> {
+  const token = await getToken();
+  const url = `${GRAPH}/drives/${driveId}/items/${fileId}`;
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name: newName }),
+    });
+
+    if (res.status === 429) {
+      if (attempt === 3) throw new Error('iRam: renameFile throttled after 3 retries');
+      const retryAfterSec = parseInt(res.headers.get('Retry-After') ?? '15', 10);
+      await sleep(Math.min(retryAfterSec, 30) * 1000);
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`iRam: renameFile failed (${res.status}): ${await res.text()}`);
+    }
+    const data = await res.json();
+    return { webUrl: data.webUrl as string };
+  }
+  throw new Error('iRam: renameFile failed — max retries exceeded');
+}
+
+/**
+ * Delete a file from SharePoint.
+ */
+export async function deleteFile(
+  driveId: string,
+  fileId: string
+): Promise<void> {
+  const token = await getToken();
+  const url = `${GRAPH}/drives/${driveId}/items/${fileId}`;
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (res.status === 429) {
+      if (attempt === 3) throw new Error('iRam: deleteFile throttled after 3 retries');
+      const retryAfterSec = parseInt(res.headers.get('Retry-After') ?? '15', 10);
+      await sleep(Math.min(retryAfterSec, 30) * 1000);
+      continue;
+    }
+    if (res.status === 204 || res.ok) return;
+    if (res.status === 404) return; // already gone
+    throw new Error(`iRam: deleteFile failed (${res.status}): ${await res.text()}`);
+  }
+  throw new Error('iRam: deleteFile failed — max retries exceeded');
+}
+
+/**
  * Upload (PUT replace) the given buffer over an existing file. Honours an
  * optional If-Match eTag for optimistic concurrency. Up to 3 retries on 429.
  */

@@ -194,6 +194,21 @@ export async function POST(
     const warehouse = storeRec?.linkedWarehouse || 'N/A';
     const siteName = siteRows[0].siteName;
 
+    // Build row data and filter out zero rows
+    const pdfRows = siteRows
+      .map(r => ({
+        barcode: r.barcode,
+        articleCode: r.articleCode,
+        vendorProductCode: r.vendorProductCode,
+        description: r.description,
+        qty: r.qty,
+        val: r.val,
+      }))
+      .filter(r => r.qty > 0 || r.val > 0);
+
+    // Skip entire store if no rows remain after filter
+    if (pdfRows.length === 0) continue;
+
     // Generate sequence
     const seqKey = `${vendorNumber}-${dateStr}`;
     let seq = seqCounters.get(seqKey);
@@ -203,8 +218,8 @@ export async function POST(
     const pickSlipId = `PS-${vendorNumber}-${dateStr}-${String(seq).padStart(3, '0')}`;
     seqCounters.set(seqKey, seq + 1);
 
-    const totalQty = siteRows.reduce((s, r) => s + r.qty, 0);
-    const totalVal = siteRows.reduce((s, r) => s + r.val, 0);
+    const totalQty = pdfRows.reduce((s, r) => s + r.qty, 0);
+    const totalVal = pdfRows.reduce((s, r) => s + r.val, 0);
 
     // Build PDF
     let pdfBuffer: Buffer;
@@ -217,14 +232,7 @@ export async function POST(
         siteCode,
         warehouse,
         loadDate: dateDash,
-        rows: siteRows.map(r => ({
-          barcode: r.barcode,
-          articleCode: r.articleCode,
-          vendorProductCode: r.vendorProductCode,
-          description: r.description,
-          qty: r.qty,
-          val: r.val,
-        })),
+        rows: pdfRows,
       });
     } catch (err) {
       uploadErrors.push(`PDF gen failed for ${siteCode}: ${err instanceof Error ? err.message : String(err)}`);
@@ -236,6 +244,7 @@ export async function POST(
 
     // Upload to SP
     let spWebUrl: string | undefined;
+    let spFileId: string | undefined;
     try {
       const uploaded = await uploadNewFile(
         dateFolder.driveId,
@@ -245,6 +254,7 @@ export async function POST(
         'application/pdf'
       );
       spWebUrl = uploaded.webUrl;
+      spFileId = uploaded.id;
     } catch (err) {
       uploadErrors.push(`Upload failed for ${siteCode}: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -259,10 +269,15 @@ export async function POST(
       warehouse,
       totalQty,
       totalVal,
-      rowCount: siteRows.length,
+      rowCount: pdfRows.length,
       fileName,
       spWebUrl,
       generatedAt: new Date().toISOString(),
+      status: 'generated',
+      clientName: client.name,
+      rows: pdfRows,
+      spDriveId: dateFolder.driveId,
+      spFileId,
     });
   }
 

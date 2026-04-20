@@ -100,6 +100,30 @@ export async function sendUpgradeConfirmedEmail(to: string, name: string) {
   });
 }
 
+export async function sendPickSlipEmail(opts: {
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  bodyHtml: string;
+  attachments: Array<{ filename: string; content: Buffer }>;
+}) {
+  const attachments = opts.attachments.map(a => ({
+    filename: a.filename,
+    content: a.content.toString('base64'),
+  }));
+
+  return getResend().emails.send({
+    from: FROM,
+    to: opts.to,
+    cc: opts.cc?.length ? opts.cc : undefined,
+    bcc: opts.bcc?.length ? opts.bcc : undefined,
+    subject: opts.subject,
+    html: emailShell(opts.bodyHtml),
+    attachments,
+  });
+}
+
 export async function sendPasswordResetEmail(to: string, name: string, password: string) {
   const appUrl = getAppUrl();
   const body = `

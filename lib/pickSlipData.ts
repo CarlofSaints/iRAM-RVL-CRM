@@ -11,8 +11,17 @@
 import fs from 'fs';
 import path from 'path';
 import { put, get } from '@vercel/blob';
+import type { PickSlipPdfRow } from './pickSlipPdf';
 
 // ── Types ────────────────────────────────────────────────────────────────────
+
+export type PickSlipStatus =
+  | 'generated'
+  | 'sent'
+  | 'picked'
+  | 'receipted'
+  | 'in-transit'
+  | 'returned-to-vendor';
 
 export interface PickSlipRecord {
   /** Unique pick slip ID, e.g. PS-9448-20260309-001 */
@@ -31,6 +40,22 @@ export interface PickSlipRecord {
   /** Set after successful SP upload */
   spWebUrl?: string;
   generatedAt: string;
+  /** Current workflow status */
+  status: PickSlipStatus;
+  /** Denormalized client name for listing */
+  clientName: string;
+  /** Line items for editing without re-reading the load */
+  rows: PickSlipPdfRow[];
+  /** ISO timestamp — set after email send */
+  sentAt?: string;
+  /** ISO timestamp — set after edit */
+  editedAt?: string;
+  /** SP web URL of the edited PDF */
+  spWebUrlEdited?: string;
+  /** SP drive ID from upload response */
+  spDriveId?: string;
+  /** SP file ID from upload response */
+  spFileId?: string;
 }
 
 export interface PickSlipRunIndex {
@@ -129,4 +154,88 @@ export function nextSequenceFromRuns(
     }
   }
   return max + 1;
+}
+
+// ── List / update / remove helpers ──────────────────────────────────────────
+
+/**
+ * List all pick slip runs across the given client IDs.
+ * Iterates each client's aged-stock load index → reads the run for each load.
+ */
+export async function listAllPickSlipRuns(
+  clientIds: string[],
+  listLoadsFn: (clientId: string) => Promise<Array<{ id: string }>>
+): Promise<PickSlipRunIndex[]> {
+  const runs: PickSlipRunIndex[] = [];
+  for (const clientId of clientIds) {
+    const loads = await listLoadsFn(clientId);
+    for (const load of loads) {
+      const run = await getPickSlipRun(clientId, load.id);
+      if (run && run.slips.length > 0) runs.push(run);
+    }
+  }
+  return runs;
+}
+
+/**
+ * Update a single slip within its run and persist.
+ */
+export async function updateSlipInRun(
+  clientId: string,
+  loadId: string,
+  slipId: string,
+  patch: Partial<PickSlipRecord>
+): Promise<PickSlipRecord | null> {
+  const run = await getPickSlipRun(clientId, loadId);
+  if (!run) return null;
+  const idx = run.slips.findIndex(s => s.id === slipId);
+  if (idx === -1) return null;
+  run.slips[idx] = { ...run.slips[idx], ...patch };
+  await savePickSlipRun(run);
+  return run.slips[idx];
+}
+
+/**
+ * Remove a single slip from its run and persist.
+ */
+export async function removeSlipFromRun(
+  clientId: string,
+  loadId: string,
+  slipId: string
+): Promise<boolean> {
+  const run = await getPickSlipRun(clientId, loadId);
+  if (!run) return false;
+  const before = run.slips.length;
+  run.slips = run.slips.filter(s => s.id !== slipId);
+  if (run.slips.length === before) return false;
+  await savePickSlipRun(run);
+  return true;
+}
+
+/**
+ * Bulk remove slips across multiple runs.
+ */
+export async function bulkRemoveSlips(
+  items: Array<{ clientId: string; loadId: string; slipId: string }>
+): Promise<number> {
+  // Group by clientId+loadId to minimize reads/writes
+  const grouped = new Map<string, typeof items>();
+  for (const item of items) {
+    const key = `${item.clientId}|${item.loadId}`;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(item);
+  }
+
+  let deleted = 0;
+  for (const [, group] of grouped) {
+    const { clientId, loadId } = group[0];
+    const run = await getPickSlipRun(clientId, loadId);
+    if (!run) continue;
+    const idsToRemove = new Set(group.map(g => g.slipId));
+    const before = run.slips.length;
+    run.slips = run.slips.filter(s => !idsToRemove.has(s.id));
+    deleted += before - run.slips.length;
+    await savePickSlipRun(run);
+  }
+  return deleted;
 }
