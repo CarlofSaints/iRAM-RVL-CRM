@@ -17,6 +17,7 @@ interface SpLink {
   lastRefreshedAt?: string;
   lastRefreshError?: string;
   lastWriteAt?: string;
+  pickSlipFolderUrl?: string;
 }
 
 interface Client {
@@ -54,6 +55,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   const [addVendor, setAddVendor] = useState('');
   const [addFolderUrl, setAddFolderUrl] = useState('');
   const [addFileName, setAddFileName] = useState('');
+  const [addPickSlipFolder, setAddPickSlipFolder] = useState('');
   const [addLoading, setAddLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
 
@@ -63,6 +65,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   const [editVendor, setEditVendor] = useState('');
   const [editFolderUrl, setEditFolderUrl] = useState('');
   const [editFileName, setEditFileName] = useState('');
+  const [editPickSlipFolder, setEditPickSlipFolder] = useState('');
   const [editLoading, setEditLoading] = useState(false);
 
   // Per-row refreshing state
@@ -145,12 +148,13 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         body: JSON.stringify({
           channel, vendorNumber: addVendor.trim(),
           folderUrl: addFolderUrl.trim(), fileName: addFileName.trim(),
+          pickSlipFolderUrl: addPickSlipFolder.trim() || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) { notify(data.error ?? 'Failed to add link', 'error'); return; }
       notify('SP link added');
-      setAddChannelOther(''); setAddFolderUrl(''); setAddFileName('');
+      setAddChannelOther(''); setAddFolderUrl(''); setAddFileName(''); setAddPickSlipFolder('');
       await fetchAll();
     } finally {
       setAddLoading(false);
@@ -183,6 +187,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     setEditVendor(link.vendorNumber);
     setEditFolderUrl(link.folderUrl);
     setEditFileName(link.fileName);
+    setEditPickSlipFolder(link.pickSlipFolderUrl ?? '');
   }
 
   async function handleEdit(e: React.FormEvent) {
@@ -198,6 +203,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           vendorNumber: editVendor.trim(),
           folderUrl: editFolderUrl.trim(),
           fileName: editFileName.trim(),
+          pickSlipFolderUrl: editPickSlipFolder.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -289,6 +295,13 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
               placeholder="e.g. GENKEM MASSBUILD - 42 - PRODUCT CONTROL FILE.xlsx"
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
           </div>
+          <div className="flex flex-col gap-1 md:col-span-2">
+            <label className="text-xs text-gray-500 font-medium">Pick Slip Folder URL <span className="text-gray-400">(optional)</span></label>
+            <input value={addPickSlipFolder} onChange={e => setAddPickSlipFolder(e.target.value)}
+              placeholder="https://iramsa.sharepoint.com/sites/.../Pick Slips/..."
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
+            <p className="text-xs text-gray-400">SP folder where pick slip PDFs will be uploaded. Leave blank if not needed.</p>
+          </div>
           <div className="md:col-span-2 flex gap-3">
             <button type="button" onClick={handleTestConnection} disabled={testLoading || addLoading}
               className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">
@@ -323,7 +336,12 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                 <tr key={l.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-3 font-medium text-gray-900">{l.channel}</td>
                   <td className="px-6 py-3 text-gray-600 font-mono text-xs">{l.vendorNumber}</td>
-                  <td className="px-6 py-3 text-gray-700 text-xs max-w-md truncate" title={l.fileName}>{l.fileName}</td>
+                  <td className="px-6 py-3 text-gray-700 text-xs max-w-md">
+                    <div className="truncate" title={l.fileName}>{l.fileName}</div>
+                    {l.pickSlipFolderUrl && (
+                      <div className="text-gray-400 truncate mt-0.5" title={l.pickSlipFolderUrl}>Pick slips: configured</div>
+                    )}
+                  </td>
                   <td className="px-6 py-3 text-gray-600 text-xs">
                     <div>{fmtDate(l.lastRefreshedAt)}</div>
                     {l.lastRefreshError && (
@@ -378,6 +396,12 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
               <div className="flex flex-col gap-1 col-span-2">
                 <label className="text-xs text-gray-500 font-medium">File Name</label>
                 <input value={editFileName} onChange={e => setEditFileName(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
+              </div>
+              <div className="flex flex-col gap-1 col-span-2">
+                <label className="text-xs text-gray-500 font-medium">Pick Slip Folder URL <span className="text-gray-400">(optional)</span></label>
+                <input value={editPickSlipFolder} onChange={e => setEditPickSlipFolder(e.target.value)}
+                  placeholder="https://iramsa.sharepoint.com/sites/.../Pick Slips/..."
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
               </div>
               <div className="col-span-2 flex gap-3 pt-2">

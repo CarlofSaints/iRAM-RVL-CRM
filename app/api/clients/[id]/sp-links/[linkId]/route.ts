@@ -21,6 +21,9 @@ export async function PATCH(
   const vendorNumber = body.vendorNumber !== undefined ? String(body.vendorNumber).trim() : undefined;
   const folderUrl = body.folderUrl !== undefined ? String(body.folderUrl).trim() : undefined;
   const fileName = body.fileName !== undefined ? String(body.fileName).trim() : undefined;
+  const pickSlipFolderUrl = body.pickSlipFolderUrl !== undefined
+    ? (String(body.pickSlipFolderUrl).trim() || undefined)
+    : undefined;
 
   // If folderUrl or fileName changed, re-resolve and refresh cached driveId/fileId.
   let driveId = link.driveId;
@@ -52,6 +55,7 @@ export async function PATCH(
     ...(vendorNumber !== undefined ? { vendorNumber } : {}),
     ...(folderUrl !== undefined ? { folderUrl } : {}),
     ...(fileName !== undefined ? { fileName } : {}),
+    ...(pickSlipFolderUrl !== undefined ? { pickSlipFolderUrl } : {}),
     driveId,
     fileId,
   });

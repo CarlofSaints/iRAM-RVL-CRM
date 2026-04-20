@@ -34,6 +34,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const vendorNumber = (body.vendorNumber ?? '').toString().trim();
   const folderUrl = (body.folderUrl ?? '').toString().trim();
   const fileName = (body.fileName ?? '').toString().trim();
+  const pickSlipFolderUrl = (body.pickSlipFolderUrl ?? '').toString().trim() || undefined;
   const dryRun = !!body.dryRun;
 
   if (!channel || !vendorNumber || !folderUrl || !fileName) {
@@ -92,6 +93,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     fileName,
     driveId,
     fileId,
+    ...(pickSlipFolderUrl ? { pickSlipFolderUrl } : {}),
   };
   await addSpLink(id, link);
   return NextResponse.json(link, { status: 201 });

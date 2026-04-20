@@ -181,6 +181,91 @@ export async function downloadFile(downloadUrl: string): Promise<Buffer> {
   return Buffer.from(arr);
 }
 
+// ── Folder creation ──────────────────────────────────────────────────────────
+
+/**
+ * Create (or reuse) a child folder inside a parent. Uses "replace" conflict
+ * behaviour so it's idempotent — calling twice returns the same folder.
+ */
+export async function createFolder(
+  driveId: string,
+  parentFolderId: string,
+  folderName: string
+): Promise<{ id: string; webUrl: string }> {
+  const token = await getToken();
+  const url = `${GRAPH}/drives/${driveId}/items/${parentFolderId}/children`;
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: folderName,
+        folder: {},
+        '@microsoft.graph.conflictBehavior': 'replace',
+      }),
+    });
+
+    if (res.status === 429) {
+      if (attempt === 3) throw new Error('iRam: createFolder throttled after 3 retries');
+      const retryAfterSec = parseInt(res.headers.get('Retry-After') ?? '15', 10);
+      await sleep(Math.min(retryAfterSec, 30) * 1000);
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`iRam: createFolder failed (${res.status}): ${await res.text()}`);
+    }
+    const data = await res.json();
+    return { id: data.id as string, webUrl: data.webUrl as string };
+  }
+  throw new Error('iRam: createFolder failed — max retries exceeded');
+}
+
+// ── Upload by path (create-or-replace) ──────────────────────────────────────
+
+/**
+ * Upload a new file (or overwrite an existing one by the same name) into a
+ * folder. Uses the PUT-by-path endpoint which doesn't need a fileId.
+ */
+export async function uploadNewFile(
+  driveId: string,
+  parentFolderId: string,
+  fileName: string,
+  buffer: Buffer,
+  contentType: string
+): Promise<{ id: string; webUrl: string }> {
+  const token = await getToken();
+  const encoded = encodeURIComponent(fileName);
+  const url = `${GRAPH}/drives/${driveId}/items/${parentFolderId}:/${encoded}:/content`;
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': contentType,
+      },
+      body: new Uint8Array(buffer),
+    });
+
+    if (res.status === 429) {
+      if (attempt === 3) throw new Error('iRam: uploadNewFile throttled after 3 retries');
+      const retryAfterSec = parseInt(res.headers.get('Retry-After') ?? '15', 10);
+      await sleep(Math.min(retryAfterSec, 30) * 1000);
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`iRam: uploadNewFile failed (${res.status}): ${await res.text()}`);
+    }
+    const data = await res.json();
+    return { id: data.id as string, webUrl: data.webUrl as string };
+  }
+  throw new Error('iRam: uploadNewFile failed — max retries exceeded');
+}
+
 /**
  * Upload (PUT replace) the given buffer over an existing file. Honours an
  * optional If-Match eTag for optimistic concurrency. Up to 3 retries on 429.

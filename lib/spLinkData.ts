@@ -26,6 +26,8 @@ export interface SpLink {
   lastRefreshError?: string;
   /** ISO of last successful upload back to SP — informational. */
   lastWriteAt?: string;
+  /** SP folder URL where pick slip PDFs should be uploaded. */
+  pickSlipFolderUrl?: string;
 }
 
 export interface ClientWithLinks {

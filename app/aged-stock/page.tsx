@@ -61,6 +61,15 @@ export default function AgedStockDashboardPage() {
   const [vendorCodeQuery, setVendorCodeQuery] = useState('');
   const [loadFilter, setLoadFilter] = useState(''); // "" = all loads
 
+  // Pick slip generation
+  const [psModal, setPsModal] = useState(false);
+  const [psGenerating, setPsGenerating] = useState(false);
+  const [psResult, setPsResult] = useState<{
+    generated: number; uploaded: number; failed: number;
+    uploadErrors?: string[]; folderErrors?: string[];
+  } | null>(null);
+  const [psDuplicate, setPsDuplicate] = useState(false);
+
   const notify = (message: string, type: 'success' | 'error' = 'success') =>
     setToast({ message, type });
 
@@ -127,6 +136,53 @@ export default function AgedStockDashboardPage() {
     return { qty, val, count: filtered.length };
   }, [filtered]);
 
+  // Pick slips: count unique stores in the filtered data (for modal)
+  const psStoreCount = useMemo(() => {
+    const codes = new Set<string>();
+    for (const r of filtered) codes.add(r.siteCode);
+    return codes.size;
+  }, [filtered]);
+
+  const canGeneratePickSlips =
+    (session?.permissions ?? []).includes('load_aged_stock') &&
+    !!clientFilter && !!loadFilter;
+
+  async function handleGeneratePickSlips(force = false) {
+    if (!clientFilter || !loadFilter) return;
+    setPsGenerating(true);
+    setPsResult(null);
+    setPsDuplicate(false);
+    try {
+      const res = await authFetch(`/api/aged-stock/loads/${loadFilter}/pick-slips`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId: clientFilter, force }),
+      });
+      const data = await res.json();
+      if (res.status === 409 && data.code === 'ALREADY_GENERATED') {
+        setPsDuplicate(true);
+        return;
+      }
+      if (!res.ok) {
+        notify(data.error ?? 'Pick slip generation failed', 'error');
+        setPsModal(false);
+        return;
+      }
+      setPsResult({
+        generated: data.generated,
+        uploaded: data.uploaded,
+        failed: data.failed,
+        uploadErrors: data.uploadErrors,
+        folderErrors: data.folderErrors,
+      });
+    } catch (err) {
+      notify('Network error generating pick slips', 'error');
+      setPsModal(false);
+    } finally {
+      setPsGenerating(false);
+    }
+  }
+
   function exportToExcel() {
     if (filtered.length === 0) {
       notify('Nothing to export', 'error');
@@ -179,6 +235,16 @@ export default function AgedStockDashboardPage() {
             >
               Load Aged Stock
             </Link>
+          )}
+          {(session.permissions ?? []).includes('load_aged_stock') && (
+            <button
+              onClick={() => { setPsResult(null); setPsDuplicate(false); setPsModal(true); }}
+              disabled={!canGeneratePickSlips}
+              title={!canGeneratePickSlips ? 'Select a single client and load first' : ''}
+              className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Generate Pick Slips
+            </button>
           )}
           <button
             onClick={exportToExcel}
@@ -325,6 +391,103 @@ export default function AgedStockDashboardPage() {
           </div>
         )}
       </div>
+
+      {/* Pick Slips Modal */}
+      {psModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            {/* Header */}
+            <h2 className="text-lg font-bold text-gray-900 mb-4">Generate Pick Slips</h2>
+
+            {/* Generating spinner */}
+            {psGenerating && (
+              <div className="flex flex-col items-center py-8 gap-3">
+                <div className="h-8 w-8 border-4 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin" />
+                <p className="text-sm text-gray-600">Generating PDFs and uploading to SharePoint…</p>
+              </div>
+            )}
+
+            {/* Duplicate warning */}
+            {psDuplicate && !psGenerating && (
+              <div className="mb-4">
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800 mb-4">
+                  Pick slips have already been generated for this load. Re-generating will replace the existing PDFs in SharePoint.
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => handleGeneratePickSlips(true)}
+                    className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600"
+                  >
+                    Re-generate
+                  </button>
+                  <button
+                    onClick={() => setPsModal(false)}
+                    className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Result */}
+            {psResult && !psGenerating && (
+              <div className="mb-4">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-sm text-green-800 mb-4">
+                  <p className="font-medium mb-1">Pick slips generated successfully</p>
+                  <ul className="list-disc list-inside text-xs space-y-0.5">
+                    <li>{psResult.generated} pick slip{psResult.generated === 1 ? '' : 's'} generated</li>
+                    <li>{psResult.uploaded} uploaded to SharePoint</li>
+                    {psResult.failed > 0 && (
+                      <li className="text-red-700">{psResult.failed} failed to upload</li>
+                    )}
+                  </ul>
+                  {(psResult.uploadErrors?.length ?? 0) > 0 && (
+                    <div className="mt-2 text-xs text-red-700">
+                      {psResult.uploadErrors!.map((e, i) => <p key={i}>{e}</p>)}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setPsModal(false)}
+                  className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90"
+                >
+                  Close
+                </button>
+              </div>
+            )}
+
+            {/* Confirmation (initial state) */}
+            {!psGenerating && !psResult && !psDuplicate && (
+              <>
+                <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-700 mb-4 space-y-1">
+                  <p><span className="font-medium">Client:</span> {clientOptions.find(c => c.id === clientFilter)?.name}</p>
+                  <p><span className="font-medium">Load:</span> {loadOptions.find(l => l.id === loadFilter)?.fileName} ({fmtDate(loadOptions.find(l => l.id === loadFilter)?.loadedAt ?? '')})</p>
+                  <p><span className="font-medium">Stores:</span> {psStoreCount}</p>
+                  <p><span className="font-medium">Rows:</span> {filtered.length.toLocaleString()}</p>
+                </div>
+                <p className="text-xs text-gray-500 mb-4">
+                  This will generate one PDF per store and upload them to the configured Pick Slip folder in SharePoint.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => handleGeneratePickSlips(false)}
+                    className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90"
+                  >
+                    Generate
+                  </button>
+                  <button
+                    onClick={() => setPsModal(false)}
+                    className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
 }
