@@ -500,6 +500,7 @@ export default function PickingSlipsPage() {
                 <th className="px-3 py-2 whitespace-nowrap">Client</th>
                 <th className="px-3 py-2 whitespace-nowrap">Vendor #</th>
                 <th className="px-3 py-2 whitespace-nowrap">Store</th>
+                <th className="px-3 py-2 text-right whitespace-nowrap">Products</th>
                 <th className="px-3 py-2 text-right whitespace-nowrap">Total Qty</th>
                 <th className="px-3 py-2 text-right whitespace-nowrap">Total Value</th>
                 <th className="px-3 py-2 whitespace-nowrap">Date Loaded</th>
@@ -509,9 +510,9 @@ export default function PickingSlipsPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={canManage ? 10 : 8} className="px-3 py-6 text-center text-gray-500">Loading...</td></tr>
+                <tr><td colSpan={canManage ? 11 : 9} className="px-3 py-6 text-center text-gray-500">Loading...</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={canManage ? 10 : 8} className="px-3 py-6 text-center text-gray-500">No pick slips match the current filters.</td></tr>
+                <tr><td colSpan={canManage ? 11 : 9} className="px-3 py-6 text-center text-gray-500">No pick slips match the current filters.</td></tr>
               ) : filtered.map(s => (
                 <tr key={s.id} className="border-t border-gray-100 hover:bg-gray-50">
                   {canManage && (
@@ -532,6 +533,7 @@ export default function PickingSlipsPage() {
                   <td className="px-3 py-1.5 whitespace-nowrap">{s.clientName}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap">{s.vendorNumber}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap">{s.siteName} ({s.siteCode})</td>
+                  <td className="px-3 py-1.5 text-right whitespace-nowrap">{new Set(s.rows.map(r => r.articleCode || r.barcode)).size}</td>
                   <td className="px-3 py-1.5 text-right whitespace-nowrap">{s.totalQty.toLocaleString()}</td>
                   <td className="px-3 py-1.5 text-right whitespace-nowrap">{fmtCurrency(s.totalVal)}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap text-xs text-gray-500">{fmtDate(s.generatedAt)}</td>
