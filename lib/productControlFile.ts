@@ -18,6 +18,7 @@ export interface Product {
   description: string;
   barcode: string;
   vendorProductCode: string;
+  categoryDescription?: string;
   uom?: string;
   caseBarcode?: string;
   rowIndex?: number;          // 1-based row from source xlsx (inc. header row)
@@ -30,21 +31,23 @@ export interface Product {
  */
 const COLUMN_ALIASES: Record<keyof HeaderMap, string[]> = {
   articleNumber: ['Article Number', 'ArticleNumber', 'Article #', 'Article'],
-  description: ['Product Description', 'Description', 'Product Name'],
+  description: ['Product Description', 'Description', 'Product Name', 'Article Description'],
   barcode: ['Barcode', 'EAN', 'EAN Barcode'],
   vendorProductCode: ['Vendor Product Code', 'Vendor Code', 'VendorProductCode', 'Supplier Product Code'],
+  categoryDescription: ['Category Description', 'CategoryDescription', 'Category'],
   uom: ['UoM', 'UOM', 'Unit of Measure', 'Unit'],
   caseBarcode: ['Case Barcode', 'CaseBarcode', 'Case EAN', 'Outer Barcode'],
 };
 
 const MANDATORY_KEYS: (keyof HeaderMap)[] = ['articleNumber', 'description', 'barcode', 'vendorProductCode'];
-const OPTIONAL_KEYS: (keyof HeaderMap)[] = ['uom', 'caseBarcode'];
+const OPTIONAL_KEYS: (keyof HeaderMap)[] = ['categoryDescription', 'uom', 'caseBarcode'];
 
 export interface HeaderMap {
   articleNumber: number;        // 1-based column index in the worksheet
   description: number;
   barcode: number;
   vendorProductCode: number;
+  categoryDescription: number;  // 0 = not present in file
   uom: number;                  // 0 = not present in file
   caseBarcode: number;
 }
@@ -109,7 +112,7 @@ export async function parseProductFile(buffer: Buffer): Promise<ParseResult> {
       products: [],
       warnings: [],
       errors: ['No worksheet found in the file'],
-      headerMap: { articleNumber: 0, description: 0, barcode: 0, vendorProductCode: 0, uom: 0, caseBarcode: 0 },
+      headerMap: { articleNumber: 0, description: 0, barcode: 0, vendorProductCode: 0, categoryDescription: 0, uom: 0, caseBarcode: 0 },
       sheetName: '',
       headerRow: 0,
     };
@@ -124,7 +127,7 @@ export async function parseProductFile(buffer: Buffer): Promise<ParseResult> {
   let headerMap: HeaderMap | null = null;
   for (let r = 1; r <= Math.min(10, ws.rowCount); r++) {
     const row = ws.getRow(r);
-    const candidate: HeaderMap = { articleNumber: 0, description: 0, barcode: 0, vendorProductCode: 0, uom: 0, caseBarcode: 0 };
+    const candidate: HeaderMap = { articleNumber: 0, description: 0, barcode: 0, vendorProductCode: 0, categoryDescription: 0, uom: 0, caseBarcode: 0 };
     let hits = 0;
     row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
       const text = cellToString(cell.value);
@@ -147,7 +150,7 @@ export async function parseProductFile(buffer: Buffer): Promise<ParseResult> {
       products: [],
       warnings: [],
       errors: ['Could not find a header row. Expected columns include: Article Number, Product Description, Barcode, Vendor Product Code'],
-      headerMap: { articleNumber: 0, description: 0, barcode: 0, vendorProductCode: 0, uom: 0, caseBarcode: 0 },
+      headerMap: { articleNumber: 0, description: 0, barcode: 0, vendorProductCode: 0, categoryDescription: 0, uom: 0, caseBarcode: 0 },
       sheetName: ws.name,
       headerRow: 0,
     };
@@ -176,11 +179,12 @@ export async function parseProductFile(buffer: Buffer): Promise<ParseResult> {
     const description = cellToString(row.getCell(headerMap.description).value);
     const barcode = cellToString(row.getCell(headerMap.barcode).value);
     const vendorProductCode = cellToString(row.getCell(headerMap.vendorProductCode).value);
+    const categoryDescription = headerMap.categoryDescription ? cellToString(row.getCell(headerMap.categoryDescription).value) : '';
     const uom = headerMap.uom ? cellToString(row.getCell(headerMap.uom).value) : '';
     const caseBarcode = headerMap.caseBarcode ? cellToString(row.getCell(headerMap.caseBarcode).value) : '';
 
     // Skip wholly-blank rows
-    if (!articleNumber && !description && !barcode && !vendorProductCode && !uom && !caseBarcode) continue;
+    if (!articleNumber && !description && !barcode && !vendorProductCode && !categoryDescription && !uom && !caseBarcode) continue;
 
     // Per-row validation — soft warnings
     for (const k of MANDATORY_KEYS) {
@@ -197,6 +201,7 @@ export async function parseProductFile(buffer: Buffer): Promise<ParseResult> {
       description,
       barcode,
       vendorProductCode,
+      categoryDescription: categoryDescription || undefined,
       uom: uom || undefined,
       caseBarcode: caseBarcode || undefined,
       rowIndex: r,
@@ -241,6 +246,7 @@ export async function serializeProductsToBuffer(
     if (headerMap.description) row.getCell(headerMap.description).value = p.description;
     if (headerMap.barcode) row.getCell(headerMap.barcode).value = p.barcode;
     if (headerMap.vendorProductCode) row.getCell(headerMap.vendorProductCode).value = p.vendorProductCode;
+    if (headerMap.categoryDescription && p.categoryDescription !== undefined) row.getCell(headerMap.categoryDescription).value = p.categoryDescription;
     if (headerMap.uom && p.uom !== undefined) row.getCell(headerMap.uom).value = p.uom;
     if (headerMap.caseBarcode && p.caseBarcode !== undefined) row.getCell(headerMap.caseBarcode).value = p.caseBarcode;
     row.commit();
@@ -256,6 +262,7 @@ export const PRODUCT_COLUMN_LABELS: Record<keyof HeaderMap, string> = {
   description: 'Product Description',
   barcode: 'Barcode',
   vendorProductCode: 'Vendor Product Code',
+  categoryDescription: 'Category Description',
   uom: 'UoM',
   caseBarcode: 'Case Barcode',
 };

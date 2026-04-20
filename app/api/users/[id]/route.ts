@@ -26,11 +26,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       users[idx].role = body.role;
       // Clear linkedClientId if user is no longer a customer
       if (body.role !== 'customer') users[idx].linkedClientId = undefined;
+      // Clear assignedClientIds if user becomes a customer (customers use linkedClientId instead)
+      if (body.role === 'customer') users[idx].assignedClientIds = undefined;
     }
     if (body.linkedClientId !== undefined) {
       // Only apply if the user is (or is being set to) a customer
       const finalRole = body.role ?? users[idx].role;
       if (finalRole === 'customer') users[idx].linkedClientId = body.linkedClientId || undefined;
+    }
+    if (body.assignedClientIds !== undefined) {
+      // Only apply for non-customer roles
+      const finalRole = body.role ?? users[idx].role;
+      if (finalRole !== 'customer') {
+        users[idx].assignedClientIds = Array.isArray(body.assignedClientIds)
+          ? body.assignedClientIds.filter((x: unknown) => typeof x === 'string')
+          : [];
+      }
     }
     if (body.password) {
       users[idx].password = await bcrypt.hash(body.password, 10);
