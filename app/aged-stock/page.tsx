@@ -164,7 +164,9 @@ export default function AgedStockDashboardPage() {
         return;
       }
       if (!res.ok) {
-        notify(data.error ?? 'Pick slip generation failed', 'error');
+        const details = (data.details as string[] | undefined)?.join('; ') ?? '';
+        const msg = (data.error ?? 'Pick slip generation failed') + (details ? ` — ${details}` : '');
+        notify(msg, 'error');
         setPsModal(false);
         return;
       }
