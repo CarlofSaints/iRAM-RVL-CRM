@@ -159,13 +159,18 @@ export async function getFreshDownloadUrl(driveId: string, fileId: string): Prom
   );
   if (!res.ok) throw new Error(`iRam: get item failed (${res.status}): ${await res.text()}`);
   const data = await res.json();
+  const downloadUrl = data['@microsoft.graph.downloadUrl'];
+  if (!downloadUrl) {
+    throw new Error('iRam: Graph did not return a download URL — check app permissions (Files.Read.All) or try re-resolving the link');
+  }
   return {
-    downloadUrl: data['@microsoft.graph.downloadUrl'] as string,
+    downloadUrl: downloadUrl as string,
     eTag: data.eTag as string,
   };
 }
 
 export async function downloadFile(downloadUrl: string): Promise<Buffer> {
+  if (!downloadUrl) throw new Error('iRam: download URL is empty');
   const res = await fetch(downloadUrl);
   if (!res.ok) {
     throw new Error(`iRam: download failed (${res.status}): ${await res.text()}`);

@@ -27,20 +27,19 @@ export async function POST(
   const link = await getSpLink(id, linkId);
   if (!link) return NextResponse.json({ error: 'Link not found' }, { status: 404 });
 
-  // Resolve / re-resolve drive+file. We always re-resolve the folder when the
-  // cached driveId is missing OR the cached download URL has expired (we don't
-  // store one — we ask for a fresh one each refresh anyway).
-  let driveId = link.driveId;
-  let fileId = link.fileId;
+  // Resolve drive+file — always re-resolve from the folder URL to avoid stale
+  // cached driveId/fileId causing opaque failures.
+  let driveId: string | undefined;
+  let fileId: string | undefined;
   try {
-    if (!driveId || !fileId) {
-      const folder = await resolveSharedItem(link.folderUrl);
-      driveId = folder.driveId;
-      const found = await findFileInFolder(folder.driveId, folder.folderId, link.fileName);
-      if (!found) throw new Error(`File "${link.fileName}" not found in folder`);
-      fileId = found.fileId;
-    }
-    const fresh = await getFreshDownloadUrl(driveId!, fileId!);
+    const folderUrl = link.folderUrl;
+    const fileName = link.fileName;
+    const folder = await resolveSharedItem(folderUrl);
+    driveId = folder.driveId;
+    const found = await findFileInFolder(folder.driveId, folder.folderId, fileName);
+    if (!found) throw new Error(`File "${fileName}" not found in folder`);
+    fileId = found.fileId;
+    const fresh = await getFreshDownloadUrl(driveId, fileId);
     const buffer = await downloadFile(fresh.downloadUrl);
 
     // Parse
