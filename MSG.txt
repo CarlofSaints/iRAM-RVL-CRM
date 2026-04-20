@@ -1,0 +1,1 @@
+Picking Slips page: list, edit, send, delete with bulk actions

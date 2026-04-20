@@ -48,6 +48,12 @@ interface RepDto {
   email: string;
 }
 
+interface StoreDto {
+  id: string;
+  siteCode: string;
+  channel: string;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmtDate(iso: string): string {
@@ -92,6 +98,7 @@ export default function PickingSlipsPage() {
 
   const [slips, setSlips] = useState<SlipDto[]>([]);
   const [reps, setReps] = useState<RepDto[]>([]);
+  const [stores, setStores] = useState<StoreDto[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Filters
@@ -99,6 +106,8 @@ export default function PickingSlipsPage() {
   const [storeQuery, setStoreQuery] = useState('');
   const [refQuery, setRefQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [vendorFilter, setVendorFilter] = useState('');
+  const [channelFilter, setChannelFilter] = useState('');
 
   // Selection
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -144,6 +153,10 @@ export default function PickingSlipsPage() {
         .then(r => r.ok ? r.json() : [])
         .then(data => setReps(Array.isArray(data) ? data : []))
         .catch(() => {}),
+      authFetch('/api/control/stores', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : [])
+        .then(data => setStores(Array.isArray(data) ? data : []))
+        .catch(() => {}),
     ]).finally(() => setLoading(false));
   }, [session, fetchSlips]);
 
@@ -159,11 +172,40 @@ export default function PickingSlipsPage() {
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [slips]);
 
+  const vendorOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of slips) { if (s.vendorNumber) set.add(s.vendorNumber); }
+    return Array.from(set).sort();
+  }, [slips]);
+
+  // siteCode → channel lookup from stores control data
+  const channelBySiteCode = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of stores) {
+      if (s.siteCode && s.channel) map.set(s.siteCode.trim().toLowerCase(), s.channel);
+    }
+    return map;
+  }, [stores]);
+
+  const channelOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of slips) {
+      const ch = channelBySiteCode.get(s.siteCode.trim().toLowerCase());
+      if (ch) set.add(ch);
+    }
+    return Array.from(set).sort();
+  }, [slips, channelBySiteCode]);
+
   const filtered = useMemo(() => {
     const sq = storeQuery.trim().toLowerCase();
     const rq = refQuery.trim().toLowerCase();
     return slips.filter(s => {
       if (clientFilter && s.clientId !== clientFilter) return false;
+      if (vendorFilter && s.vendorNumber !== vendorFilter) return false;
+      if (channelFilter) {
+        const ch = channelBySiteCode.get(s.siteCode.trim().toLowerCase());
+        if (ch !== channelFilter) return false;
+      }
       if (sq) {
         const hay = `${s.siteName} ${s.siteCode}`.toLowerCase();
         if (!hay.includes(sq)) return false;
@@ -172,7 +214,7 @@ export default function PickingSlipsPage() {
       if (statusFilter && s.status !== statusFilter) return false;
       return true;
     });
-  }, [slips, clientFilter, storeQuery, refQuery, statusFilter]);
+  }, [slips, clientFilter, vendorFilter, channelFilter, channelBySiteCode, storeQuery, refQuery, statusFilter]);
 
   // Keep selection valid — remove IDs that no longer appear in filtered
   useEffect(() => {
@@ -342,7 +384,7 @@ export default function PickingSlipsPage() {
       </div>
 
       {/* Filters */}
-      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <div>
           <label className="block text-xs text-gray-600 mb-1">Client</label>
           <select
@@ -355,6 +397,19 @@ export default function PickingSlipsPage() {
               <option key={c.id} value={c.id}>
                 {c.vendorNumber ? `${c.name} - ${c.vendorNumber}` : c.name}
               </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-600 mb-1">Channel</label>
+          <select
+            value={channelFilter}
+            onChange={e => setChannelFilter(e.target.value)}
+            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+          >
+            <option value="">All channels</option>
+            {channelOptions.map(ch => (
+              <option key={ch} value={ch}>{ch}</option>
             ))}
           </select>
         </div>
@@ -375,6 +430,19 @@ export default function PickingSlipsPage() {
             placeholder="Pick slip ID"
             className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
           />
+        </div>
+        <div>
+          <label className="block text-xs text-gray-600 mb-1">Vendor #</label>
+          <select
+            value={vendorFilter}
+            onChange={e => setVendorFilter(e.target.value)}
+            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+          >
+            <option value="">All vendors</option>
+            {vendorOptions.map(v => (
+              <option key={v} value={v}>{v}</option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="block text-xs text-gray-600 mb-1">Status</label>
@@ -534,7 +602,7 @@ export default function PickingSlipsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {editRows.filter(r => !(r.qty === 0 && r.val === 0)).map((r, i) => (
+                  {editRows.map((r, i) => (
                     <tr key={i} className="border-t border-gray-100">
                       <td className="py-1.5 text-xs">{r.barcode}</td>
                       <td className="py-1.5 text-xs">{r.articleCode}</td>
@@ -572,7 +640,7 @@ export default function PickingSlipsPage() {
                   ))}
                 </tbody>
               </table>
-              {editRows.filter(r => !(r.qty === 0 && r.val === 0)).length === 0 && (
+              {editRows.length === 0 && (
                 <p className="text-center text-gray-500 text-sm py-4">No line items remaining.</p>
               )}
             </div>
@@ -629,23 +697,21 @@ export default function PickingSlipsPage() {
                   </div>
 
                   {/* Rep dropdown */}
-                  {reps.length > 0 && (
-                    <div>
-                      <label className="block text-xs text-gray-600 mb-1">Rep</label>
-                      <select
-                        value={sendRep}
-                        onChange={e => onRepChange(e.target.value)}
-                        className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
-                      >
-                        <option value="">Select a rep...</option>
-                        {reps.map(r => (
-                          <option key={r.id} value={r.id}>
-                            {r.name} {r.surname}{r.email ? ` (${r.email})` : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Rep</label>
+                    <select
+                      value={sendRep}
+                      onChange={e => onRepChange(e.target.value)}
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+                    >
+                      <option value="">{reps.length === 0 ? 'No reps configured' : 'Select a rep...'}</option>
+                      {reps.map(r => (
+                        <option key={r.id} value={r.id}>
+                          {r.name} {r.surname}{r.email ? ` (${r.email})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
                   <div>
                     <label className="block text-xs text-gray-600 mb-1">TO</label>

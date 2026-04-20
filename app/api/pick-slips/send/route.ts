@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
-import { listLoads } from '@/lib/agedStockData';
+import { listLoads, getLoad } from '@/lib/agedStockData';
 import { listAllPickSlipRuns, updateSlipInRun, type PickSlipRecord } from '@/lib/pickSlipData';
 import { loadUsers } from '@/lib/userData';
 import { clientScopeFor, filterClientIdsByScope } from '@/lib/clientScope';
 import { loadControl } from '@/lib/controlData';
-import { generatePickSlipPdf } from '@/lib/pickSlipPdf';
+import { generatePickSlipPdf, type PickSlipPdfRow } from '@/lib/pickSlipPdf';
 import { sendPickSlipEmail } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
@@ -86,12 +86,23 @@ export async function POST(req: NextRequest) {
   let failed = 0;
   const errors: string[] = [];
 
+  // Helper: resolve rows for a slip, backfilling from load data if needed
+  async function resolveRows(slip: PickSlipRecord): Promise<PickSlipPdfRow[]> {
+    if (slip.rows?.length) return slip.rows;
+    const load = await getLoad(slip.clientId, slip.loadId);
+    if (!load) return [];
+    return load.rows
+      .filter(r => r.siteCode === slip.siteCode)
+      .map(r => ({ barcode: r.barcode, articleCode: r.articleCode, vendorProductCode: r.vendorProductCode, description: r.description, qty: r.qty, val: r.val }))
+      .filter(r => r.qty > 0 || r.val > 0);
+  }
+
   if (sendMode === 'combined') {
     // One email with all PDFs as attachments
     const attachments: Array<{ filename: string; content: Buffer }> = [];
     for (const slip of targetSlips) {
       try {
-        const rows = slip.rows?.length ? slip.rows : [];
+        const rows = await resolveRows(slip);
         if (rows.length === 0) {
           errors.push(`${slip.id}: no rows to generate PDF`);
           failed++;
@@ -145,7 +156,7 @@ export async function POST(req: NextRequest) {
     // Individual mode — one email per slip
     for (const slip of targetSlips) {
       try {
-        const rows = slip.rows?.length ? slip.rows : [];
+        const rows = await resolveRows(slip);
         if (rows.length === 0) {
           errors.push(`${slip.id}: no rows to generate PDF`);
           failed++;
