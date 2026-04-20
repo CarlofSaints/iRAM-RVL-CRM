@@ -20,6 +20,7 @@ import path from 'path';
 export interface PickSlipPdfRow {
   barcode: string;
   articleCode: string;
+  vendorProductCode: string;
   description: string;
   qty: number;
   val: number;
@@ -52,18 +53,19 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
   const marginT = 40;
   const usableW = pageW - marginL - marginR;
 
-  // Column widths (10 columns) — proportional allocation
+  // Column widths (11 columns) — proportional allocation
   const colWidths = [
-    100, // Product Code
-    48,  // Article Number
-    130, // Product (description + barcode)
-    45,  // Value
-    35,  // Uplift Qty
-    35,  // Uplifted
-    35,  // Display
-    38,  // Store Refuse
-    30,  // Not Found
-    35,  // Damage  — total ~531, leaving ~usableW ~515
+    90,  // Barcode
+    42,  // Product Code (vendor product code)
+    42,  // Article Number
+    115, // Product (description only)
+    40,  // Value
+    32,  // Uplift Qty
+    32,  // Uplifted
+    32,  // Display
+    34,  // Store Refuse
+    28,  // Not Found
+    32,  // Damage
   ];
   // Scale columns to fit usable width
   const totalColW = colWidths.reduce((a, b) => a + b, 0);
@@ -74,7 +76,7 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
   cols[cols.length - 1] += (Math.round(usableW) - sumCols);
 
   const headerLabels = [
-    'Product Code', 'Article\nNumber', 'Product', 'Value',
+    'Barcode', 'Product\nCode', 'Article\nNumber', 'Product', 'Value',
     'Uplift\nQty', 'Uplift\ned', 'Display', 'Store\nRefuse',
     'Not\nFound', 'Damage',
   ];
@@ -95,7 +97,7 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
   const headerBlockH = 100; // title + header info
   const tableHeaderH = 30;
   const rowH = 28; // enough for 2-line product descriptions
-  const footerH = 120; // total row + boxes row + signature + branding
+  const footerH = 150; // total row + boxes row + signature + branding (logo is 40pt tall)
   const pageH = 841.89; // A4 height
   const marginB = 40;
   const contentAreaFirstPage = pageH - marginT - marginB - headerBlockH - tableHeaderH - footerH;
@@ -228,15 +230,16 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
     doc.font('Helvetica').fontSize(7);
     while (rowIdx < endIdx) {
       const r = rows[rowIdx];
-      const productText = `${r.description} - ${r.barcode}`.trim().replace(/ - $/, '');
+      const productText = r.description;
 
-      // Measure needed height for product text
-      const neededH = Math.max(rowH, doc.heightOfString(productText, { width: cols[2] - 4 }) + 6);
+      // Measure needed height for product text (col index 3)
+      const neededH = Math.max(rowH, doc.heightOfString(productText, { width: cols[3] - 4 }) + 6);
       const rh = Math.min(neededH, 45); // cap at ~3 lines
 
       colX = tableX;
       const cellVals = [
         r.barcode,
+        r.vendorProductCode,
         r.articleCode,
         productText,
         r.val.toString(),
@@ -250,7 +253,7 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
           doc.text(cellVals[c], colX + 2, y + 3, {
             width: cols[c] - 4,
             height: rh - 4,
-            align: c >= 3 && c <= 4 ? 'right' : 'left', // right-align Value & Qty
+            align: c >= 4 && c <= 5 ? 'right' : 'left', // right-align Value & Qty
           });
         }
         colX += cols[c];
@@ -261,16 +264,16 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
 
     // ── Footer (only on last page) ──
     if (rowIdx >= rows.length) {
-      // Total row
-      const totalLabelW = cols[0] + cols[1] + cols[2] + cols[3];
+      // Total row — label spans cols 0..4 (Barcode, Product Code, Article, Product, Value)
+      const totalLabelW = cols[0] + cols[1] + cols[2] + cols[3] + cols[4];
       doc.font('Helvetica-Bold').fontSize(8);
       doc.rect(tableX, y, totalLabelW, 18).stroke();
       doc.text('Total', tableX + totalLabelW - 40, y + 4, { width: 36, align: 'right' });
-      doc.rect(tableX + totalLabelW, y, cols[4], 18).stroke();
-      doc.text(totalQty.toString(), tableX + totalLabelW + 2, y + 4, { width: cols[4] - 4, align: 'right' });
+      doc.rect(tableX + totalLabelW, y, cols[5], 18).stroke();
+      doc.text(totalQty.toString(), tableX + totalLabelW + 2, y + 4, { width: cols[5] - 4, align: 'right' });
       // Draw remaining empty cells on total row
-      let tx = tableX + totalLabelW + cols[4];
-      for (let c = 5; c < cols.length; c++) {
+      let tx = tableX + totalLabelW + cols[5];
+      for (let c = 6; c < cols.length; c++) {
         doc.rect(tx, y, cols[c], 18).stroke();
         tx += cols[c];
       }
@@ -280,9 +283,9 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
       doc.font('Helvetica').fontSize(8);
       doc.rect(tableX, y, totalLabelW, 18).stroke();
       doc.text('No. Boxes', tableX + totalLabelW - 55, y + 4, { width: 50, align: 'right' });
-      doc.rect(tableX + totalLabelW, y, cols[4], 18).stroke();
-      tx = tableX + totalLabelW + cols[4];
-      for (let c = 5; c < cols.length; c++) {
+      doc.rect(tableX + totalLabelW, y, cols[5], 18).stroke();
+      tx = tableX + totalLabelW + cols[5];
+      for (let c = 6; c < cols.length; c++) {
         doc.rect(tx, y, cols[c], 18).stroke();
         tx += cols[c];
       }
@@ -298,18 +301,20 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
       doc.text('Date', tableX + usableW - dateW + 4, y + 10);
       y += 40;
 
-      // Branding footer
-      const brandY = pageH - marginB - 20;
-      doc.font('Helvetica').fontSize(7).fillColor('#888888');
+      // Branding footer — "Powered by" text + OJ logo to its right
+      const brandY = pageH - marginB - 30;
+      doc.font('Helvetica').fontSize(8).fillColor('#888888');
       if (ojLogoBuffer) {
         try {
-          const logoH = 16;
+          const logoH = 40; // 2.5x the original 16
           const logoW = logoH * 2; // approximate aspect ratio
-          const textW = doc.widthOfString('Powered by OuterJoin');
-          const totalW = logoW + 6 + textW;
+          const poweredText = 'Powered by';
+          const textW = doc.widthOfString(poweredText);
+          const gap = 6;
+          const totalW = textW + gap + logoW;
           const startX = marginL + (usableW - totalW) / 2;
-          doc.image(ojLogoBuffer, startX, brandY - 2, { height: logoH });
-          doc.text('Powered by OuterJoin', startX + logoW + 6, brandY + 2);
+          doc.text(poweredText, startX, brandY + (logoH / 2) - 4);
+          doc.image(ojLogoBuffer, startX + textW + gap, brandY, { height: logoH });
         } catch {
           doc.text('Powered by OuterJoin', marginL, brandY, { width: usableW, align: 'center' });
         }

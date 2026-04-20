@@ -1,1 +1,1 @@
-Fix pdfkit bundling + show pick slip error details 
+Pick slip PDF: add Product Code col, rename to Barcode, larger OJ logo 

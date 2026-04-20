@@ -220,6 +220,7 @@ export async function POST(
         rows: siteRows.map(r => ({
           barcode: r.barcode,
           articleCode: r.articleCode,
+          vendorProductCode: r.vendorProductCode,
           description: r.description,
           qty: r.qty,
           val: r.val,
