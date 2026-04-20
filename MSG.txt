@@ -1,1 +1,1 @@
-Fix: backfill rows for old slips, edit index, rep dropdown, channel filter, send fix
+Aged Stock: filter blank pick slips + sortable grid columns 

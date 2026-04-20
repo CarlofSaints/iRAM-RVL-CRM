@@ -85,6 +85,9 @@ const STATUS_COLORS: Record<SlipStatus, string> = {
   'returned-to-vendor': 'bg-red-100 text-red-700',
 };
 
+type SortCol = 'id' | 'clientName' | 'vendorNumber' | 'store' | 'products' | 'totalQty' | 'totalVal' | 'generatedAt' | 'status';
+type SortDir = 'asc' | 'desc';
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function PickingSlipsPage() {
@@ -108,6 +111,15 @@ export default function PickingSlipsPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [vendorFilter, setVendorFilter] = useState('');
   const [channelFilter, setChannelFilter] = useState('');
+
+  // Sort
+  const [sortCol, setSortCol] = useState<SortCol>('generatedAt');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  function toggleSort(col: SortCol) {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('asc'); }
+  }
 
   // Selection
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -216,6 +228,29 @@ export default function PickingSlipsPage() {
     });
   }, [slips, clientFilter, vendorFilter, channelFilter, channelBySiteCode, storeQuery, refQuery, statusFilter]);
 
+  const sorted = useMemo(() => {
+    const list = [...filtered];
+    const dir = sortDir === 'asc' ? 1 : -1;
+    list.sort((a, b) => {
+      let av: string | number, bv: string | number;
+      switch (sortCol) {
+        case 'id':           av = a.id; bv = b.id; break;
+        case 'clientName':   av = a.clientName; bv = b.clientName; break;
+        case 'vendorNumber': av = a.vendorNumber; bv = b.vendorNumber; break;
+        case 'store':        av = `${a.siteName} ${a.siteCode}`; bv = `${b.siteName} ${b.siteCode}`; break;
+        case 'products':     av = new Set(a.rows.map(r => r.articleCode || r.barcode)).size; bv = new Set(b.rows.map(r => r.articleCode || r.barcode)).size; break;
+        case 'totalQty':     av = a.totalQty; bv = b.totalQty; break;
+        case 'totalVal':     av = a.totalVal; bv = b.totalVal; break;
+        case 'generatedAt':  av = a.generatedAt; bv = b.generatedAt; break;
+        case 'status':       av = a.status; bv = b.status; break;
+        default: return 0;
+      }
+      if (typeof av === 'string' && typeof bv === 'string') return av.localeCompare(bv) * dir;
+      return ((av as number) - (bv as number)) * dir;
+    });
+    return list;
+  }, [filtered, sortCol, sortDir]);
+
   // Keep selection valid — remove IDs that no longer appear in filtered
   useEffect(() => {
     const ids = new Set(filtered.map(s => s.id));
@@ -226,11 +261,11 @@ export default function PickingSlipsPage() {
     });
   }, [filtered]);
 
-  const allSelected = filtered.length > 0 && selected.size === filtered.length;
+  const allSelected = sorted.length > 0 && selected.size === sorted.length;
 
   function toggleAll() {
     if (allSelected) setSelected(new Set());
-    else setSelected(new Set(filtered.map(s => s.id)));
+    else setSelected(new Set(sorted.map(s => s.id)));
   }
 
   function toggleOne(id: string) {
@@ -340,7 +375,7 @@ export default function PickingSlipsPage() {
   // ── Delete ──
 
   async function doDelete() {
-    const items = filtered
+    const items = sorted
       .filter(s => selected.has(s.id))
       .map(s => ({ clientId: s.clientId, loadId: s.loadId, slipId: s.id }));
     if (items.length === 0) return;
@@ -466,7 +501,7 @@ export default function PickingSlipsPage() {
             {selected.size} selected
           </span>
           <button
-            onClick={() => openSend(filtered.filter(s => selected.has(s.id)))}
+            onClick={() => openSend(sorted.filter(s => selected.has(s.id)))}
             className="px-3 py-1.5 bg-[var(--color-primary)] text-white rounded-md text-sm font-medium hover:opacity-90"
           >
             Send Selected
@@ -496,24 +531,37 @@ export default function PickingSlipsPage() {
                     />
                   </th>
                 )}
-                <th className="px-3 py-2 whitespace-nowrap">Pick Slip ID</th>
-                <th className="px-3 py-2 whitespace-nowrap">Client</th>
-                <th className="px-3 py-2 whitespace-nowrap">Vendor #</th>
-                <th className="px-3 py-2 whitespace-nowrap">Store</th>
-                <th className="px-3 py-2 text-right whitespace-nowrap">Products</th>
-                <th className="px-3 py-2 text-right whitespace-nowrap">Total Qty</th>
-                <th className="px-3 py-2 text-right whitespace-nowrap">Total Value</th>
-                <th className="px-3 py-2 whitespace-nowrap">Date Loaded</th>
-                <th className="px-3 py-2 whitespace-nowrap">Status</th>
+                {([
+                  ['id', 'Pick Slip ID', ''],
+                  ['clientName', 'Client', ''],
+                  ['vendorNumber', 'Vendor #', ''],
+                  ['store', 'Store', ''],
+                  ['products', 'Products', 'text-right'],
+                  ['totalQty', 'Total Qty', 'text-right'],
+                  ['totalVal', 'Total Value', 'text-right'],
+                  ['generatedAt', 'Date Loaded', ''],
+                  ['status', 'Status', ''],
+                ] as [SortCol, string, string][]).map(([col, label, align]) => (
+                  <th
+                    key={col}
+                    className={`px-3 py-2 whitespace-nowrap cursor-pointer select-none hover:text-gray-900 ${align}`}
+                    onClick={() => toggleSort(col)}
+                  >
+                    {label}
+                    {sortCol === col && (
+                      <span className="ml-1 text-[var(--color-primary)]">{sortDir === 'asc' ? '▲' : '▼'}</span>
+                    )}
+                  </th>
+                ))}
                 {canManage && <th className="px-3 py-2 whitespace-nowrap">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr><td colSpan={canManage ? 11 : 9} className="px-3 py-6 text-center text-gray-500">Loading...</td></tr>
-              ) : filtered.length === 0 ? (
+              ) : sorted.length === 0 ? (
                 <tr><td colSpan={canManage ? 11 : 9} className="px-3 py-6 text-center text-gray-500">No pick slips match the current filters.</td></tr>
-              ) : filtered.map(s => (
+              ) : sorted.map(s => (
                 <tr key={s.id} className="border-t border-gray-100 hover:bg-gray-50">
                   {canManage && (
                     <td className="px-3 py-1.5">

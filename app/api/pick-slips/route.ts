@@ -99,10 +99,11 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Flatten all slips
+  // Flatten all slips, excluding blanks (0 qty AND 0 value)
   const slips: PickSlipRecord[] = [];
   for (const run of runs) {
     for (const slip of run.slips) {
+      if (slip.totalQty <= 0 && slip.totalVal <= 0) continue;
       slips.push(slip);
     }
   }
