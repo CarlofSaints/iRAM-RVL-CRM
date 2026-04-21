@@ -23,7 +23,13 @@ interface DashboardStats {
       vendorNumbers: string[];
       totalQty: number;
       totalVal: number;
+      warehouseQty: Record<string, number>;
+      warehouseVal: Record<string, number>;
     }>;
+  };
+  warehouseStock: {
+    totalQty: number;
+    totalVal: number;
   };
 }
 
@@ -169,9 +175,9 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Aged Stock KPI cards */}
+        {/* Aged Stock + Warehouse Stock KPI cards */}
         {hasAgedStock && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
               <div className="flex items-center gap-3">
                 <div className="w-3 h-3 rounded-full bg-amber-500" />
@@ -187,6 +193,22 @@ export default function DashboardPage() {
               </div>
               <div className="text-3xl font-bold text-gray-900 mt-2">{fmtRand(filteredTotalVal)}</div>
               <div className="text-xs text-gray-400 mt-1">Total value across {filteredClients.length} client{filteredClients.length !== 1 ? 's' : ''}</div>
+            </div>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full bg-teal-500" />
+                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Warehouse Stock Volume</span>
+              </div>
+              <div className="text-3xl font-bold text-gray-900 mt-2">{fmtNum(stats.warehouseStock?.totalQty ?? 0)}</div>
+              <div className="text-xs text-gray-400 mt-1">Total units across all warehouses</div>
+            </div>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full bg-indigo-500" />
+                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Warehouse Stock Value</span>
+              </div>
+              <div className="text-3xl font-bold text-gray-900 mt-2">{fmtRand(stats.warehouseStock?.totalVal ?? 0)}</div>
+              <div className="text-xs text-gray-400 mt-1">Total value across all warehouses</div>
             </div>
           </div>
         )}
@@ -252,9 +274,14 @@ export default function DashboardPage() {
                       <td className="px-3 py-2 text-gray-500">{c.vendorNumbers.join(', ')}</td>
                       <td className="px-3 py-2 text-right font-medium">{fmtNum(c.totalQty)}</td>
                       <td className="px-3 py-2 text-right font-medium">{fmtRand(c.totalVal)}</td>
-                      {warehouses.map(w => (
-                        <td key={w.code} className="px-3 py-2 text-right text-gray-400">0</td>
-                      ))}
+                      {warehouses.map(w => {
+                        const whQty = c.warehouseQty?.[w.code] ?? 0;
+                        return (
+                          <td key={w.code} className={`px-3 py-2 text-right ${whQty > 0 ? 'font-medium text-gray-900' : 'text-gray-400'}`}>
+                            {fmtNum(whQty)}
+                          </td>
+                        );
+                      })}
                       <td className="px-3 py-2 text-right text-gray-400">0</td>
                     </tr>
                   ))}
@@ -269,9 +296,14 @@ export default function DashboardPage() {
                       <td className="px-3 py-2"></td>
                       <td className="px-3 py-2 text-right">{fmtNum(filteredTotalQty)}</td>
                       <td className="px-3 py-2 text-right">{fmtRand(filteredTotalVal)}</td>
-                      {warehouses.map(w => (
-                        <td key={w.code} className="px-3 py-2 text-right text-gray-400">0</td>
-                      ))}
+                      {warehouses.map(w => {
+                        const whTotal = filteredClients.reduce((sum, c) => sum + (c.warehouseQty?.[w.code] ?? 0), 0);
+                        return (
+                          <td key={w.code} className={`px-3 py-2 text-right ${whTotal > 0 ? 'text-gray-900' : 'text-gray-400'}`}>
+                            {fmtNum(whTotal)}
+                          </td>
+                        );
+                      })}
                       <td className="px-3 py-2 text-right text-gray-400">0</td>
                     </tr>
                   </tfoot>

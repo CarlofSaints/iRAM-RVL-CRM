@@ -5,6 +5,7 @@ import { loadControl } from '@/lib/controlData';
 import { clientScopeFor, filterClientIdsByScope } from '@/lib/clientScope';
 import { listLoads, getLoad } from '@/lib/agedStockData';
 import { loadLinkProducts, type ClientWithLinks } from '@/lib/spLinkData';
+import { listAllPickSlipRuns } from '@/lib/pickSlipData';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,7 +67,37 @@ export async function GET(req: NextRequest) {
     vendorNumbers: string[];
     totalQty: number;
     totalVal: number;
+    warehouseQty: Record<string, number>;
+    warehouseVal: Record<string, number>;
   }> = [];
+
+  // Also aggregate warehouse stock from receipted pick slips
+  const pickSlipRuns = await listAllPickSlipRuns(scopedClientIds, listLoads);
+  // Build per-client warehouse aggregations
+  const clientWarehouseQty = new Map<string, Record<string, number>>();
+  const clientWarehouseVal = new Map<string, Record<string, number>>();
+  let warehouseTotalQty = 0;
+  let warehouseTotalVal = 0;
+
+  for (const run of pickSlipRuns) {
+    for (const slip of run.slips) {
+      if (slip.status !== 'receipted') continue;
+      const wh = slip.warehouse || 'UNKNOWN';
+
+      // Per-client warehouse qty
+      if (!clientWarehouseQty.has(slip.clientId)) clientWarehouseQty.set(slip.clientId, {});
+      const cWhQty = clientWarehouseQty.get(slip.clientId)!;
+      cWhQty[wh] = (cWhQty[wh] ?? 0) + slip.totalQty;
+
+      // Per-client warehouse val
+      if (!clientWarehouseVal.has(slip.clientId)) clientWarehouseVal.set(slip.clientId, {});
+      const cWhVal = clientWarehouseVal.get(slip.clientId)!;
+      cWhVal[wh] = (cWhVal[wh] ?? 0) + slip.totalVal;
+
+      warehouseTotalQty += slip.totalQty;
+      warehouseTotalVal += slip.totalVal;
+    }
+  }
 
   for (const clientId of scopedClientIds) {
     const client = clientsById.get(clientId);
@@ -85,13 +116,15 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    if (cQty > 0 || cVal > 0) {
+    if (cQty > 0 || cVal > 0 || clientWarehouseQty.has(clientId)) {
       byClient.push({
         clientId: client.id,
         clientName: client.name,
         vendorNumbers: client.vendorNumbers ?? [],
         totalQty: cQty,
         totalVal: cVal,
+        warehouseQty: clientWarehouseQty.get(clientId) ?? {},
+        warehouseVal: clientWarehouseVal.get(clientId) ?? {},
       });
       totalQty += cQty;
       totalVal += cVal;
@@ -103,6 +136,7 @@ export async function GET(req: NextRequest) {
       controlCounts,
       warehouses: warehouses.map(w => ({ code: w.code, name: w.name })),
       agedStock: { totalQty, totalVal, byClient },
+      warehouseStock: { totalQty: warehouseTotalQty, totalVal: warehouseTotalVal },
     },
     { headers: { 'Cache-Control': 'no-store' } }
   );

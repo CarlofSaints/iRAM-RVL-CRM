@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
 
@@ -92,8 +93,10 @@ type SortDir = 'asc' | 'desc';
 
 export default function PickingSlipsPage() {
   const { session } = useAuth('view_aged_stock');
+  const router = useRouter();
   const perms = session?.permissions ?? [];
   const canManage = perms.includes('manage_pick_slips');
+  const canReceipt = perms.includes('receipt_stock');
 
   const [toast, setToast] = useState<ToastData | null>(null);
   const notify = (message: string, type: 'success' | 'error' = 'success') =>
@@ -605,6 +608,14 @@ export default function PickingSlipsPage() {
                         >
                           Send
                         </button>
+                        {canReceipt && (
+                          <button
+                            onClick={() => router.push(`/aged-stock/receipts/capture?slipId=${encodeURIComponent(s.id)}&clientId=${encodeURIComponent(s.clientId)}&loadId=${encodeURIComponent(s.loadId)}`)}
+                            className="px-2 py-1 text-xs font-medium text-teal-600 border border-teal-200 rounded hover:bg-teal-50"
+                          >
+                            Capture
+                          </button>
+                        )}
                       </div>
                     </td>
                   )}

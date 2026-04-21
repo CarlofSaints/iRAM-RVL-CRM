@@ -46,6 +46,7 @@ export const DEFAULT_PERMISSIONS: Array<Omit<PermissionDef, 'createdAt' | 'isSys
   { key: 'view_aged_stock', name: 'View Aged Stock', description: 'View the aged stock dashboard (scoped to assigned clients)', category: 'Aged Stock' },
   { key: 'load_aged_stock', name: 'Load Aged Stock', description: 'Upload & commit aged stock lists', category: 'Aged Stock' },
   { key: 'manage_pick_slips', name: 'Manage Pick Slips', description: 'Edit, send, and delete pick slips', category: 'Aged Stock' },
+  { key: 'receipt_stock', name: 'Receipt Stock', description: 'Receipt aged stock into warehouses via box scanning', category: 'Aged Stock' },
 ];
 
 /**
@@ -74,6 +75,7 @@ export const DEFAULT_ROLES: Array<Omit<Role, 'createdAt' | 'isSystem'>> = [
       'view_aged_stock',
       'load_aged_stock',
       'manage_pick_slips',
+      'receipt_stock',
     ],
   },
   {

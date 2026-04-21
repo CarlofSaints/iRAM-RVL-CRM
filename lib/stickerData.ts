@@ -152,6 +152,84 @@ export async function saveBatch(batch: StickerBatch): Promise<void> {
 }
 
 /**
+ * Find a sticker by barcode across all batches and link it to a pick slip.
+ * Returns the found sticker (with link fields set) or null if not found.
+ * If the sticker is already linked to a different pick slip, returns it
+ * unchanged (caller should check `linkedPickSlipId`).
+ */
+export async function findAndLinkSticker(
+  barcodeValue: string,
+  pickSlipId: string,
+): Promise<(Sticker & { batchId: string }) | null> {
+  const index = await listBatches();
+  for (const meta of index) {
+    const batch = await getBatch(meta.id);
+    if (!batch) continue;
+    const sticker = batch.stickers.find(s => s.barcodeValue === barcodeValue);
+    if (sticker) {
+      // Already linked to this slip — no-op
+      if (sticker.linkedPickSlipId === pickSlipId) {
+        return { ...sticker, batchId: batch.id };
+      }
+      // Already linked to a different slip — return as-is for caller to handle
+      if (sticker.linkedPickSlipId) {
+        return { ...sticker, batchId: batch.id };
+      }
+      // Link it
+      sticker.linkedPickSlipId = pickSlipId;
+      sticker.linkedAt = new Date().toISOString();
+      await saveBatch(batch);
+      return { ...sticker, batchId: batch.id };
+    }
+  }
+  return null;
+}
+
+/**
+ * Unlink a sticker from its pick slip by barcode. Clears `linkedPickSlipId`
+ * and `linkedAt`. Returns true if found and unlinked.
+ */
+export async function unlinkSticker(barcodeValue: string): Promise<boolean> {
+  const index = await listBatches();
+  for (const meta of index) {
+    const batch = await getBatch(meta.id);
+    if (!batch) continue;
+    const sticker = batch.stickers.find(s => s.barcodeValue === barcodeValue);
+    if (sticker && sticker.linkedPickSlipId) {
+      sticker.linkedPickSlipId = undefined;
+      sticker.linkedAt = undefined;
+      await saveBatch(batch);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Look up a sticker by barcode. Returns sticker info + batch context,
+ * or null if not found.
+ */
+export async function findStickerByBarcode(
+  barcodeValue: string,
+): Promise<(Sticker & { batchId: string; warehouseCode: string; warehouseName: string }) | null> {
+  const index = await listBatches();
+  for (const meta of index) {
+    const batch = await getBatch(meta.id);
+    if (!batch) continue;
+    const sticker = batch.stickers.find(s => s.barcodeValue === barcodeValue);
+    if (sticker) {
+      return {
+        ...sticker,
+        batchId: batch.id,
+        warehouseCode: batch.warehouseCode,
+        warehouseName: batch.warehouseName,
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * Compute the next global sequence number for stickers in the given
  * warehouse. Reads the index and sums all stickers ever generated for
  * that warehouse. Returns offset + 1 (i.e. the first available number).
