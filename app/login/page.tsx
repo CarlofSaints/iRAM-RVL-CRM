@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Image from 'next/image';
+import Logo from '@/components/Logo';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -82,11 +82,9 @@ export default function LoginPage() {
         {/* Header */}
         <div className="bg-[var(--color-primary)] rounded-t-xl px-8 py-6 text-white text-center">
           <div className="flex justify-center mb-3">
-            <Image src="/iram-logo.png" alt="iRam" width={60} height={60} className="rounded-lg" />
+            <Logo size={60} light />
           </div>
-          <h1 className="text-2xl font-bold tracking-wide">iRAM RVL</h1>
-          <p className="text-sm opacity-90 mt-1">CRM</p>
-          <p className="text-xs opacity-70 mt-0.5">Powered by OuterJoin</p>
+          <p className="text-xs opacity-70 mt-1">Powered by OuterJoin</p>
         </div>
 
         {/* Form */}

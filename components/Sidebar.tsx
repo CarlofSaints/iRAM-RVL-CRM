@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import Image from 'next/image';
 import { Session, avatarSrcFor } from '@/lib/useAuth';
+import Logo from '@/components/Logo';
 
 const COLLAPSE_KEY = 'rvl_sidebar_collapsed';
 
@@ -112,11 +112,7 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
       {/* Logo / Brand + collapse button */}
       <div className="px-5 py-5 border-b border-white/10 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <Image src="/iram-logo.png" alt="iRam" width={40} height={40} className="rounded" />
-          <div className="min-w-0">
-            <div className="text-white font-bold text-sm tracking-wide truncate">iRAM RVL</div>
-            <div className="text-gray-400 text-xs">CRM</div>
-          </div>
+          <Logo size={36} light />
         </div>
         <button
           onClick={() => setCollapsed(true)}

@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "iRam RVL CRM",
-  description: "iRam Reverse Logistics Value — CRM",
+  title: "iRamFlow",
+  description: "iRam Reverse Logistics Flow",
 };
 
 export default function RootLayout({

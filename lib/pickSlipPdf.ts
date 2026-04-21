@@ -117,7 +117,7 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
     bufferPages: true,
     info: {
       Title: `Pick Slip ${pickSlipId}`,
-      Author: 'iRam RVL CRM — OuterJoin',
+      Author: 'iRamFlow — OuterJoin',
     },
   });
 

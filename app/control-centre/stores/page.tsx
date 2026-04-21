@@ -245,7 +245,7 @@ export default function StoresPage() {
     ws['!cols'] = TEMPLATE_HEADERS.map(h => ({ wch: Math.max(14, h.length + 2) }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Stores');
-    XLSX.writeFile(wb, 'RVL_CRM_Store_List_Template.xlsx');
+    XLSX.writeFile(wb, 'iRamFlow_Store_List_Template.xlsx');
   }
 
   // === Channels CRUD ===

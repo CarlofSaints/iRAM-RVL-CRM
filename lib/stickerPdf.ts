@@ -98,7 +98,7 @@ export async function generateStickerPdf(params: StickerPdfParams): Promise<Buff
     bufferPages: true,
     info: {
       Title: `Sticker Labels - ${warehouseName}`,
-      Author: 'iRam RVL CRM — OuterJoin',
+      Author: 'iRamFlow — OuterJoin',
     },
   });
 

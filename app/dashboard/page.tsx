@@ -144,7 +144,7 @@ export default function DashboardPage() {
           <h1 className="text-xl font-bold text-gray-900">
             Welcome back, {session.name}
           </h1>
-          <p className="text-sm text-gray-500 mt-1">iRam Reverse Logistics — CRM Dashboard</p>
+          <p className="text-sm text-gray-500 mt-1">iRamFlow — Dashboard</p>
         </div>
 
         {/* Scoped (Customer) banner */}
