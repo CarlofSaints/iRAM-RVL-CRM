@@ -90,6 +90,13 @@ export default function ReceiptCapturePage() {
   // Box count mismatch confirmation modal
   const [showMismatchModal, setShowMismatchModal] = useState(false);
 
+  // Warehouse mismatch confirmation modal
+  const [warehouseMismatch, setWarehouseMismatch] = useState<{
+    barcode: string;
+    stickerWarehouse: string;
+    slipWarehouse: string;
+  } | null>(null);
+
   const isReceipted = slip?.status === 'receipted';
 
   // ── Load slip + reps ──
@@ -182,6 +189,23 @@ export default function ReceiptCapturePage() {
     }
   }
 
+  // ── Add box (shared by scan + warehouse mismatch confirm) ──
+  async function addBox(barcode: string) {
+    const newBox: ReceiptBox = {
+      id: uuid(),
+      stickerBarcode: barcode,
+      scannedAt: new Date().toISOString(),
+    };
+
+    const updatedBoxes = [...boxes, newBox];
+    setBoxes(updatedBoxes);
+    setScanBarcode('');
+
+    // Auto-save after adding box
+    await saveReceipt(updatedBoxes);
+    notify(`Box ${barcode} added`);
+  }
+
   // ── Scan barcode ──
   async function handleScan() {
     const barcode = scanBarcode.trim().toUpperCase();
@@ -214,19 +238,20 @@ export default function ReceiptCapturePage() {
         return;
       }
 
-      const newBox: ReceiptBox = {
-        id: uuid(),
-        stickerBarcode: barcode,
-        scannedAt: new Date().toISOString(),
-      };
+      // Check warehouse mismatch
+      const stickerWh = (data.warehouseCode || '').toUpperCase().trim();
+      const slipWh = (slip.warehouse || '').toUpperCase().trim();
+      if (stickerWh && slipWh && stickerWh !== slipWh) {
+        setWarehouseMismatch({
+          barcode,
+          stickerWarehouse: data.warehouseName ? `${data.warehouseName} (${data.warehouseCode})` : data.warehouseCode,
+          slipWarehouse: slip.warehouse,
+        });
+        setScanLoading(false);
+        return;
+      }
 
-      const updatedBoxes = [...boxes, newBox];
-      setBoxes(updatedBoxes);
-      setScanBarcode('');
-
-      // Auto-save after adding box
-      await saveReceipt(updatedBoxes);
-      notify(`Box ${barcode} added`);
+      await addBox(barcode);
     } catch {
       notify('Network error scanning barcode', 'error');
     } finally {
@@ -587,6 +612,46 @@ export default function ReceiptCapturePage() {
           >
             Cancel
           </button>
+        </div>
+      )}
+
+      {/* ── Warehouse Mismatch Modal ──────────────────────────────────────── */}
+      {warehouseMismatch && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Warehouse Mismatch</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              This barcode (<strong className="font-mono">{warehouseMismatch.barcode}</strong>) was created for warehouse <strong>{warehouseMismatch.stickerWarehouse}</strong>, but this pick slip is for warehouse <strong>{warehouseMismatch.slipWarehouse}</strong>.
+            </p>
+            <p className="text-sm text-gray-600 mb-4">Are you sure you want to link this?</p>
+            <div className="flex gap-3">
+              <button
+                onClick={async () => {
+                  const barcode = warehouseMismatch.barcode;
+                  setWarehouseMismatch(null);
+                  setScanLoading(true);
+                  try {
+                    await addBox(barcode);
+                  } finally {
+                    setScanLoading(false);
+                    scanInputRef.current?.focus();
+                  }
+                }}
+                className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600"
+              >
+                Yes, Link Anyway
+              </button>
+              <button
+                onClick={() => {
+                  setWarehouseMismatch(null);
+                  scanInputRef.current?.focus();
+                }}
+                className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                No
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
