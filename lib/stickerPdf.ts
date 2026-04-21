@@ -170,13 +170,14 @@ function drawSticker(doc: InstanceType<typeof PDFDocument>, p: StickerDrawParams
   }
   cy += 34;
 
-  // Barcode image (centred)
+  // Barcode image (centred, height-capped so it doesn't cover the text)
+  const bcMaxH = 36;
   if (barcodePng) {
     try {
       const bcW = Math.min(w - 2 * pad, 220);
       const bcX = x + (w - bcW) / 2;
-      doc.image(barcodePng, bcX, cy, { width: bcW });
-      cy += 44;
+      doc.image(barcodePng, bcX, cy, { fit: [bcW, bcMaxH] });
+      cy += bcMaxH + 4;
     } catch {
       cy += 10;
     }
@@ -184,13 +185,13 @@ function drawSticker(doc: InstanceType<typeof PDFDocument>, p: StickerDrawParams
     cy += 10;
   }
 
-  // Barcode value text (centred)
+  // Barcode value text (centred, below the barcode)
   doc.font('Helvetica').fontSize(7).fillColor('#000000');
   doc.text(barcodeValue, x + pad, cy, {
     width: w - 2 * pad,
     align: 'center',
   });
-  cy += 16;
+  cy += 14;
 
   // ── Fields ──────────────────────────────────────────────────────────
   const fieldW = w - 2 * pad;

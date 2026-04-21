@@ -2,23 +2,24 @@
  * Parse client aged-stock xlsx files.
  *
  * Auto-detects the layout from header cells — no user-facing "format" choice.
- * Currently recognises four common shapes we've seen in the wild:
+ * Currently recognises six common shapes:
  *
- *   1. Genkem-style (variant A) — fiscal-week banner in row 1, column headers
- *      in rows 2–3, data from row 4. Columns A–F: Dept code, Dept name, Site
- *      code, Site name, Article, Description (no header on description).
- *      Period blocks are Qty+Val pairs, extra % columns are skipped.
+ *   1. Genkem-style — fiscal-week banner in row 1, "Department" / "Site" /
+ *      "Article" in row 3. Qty+Val pairs, % columns skipped. Two sub-variants
+ *      (A and B) differ only in the number of period columns.
  *
- *   2. Genkem-style (variant B) — same shape, fewer trailing period columns.
- *      Parser emits the same schema — we just enumerate whatever periods the
- *      header row advertises.
+ *   2. SafeTop — "Fiscal Week / Year" + "Barcode" in the same row (R2 or R3).
+ *      Barcode and vendor product code (BMC) are in the file.
  *
- *   3. SafeTop — "Fiscal Week / Year" in A2, "Barcode" in H2. Data from row 4.
- *      Barcode and vendor product code are in the file. Fewer period columns.
+ *   3. USABCO flat — single-row header: Region | Store Code | Store | Article
+ *      Code. One period only. Zero-padded article codes, `_Sxx` store suffix.
  *
- *   4. USABCO — simple single-row header. Data from row 2. One period only
- *      (13 to +24 Mnth). Article codes may be zero-padded to 18 chars; store
- *      name has a trailing `_<code>` suffix.
+ *   4. BW Site-Article — SAP BW export with "Site" at col A, "Article" at col C.
+ *      Two sub-variants: with Barcode/BMC columns (Topline, Usabco HS) or
+ *      without (STA007-style). Dynamically detects period Qty/Val pairs.
+ *
+ * Multi-sheet workbooks: parser prefers "Site Article" sheet, skips hidden
+ * SAP sheets (`_com.sap.*`), and tries each sheet until detection succeeds.
  *
  * Output is normalized across all shapes: one row per store+article, with
  * period values kept separate so the UI can let the user choose which to sum.
@@ -26,7 +27,7 @@
 
 import * as XLSX from 'xlsx';
 
-export type AgedStockFormat = 'genkem' | 'safetop' | 'usabco' | 'unknown';
+export type AgedStockFormat = 'genkem' | 'safetop' | 'usabco' | 'bw-site' | 'unknown';
 
 export interface AgedStockPeriod {
   /** Stable id used in the UI. Derived from the label, e.g. "10mnth". */
@@ -203,17 +204,20 @@ interface DetectedFormat {
 }
 
 function detectFormat(rows: unknown[][]): DetectedFormat | null {
-  const r0 = rows[0] ?? [];
-  const r1 = rows[1] ?? [];
-  const r2 = rows[2] ?? [];
+  // Normalize headers from the first few rows for flexible pattern matching.
+  // Scanning dynamically handles SAP BW files where blank/hidden rows may
+  // shift the header row position depending on export options.
+  const hRows: string[][] = [];
+  for (let i = 0; i < Math.min(6, rows.length); i++) {
+    hRows.push((rows[i] ?? []).map(v => normalizeHeader(cellText(v))));
+  }
 
-  // USABCO — clean single-row header
-  const r0Headers = r0.map(v => normalizeHeader(cellText(v)));
+  // ── USABCO flat — always row 1: Region | Store Code | Store | Article Code
   if (
-    r0Headers[0] === 'region' &&
-    r0Headers[1] === 'store code' &&
-    r0Headers[2] === 'store' &&
-    r0Headers[3] === 'article code'
+    hRows[0]?.[0] === 'region' &&
+    hRows[0]?.[1] === 'store code' &&
+    hRows[0]?.[2] === 'store' &&
+    hRows[0]?.[3] === 'article code'
   ) {
     return {
       format: 'usabco',
@@ -229,47 +233,86 @@ function detectFormat(rows: unknown[][]): DetectedFormat | null {
     };
   }
 
-  // SafeTop — "Fiscal Week / Year" in A2, "Barcode" header in H2
-  const r1Headers = r1.map(v => normalizeHeader(cellText(v)));
-  if (
-    r1Headers[0] === 'fiscal week / year' &&
-    r1Headers.includes('barcode')
-  ) {
-    const barcodeCol = r1Headers.indexOf('barcode');
-    // BMC code column is right after barcode. Description is immediately before barcode.
-    return {
-      format: 'safetop',
-      periodHeaderRow: 0,                  // "10 Mnth Qty" etc. live in row 1
-      firstDataRow: 3,                     // data starts at row 4 (index 3) — row 3 is a totals row
-      periodStartCol: barcodeCol + 3,      // skip BMC code + BMC category after barcode
-      siteCodeCol: 3,
-      siteNameCol: 4,
-      articleCol: 5,
-      descriptionCol: 6,
-      barcodeCol,
-      vendorProductCodeCol: barcodeCol + 1, // "BMC" (Merch/Vendor code)
-    };
+  // ── SafeTop — row with "Fiscal Week / Year" at A and "Barcode" somewhere.
+  //    Original: headers on R2 (index 1). Variant: headers on R3 (index 2).
+  //    Period Qty/Val headers are always one row above the column-name row.
+  for (let i = 0; i < hRows.length; i++) {
+    if (
+      hRows[i]?.[0] === 'fiscal week / year' &&
+      hRows[i]?.includes('barcode')
+    ) {
+      const barcodeCol = hRows[i].indexOf('barcode');
+      return {
+        format: 'safetop',
+        periodHeaderRow: Math.max(0, i - 1),
+        firstDataRow: i + 2,               // skip column-name row + totals row
+        periodStartCol: barcodeCol + 3,     // skip Barcode, BMC, BMC category
+        siteCodeCol: 3,
+        siteNameCol: 4,
+        articleCol: 5,
+        descriptionCol: 6,
+        barcodeCol,
+        vendorProductCodeCol: barcodeCol + 1,
+      };
+    }
   }
 
-  // Genkem-style — row 3 has "Department" / "Site" / "Article" headers
-  const r2Headers = r2.map(v => normalizeHeader(cellText(v)));
-  if (
-    r2Headers[0] === 'department' &&
-    r2Headers[2] === 'site' &&
-    r2Headers[4] === 'article'
-  ) {
-    return {
-      format: 'genkem',
-      periodHeaderRow: 1,     // row 2 holds the Qty/Val pair headers
-      firstDataRow: 3,        // row 4 is "Overall Result" — will be skipped by row filter
-      periodStartCol: 6,      // col G
-      siteCodeCol: 2,
-      siteNameCol: 3,
-      articleCol: 4,
-      descriptionCol: 5,
-      barcodeCol: -1,
-      vendorProductCodeCol: -1,
-    };
+  // ── Genkem — row with "Department" at A, "Site" at C, "Article" at E
+  for (let i = 0; i < hRows.length; i++) {
+    if (
+      hRows[i]?.[0] === 'department' &&
+      hRows[i]?.[2] === 'site' &&
+      hRows[i]?.[4] === 'article'
+    ) {
+      return {
+        format: 'genkem',
+        periodHeaderRow: Math.max(0, i - 1),
+        firstDataRow: i + 1,
+        periodStartCol: 6,
+        siteCodeCol: 2,
+        siteNameCol: 3,
+        articleCol: 4,
+        descriptionCol: 5,
+        barcodeCol: -1,
+        vendorProductCodeCol: -1,
+      };
+    }
+  }
+
+  // ── BW Site-Article — row with "Site" at A, "Article" at C.
+  //    Two variants: with Barcode/BMC columns (cols E-G) or without.
+  //    Covers: STA007-style, Topline "Site Article", Usabco Home Storage BW.
+  for (let i = 0; i < hRows.length; i++) {
+    if (hRows[i]?.[0] === 'site' && hRows[i]?.[2] === 'article') {
+      const hasBarcode = hRows[i].includes('barcode');
+      if (hasBarcode) {
+        const barcodeCol = hRows[i].indexOf('barcode');
+        return {
+          format: 'bw-site',
+          periodHeaderRow: Math.max(0, i - 1),
+          firstDataRow: i + 1,
+          periodStartCol: barcodeCol + 3,   // skip Barcode, BMC, BMC desc
+          siteCodeCol: 0,
+          siteNameCol: 1,
+          articleCol: 2,
+          descriptionCol: 3,
+          barcodeCol,
+          vendorProductCodeCol: barcodeCol + 1,
+        };
+      }
+      return {
+        format: 'bw-site',
+        periodHeaderRow: Math.max(0, i - 1),
+        firstDataRow: i + 1,
+        periodStartCol: 4,
+        siteCodeCol: 0,
+        siteNameCol: 1,
+        articleCol: 2,
+        descriptionCol: 3,
+        barcodeCol: -1,
+        vendorProductCodeCol: -1,
+      };
+    }
   }
 
   return null;
@@ -279,26 +322,55 @@ function detectFormat(rows: unknown[][]): DetectedFormat | null {
 
 export function parseAgedStockFile(buffer: Buffer): AgedStockParseResult {
   const wb = XLSX.read(buffer, { type: 'buffer', raw: true });
-  const sheetName = wb.SheetNames[0];
-  const ws = wb.Sheets[sheetName];
-  if (!ws) {
+
+  // Build ordered list of sheets to try:
+  //   1. "Site Article" (if present — Topline files have summary sheets first)
+  //   2. Non-hidden sheets (skip SAP "_com.sap..." internal sheets)
+  //   3. All remaining sheets as fallback
+  const tried = new Set<string>();
+  const sheetOrder: string[] = [];
+  const siteArticle = wb.SheetNames.find(n => /^site\s*article$/i.test(n.trim()));
+  if (siteArticle) { sheetOrder.push(siteArticle); tried.add(siteArticle); }
+  for (const n of wb.SheetNames) {
+    if (!tried.has(n) && !n.startsWith('_')) { sheetOrder.push(n); tried.add(n); }
+  }
+  for (const n of wb.SheetNames) {
+    if (!tried.has(n)) { sheetOrder.push(n); tried.add(n); }
+  }
+
+  if (sheetOrder.length === 0) {
     return {
       format: 'unknown', sheetName: '', periods: [], rows: [],
       warnings: [], errors: ['Workbook has no worksheets'],
     };
   }
 
-  const grid = XLSX.utils.sheet_to_json<unknown[]>(ws, {
-    header: 1, raw: true, blankrows: false, defval: null,
-  });
+  // Try each sheet until format detection succeeds
+  let sheetName = sheetOrder[0];
+  let grid: unknown[][] = [];
+  let det: DetectedFormat | null = null;
 
-  const det = detectFormat(grid);
+  for (const name of sheetOrder) {
+    const ws = wb.Sheets[name];
+    if (!ws) continue;
+    const g = XLSX.utils.sheet_to_json<unknown[]>(ws, {
+      header: 1, raw: true, blankrows: false, defval: null,
+    });
+    const d = detectFormat(g);
+    if (d) {
+      sheetName = name;
+      grid = g;
+      det = d;
+      break;
+    }
+  }
+
   if (!det) {
     return {
       format: 'unknown', sheetName, periods: [], rows: [],
       warnings: [],
       errors: [
-        'Unrecognised aged stock list format. Expected one of: Genkem-style (fiscal-week banner), SafeTop-style (Barcode column), or USABCO-style (Region / Store Code / Article Code headers).',
+        'Unrecognised aged stock list format. Expected one of: Genkem-style (fiscal-week banner), SafeTop-style (Barcode column), USABCO-style (Region / Store Code headers), or BW Site-Article (Site / Article columns).',
       ],
     };
   }

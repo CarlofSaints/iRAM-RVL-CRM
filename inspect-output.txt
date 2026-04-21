@@ -1,0 +1,205 @@
+
+================================================================================
+FILE: STA007 Aged Stock Weekly 18.2025 (6).xlsx
+================================================================================
+
+--- Sheet: "Crosstab" ---
+Rows: 3167, Cols: 13
+
+R1: [A=] [B=] [C=] [D=Fiscal Week / Year] [E=018.2025] [F=018.2025] [G=018.2025] [H=018.2025] [I=018.2025] [J=018.2025] [K=018.2025] [L=018.2025] [M=018.2025]
+R2: [A=] [B=] [C=] [D=] [E=SOH
+Qty] [F=SOH
+Cost] [G=10 to 12
+Mnth
+Qty] [H=10 to 12
+Mnth
+Val] [I=10 to 12
+Mnth %] [J=13 to +24
+Mnth Qty] [K=13 to +24
+Mnth Val] [L=13 to +24
+  Mnth %] [M=Provision]
+R3: [A=Site] [B=] [C=Article] [D=] [E=EA] [F=ZAR] [G=EA] [H=ZAR] [I=%] [J=EA] [K=ZAR] [L=%] [M=ZAR]
+R4: [A=Overall Result] [B=] [C=] [D=] [E=124297] [F=14121945.569999909] [G=6441] [H=1032862.7799999996] [I=7.313884442340334] [J=6760] [K=1029808.2399999979] [L=7.2922547031173695] [M=189419.15199999968]
+R5: [A=] [B=] [C=] [D=] [E=] [F=] [G=] [H=] [I=] [J=] [K=] [L=] [M=]
+R6: [A=S149] [B=BEX Springfield] [C=Result] [D=] [E=928] [F=115367.77] [G=76] [H=9072.679999999998] [I=7.864137444972716] [J=453] [K=77298.75] [L=67.00203184996988] [M=11594.812500000002]
+R7: [A=S149] [B=BEX Springfield] [C=25511] [D=MAJOR TECH CLAMP METER DIGITAL 400A] [E=9] [F=7137] [G=0] [H=0] [I=0] [J=9] [K=7137] [L=100] [M=1070.55]
+R8: [A=S149] [B=BEX Springfield] [C=55907] [D=MAJOTECH DIGITAL M/M C/W TEMP] [E=5] [F=4696.25] [G=0] [H=0] [I=0] [J=5] [K=4696.25] [L=100] [M=704.4375]
+R9: [A=S149] [B=BEX Springfield] [C=575612] [D=VETI SOCKET SHUKO USB EURO 2X16A WH] [E=10] [F=4662.6] [G=0] [H=0] [I=0] [J=10] [K=4662.6] [L=100] [M=699.39]
+R10: [A=S149] [B=BEX Springfield] [C=575638] [D=M/TECH DB BOARD DIN RAIL FLUSH 12 W] [E=8] [F=4474.4] [G=0] [H=0] [I=0] [J=8] [K=4474.4] [L=100] [M=671.16]
+
+... (3154 rows omitted) ...
+
+R3165: [A=S151] [B=BEX Wonderboom] [C=769553] [D=VETI 3 BLANK PLATE 100X100MM TI] [E=10] [F=462] [G=10] [H=462] [I=100] [J=0] [K=0] [L=0] [M=0]
+R3166: [A=S153] [B=BEX Hartbeespoort] [C=Result] [D=] [E=1062] [F=125765.08000000003] [G=2] [H=541.8] [I=0.4308032086490145] [J=0] [K=0] [L=0] [M=0]
+R3167: [A=S153] [B=BEX Hartbeespoort] [C=604474] [D=MAJOR TECH LED FLOODLIGHT SLIM 20W ] [E=3] [F=812.7] [G=2] [H=541.8] [I=66.66666666666667] [J=0] [K=0] [L=0] [M=0]
+
+================================================================================
+FILE: March_Aged_Stock_SAFETOP.xlsx
+================================================================================
+
+--- Sheet: "_com.sap.ip.bi.xl.hiddensheet" ---
+Rows: 1, Cols: 1
+
+R1: [A=]
+
+--- Sheet: "WK9" ---
+Rows: 2114, Cols: 15
+
+R1: [A=] [B=] [C=] [D=] [E=] [F=] [G=] [H=] [I=] [J=] [K=] [L=] [M=] [N=] [O=]
+R2: [A=] [B=] [C=] [D=] [E=] [F=] [G=] [H=] [I=] [J=] [K=10 to 12
+Mnth
+Qty] [L=10 to 12
+Mnth
+Val] [M=13 to +24
+Mnth Qty] [N=13 to +24
+Mnth Val] [O=Special Instructions]
+R3: [A=Fiscal Week / Year] [B=Regular Vendor] [C=] [D=Site] [E=] [F=Article] [G=] [H=Barcode] [I=BMC] [J=] [K=] [L=ZAR] [M=] [N=ZAR] [O=]
+R4: [A=009.2026] [B=Result] [C=] [D=] [E=] [F=] [G=] [H=] [I=] [J=] [K=4825.3] [L=237971.85999999975] [M=9698.3] [N=312038.93999999965] [O=]
+R5: [A=009.2026] [B=9448] [C=SAFE TOP RETAIL DISTRIBUTORS (PTY)] [D=S66] [E=BEX Amanzimtoti] [F=572083] [G=GLIDES PLASTIC&FELT WITH NAIL 24MM ] [H=8021612406709] [I=GDHC05] [J=Ironmongery Hooks &] [K=0] [L=0] [M=3] [N=122.16] [O=Resalable and goodconditioned packa]
+R6: [A=009.2026] [B=9448] [C=SAFE TOP RETAIL DISTRIBUTORS (PTY)] [D=S66] [E=BEX Amanzimtoti] [F=572095] [G=ADH NON SLIP BUMPER RND 30X2.5MM P6] [H=8021612410041] [I=GDHC05] [J=Ironmongery Hooks &] [K=0] [L=0] [M=7] [N=113.96] [O=Resalable and goodconditioned packa]
+R7: [A=009.2026] [B=9448] [C=SAFE TOP RETAIL DISTRIBUTORS (PTY)] [D=S66] [E=BEX Amanzimtoti] [F=571975] [G=ADH FELT PADS SQ 50X50MM P2 BRN] [H=8021612411239] [I=GDHC05] [J=Ironmongery Hooks &] [K=0] [L=0] [M=9] [N=87.57] [O=Resalable and goodconditioned packa]
+R8: [A=009.2026] [B=9448] [C=SAFE TOP RETAIL DISTRIBUTORS (PTY)] [D=S66] [E=BEX Amanzimtoti] [F=572067] [G=ADH FELT PADS SQ 50X50MM P2 WHT] [H=8021612411222] [I=GDHC05] [J=Ironmongery Hooks &] [K=10] [L=59.6] [M=5] [N=29.8] [O=Resalable and goodconditioned packa]
+R9: [A=009.2026] [B=9448] [C=SAFE TOP RETAIL DISTRIBUTORS (PTY)] [D=S66] [E=BEX Amanzimtoti] [F=572063] [G=ADH FELT PADS SQ 25X25MM P8 WHT] [H=8021612411024] [I=GDHC05] [J=Ironmongery Hooks &] [K=0] [L=0] [M=3] [N=12.06] [O=Resalable and goodconditioned packa]
+R10: [A=009.2026] [B=9448] [C=SAFE TOP RETAIL DISTRIBUTORS (PTY)] [D=S145] [E=BEX Baobab Polokwane] [F=572034] [G=ADH BUMPER SQ 20.5X20.5MM P9 CLR] [H=8021612409175] [I=GDHC05] [J=Ironmongery Hooks &] [K=0] [L=0] [M=2] [N=83.66] [O=Resalable and goodconditioned packa]
+
+... (2101 rows omitted) ...
+
+R2112: [A=] [B=] [C=] [D=] [E=] [F=] [G=] [H=] [I=] [J=] [K=] [L=] [M=] [N=] [O=]
+R2113: [A=] [B=] [C=] [D=] [E=] [F=] [G=] [H=] [I=] [J=] [K=] [L=] [M=] [N=] [O=]
+R2114: [A=] [B=] [C=] [D=] [E=] [F=] [G=] [H=] [I=] [J=] [K=] [L=] [M=] [N=] [O=]
+
+================================================================================
+FILE: Topline aged stock - JUL2025.xlsx
+================================================================================
+
+--- Sheet: "Summary" ---
+Rows: 39, Cols: 21
+
+R1: [A=Fiscal Week / Year] [B=027.2025] [C=027.2025] [D=027.2025] [E=027.2025] [F=027.2025] [G=027.2025] [H=027.2025] [I=027.2025] [J=] [K=] [L=] [M=Fiscal Week / Year] [N=027.2025] [O=027.2025] [P=027.2025] [Q=027.2025] [R=027.2025] [S=027.2025] [T=027.2025]
+R2: [A=] [B=SOH
+Qty] [C=SOH
+Cost] [D=10 to 12
+Mnth
+Qty] [E=10 to 12
+Mnth
+Val] [F=10 to 12
+Mnth %] [G=13 to +24
+Mnth Qty] [H=13 to +24
+Mnth Val] [I=13 to +24
+  Mnth %] [J=] [K=] [L=] [M=] [N=SOH
+Qty] [O=SOH
+Cost] [P=10 to 12
+Mnth
+Qty] [Q=10 to 12
+Mnth
+Val] [R=10 to 12
+Mnth %] [S=13 to +24
+Mnth Qty] [T=13 to +24
+Mnth Val]
+R3: [A=Site Brand Code] [B=EA] [C=ZAR] [D=EA] [E=ZAR] [F=%] [G=EA] [H=ZAR] [I=%] [J=] [K=] [L=Site] [M=] [N=EA] [O=ZAR] [P=EA] [Q=ZAR] [R=%] [S=EA] [T=ZAR]
+R4: [A=Overall Result] [B=344183] [C=46928845.45] [D=31848] [E=5689659.319999999] [F=12.124012998234544] [G=31619] [H=4769534.559999999] [I=10.163332424985066] [J=] [K=] [L=TOTAL] [M=Total Builders] [N=320765] [O=43691533.010000005] [P=28637] [Q=5187334.4] [R=11.872630788241596] [S=25299] [T=3987870.4099999997]
+R5: [A=Builders Express] [B=151478] [C=19847980.28] [D=15696] [E=2741907.51] [F=13.814541687966651] [G=12856] [H=2015547.46] [I=10.154924740785766] [J=] [K=] [L=RE07] [M=JHB South, N/W & Free State] [N=35026] [O=4842696.95] [P=3484] [Q=644873.06] [R=13.316403373124556] [S=4812] [T=759110.08]
+R6: [A=Builders Warehouse] [B=150461] [C=21364951.09] [D=8296] [E=1665870.43] [F=7.797211531084296] [G=8284] [H=1412329.63] [I=6.610497838495169] [J=] [K=] [L=RE02] [M=PTA] [N=47873] [O=6676947.63] [P=4423] [Q=807544.15] [R=12.09451076674088] [S=3959] [T=630499.74]
+R7: [A=Builders Superstore] [B=18826] [C=2478601.64] [D=4645] [E=779556.46] [F=31.451462285000343] [G=4159] [H=559993.32] [I=22.59311504369052] [J=] [K=] [L=RE09] [M=Western Cape] [N=52232] [O=7120820.45] [P=2454] [Q=452988.36] [R=6.361463024952412] [S=2928] [T=529026.82]
+R8: [A=BWH Mozambique] [B=9146] [C=1171193.8] [D=1194] [E=181787.73] [F=15.521575603382677] [G=2580] [H=283941.33] [I=24.243753035361827] [J=] [K=] [L=RE03] [M=N/W, Limpopo & Mpumalanga] [N=34603] [O=4803113.9] [P=4041] [Q=740361.8] [R=15.414204522611882] [S=3310] [T=492081.62]
+R9: [A=BWH Zambia] [B=7962] [C=1245331.02] [D=1396] [E=232063.13] [F=18.634654692623666] [G=2220] [H=280817.81] [I=22.54965213121079] [J=] [K=] [L=RE04] [M=KZN] [N=45999] [O=6032210.39] [P=5452] [Q=972836.34] [R=16.127360902609368] [S=2747] [T=418883.34]
+R10: [A=BWH Botswana] [B=6310] [C=820787.62] [D=621] [E=88474.06] [F=10.779165512685472] [G=1520] [H=216905.01] [I=26.426447853374786] [J=] [K=] [L=RE06] [M=JHB East] [N=35731] [O=4793121.23] [P=2922] [Q=527435.72] [R=11.004013766620295] [S=2772] [T=416886.33]
+
+... (26 rows omitted) ...
+
+R37: [A=LEBOGANG] [B=11396] [C=870610.16] [D=263] [E=18667] [F=2.1441284351655168] [G=158] [H=14444.22] [I=1.6590915961743429] [J=] [K=] [L=] [M=] [N=] [O=] [P=] [Q=] [R=] [S=] [T=]
+R38: [A=LESEGO] [B=546] [C=68073.99] [D=34] [E=4443.39] [F=6.527294786158413] [G=24] [H=3100.71] [I=4.5549115014413] [J=] [K=] [L=] [M=] [N=] [O=] [P=] [Q=] [R=] [S=] [T=]
+R39: [A=MAURITZ] [B=623] [C=119414.42] [D=8] [E=1458.7] [F=1.2215442657595288] [G=17] [H=3070.31] [I=2.5711383935039] [J=] [K=] [L=] [M=] [N=] [O=] [P=] [Q=] [R=] [S=] [T=]
+
+--- Sheet: "Sheet1" ---
+Rows: 4984, Cols: 6
+
+R1: [A=EXCLUDE] [B=(blank)] [C=] [D=] [E=] [F=]
+R2: [A=] [B=] [C=] [D=] [E=] [F=]
+R3: [A=STORE] [B=Article] [C=DESC] [D=Sum of 13 to +24
+Mnth Qty] [E=Sum of 13 to +24] [F=Sum of 13 to +24
+  Mnth %]
+R4: [A=BEX Amanzimtoti] [B=390267] [C=GRIP PLIER FENCING 300MM] [D=4] [E=845.24] [F=100.0023662478408]
+R5: [A=] [B=422237] [C=GRIP VICE DRILL PRESS 100MM] [D=2] [E=780.44] [F=100]
+R6: [A=] [B=425224] [C=GRIP COPING SAW BLADES 165MM] [D=7] [E=342.93] [F=100.00291613204246]
+R7: [A=] [B=467019] [C=RAPID STAPLES FINE 6MM 5000PCE] [D=5] [E=645.55] [F=100]
+R8: [A=] [B=467056] [C=RAPID STAPLES FLAT 6MM 5000PCE] [D=3] [E=438.84] [F=100]
+R9: [A=] [B=467109] [C=RAPID STAPLES FINE WIRE 4MM] [D=1] [E=34.26] [F=100]
+R10: [A=] [B=527858] [C=ROLSON MINI PLASTIC VICE] [D=1] [E=65] [F=100]
+
+... (4971 rows omitted) ...
+
+R4982: [A=] [B=850007568] [C=GRIP CRV COMBO SPANNER SET 9PC] [D=10] [E=1550] [F=100]
+R4983: [A=Superstore Soweto Total] [B=] [C=] [D=266] [E=37342.33] [F=6200.011075346242]
+R4984: [A=Grand Total] [B=] [C=] [D=19544] [E=2966949.169999994] [F=486987.40534588543]
+
+--- Sheet: "Site Article" ---
+Rows: 16090, Cols: 17
+
+R1: [A=] [B=] [C=] [D=] [E=] [F=] [G=Fiscal Week / Year] [H=027.2025] [I=027.2025] [J=027.2025] [K=027.2025] [L=027.2025] [M=027.2025] [N=027.2025] [O=027.2025] [P=] [Q=027.2025]
+R2: [A=] [B=] [C=] [D=] [E=] [F=] [G=] [H=SOH
+Qty] [I=SOH
+Cost] [J=10 to 12
+Mnth
+Qty] [K=10 to 12
+Mnth
+Val] [L=10 to 12
+Mnth %] [M=13 to +24
+Mnth Qty] [N=13 to +24
+Mnth Val] [O=13 to +24
+  Mnth %] [P=] [Q=Aged 10 Months +]
+R3: [A=Site] [B=STORE] [C=Article] [D=DESC] [E=Barcode] [F=BMC] [G=BMC DESC] [H=SOH
+Qty] [I=SOH
+Cost] [J=10 to 12
+Mnth
+Qty] [K=10 to 12
+Mnth
+Val] [L=10 to 12
+Mnth %] [M=13 to +24
+Mnth Qty] [N=13 to +24
+Mnth Val] [O=13 to +24
+  Mnth %] [P=EXCLUDE] [Q=]
+R4: [A=S151] [B=BEX Wonderboom] [C=488731] [D=RAPID CORDLESS TACKER 7.2V BTX530] [E=4051661002755] [F=GDDC06] [G=Cordless Tool Access] [H=2] [I=3358.18] [J=0] [K=0] [L=0] [M=2] [N=3358.18] [O=100] [P=] [Q=]
+R5: [A=S151] [B=BEX Wonderboom] [C=467105] [D=RAPID CORDLESS GLUE GUN BGX300] [E=7313463031355] [F=GDDC06] [G=Cordless Tool Access] [H=3] [I=2997.57] [J=0] [K=0] [L=0] [M=3] [N=2997.57] [O=100] [P=] [Q=]
+R6: [A=S151] [B=BEX Wonderboom] [C=488742] [D=RAPID PNEUMATIC STAPLER AIRTAC PB13] [E=4051661000607] [F=GDAD01] [G=Air Tool Accessories] [H=2] [I=2922.98] [J=0] [K=0] [L=0] [M=2] [N=2922.98] [O=100] [P=] [Q=]
+R7: [A=S151] [B=BEX Wonderboom] [C=725581] [D=RAPID GLUE GUN LITHIUM ION BGX7 3.6] [E=4051661033889] [F=GDBF05] [G=Staple Guns And Stap] [H=5] [I=2783.25] [J=0] [K=0] [L=0] [M=5] [N=2783.25] [O=100] [P=] [Q=]
+R8: [A=S151] [B=BEX Wonderboom] [C=178417] [D=STAPLE GUN NO 34] [E=7313465115503] [F=GDBF05] [G=Staple Guns And Stap] [H=4] [I=2647.2] [J=0] [K=0] [L=0] [M=4] [N=2647.2] [O=100] [P=] [Q=]
+R9: [A=S151] [B=BEX Wonderboom] [C=369544] [D=GRIP BOLT CUTTER 750MM] [E=6003765020331] [F=GDBB08] [G=Tin Snip / Bolt Cutt] [H=3] [I=2314.35] [J=0] [K=0] [L=0] [M=3] [N=2314.35] [O=100] [P=] [Q=]
+R10: [A=S151] [B=BEX Wonderboom] [C=554437] [D=STV RAT TRAP MULTI CATCH 10X18CM] [E=5014009180804] [F=FGAA06] [G=Bait Rodenticides] [H=5] [I=2197.35] [J=0] [K=0] [L=0] [M=5] [N=2197.35] [O=100] [P=] [Q=]
+
+... (16077 rows omitted) ...
+
+R16088: [A=S140] [B=BEX Beacon Bay] [C=532630] [D=GRIP SCREWDRIVER SET 4PCE] [E=6003765023325] [F=GDBE01] [G=Screwdriver Bits & S] [H=14] [I=1045.29] [J=8] [K=597.28] [L=57.140123793397045] [M=0] [N=0] [O=0] [P=] [Q=]
+R16089: [A=S140] [B=BEX Beacon Bay] [C=750068] [D=GRIP SOCKET 1/2 DR 11MM] [E=6003765033065] [F=GDBH02] [G=Sockets & Accessorie] [H=9] [I=212.31] [J=5] [K=117.95] [L=55.55555555555556] [M=0] [N=0] [O=0] [P=] [Q=]
+R16090: [A=S140] [B=BEX Beacon Bay] [C=750120] [D=GRIP SOCKET 1/2 DR 30MM] [E=6003765033218] [F=GDBH02] [G=Sockets & Accessorie] [H=3] [I=153.3] [J=3] [K=153.3] [L=100] [M=0] [N=0] [O=0] [P=] [Q=]
+
+================================================================================
+FILE: Usabco Home Storage Aged Stock 2 March 2026.xlsx
+================================================================================
+
+--- Sheet: "_com.sap.ip.bi.xl.hiddensheet" ---
+Rows: 1, Cols: 1
+
+R1: [A=]
+
+--- Sheet: "Sheet1" ---
+Rows: 171, Cols: 9
+
+R1: [A=] [B=] [C=] [D=] [E=] [F=] [G=Fiscal Week / Year] [H=009.2026] [I=009.2026]
+R2: [A=] [B=] [C=] [D=] [E=] [F=] [G=] [H=13 to +24
+Mnth Qty] [I=13 to +24
+Mnth Val]
+R3: [A=Site] [B=] [C=Article] [D=] [E=Barcode] [F=BMC] [G=] [H=EA] [I=ZAR]
+R4: [A=Overall Result] [B=] [C=] [D=] [E=] [F=] [G=] [H=818.001] [I=147711.6]
+R5: [A=B17] [B=BWH Polokwane] [C=464767] [D=ADDIS STORAGE BOX 56LT CLR] [E=6001246237834] [F=GMGC03] [G=Plastic Storage] [H=28] [I=4493.16]
+R6: [A=B17] [B=BWH Polokwane] [C=567194] [D=ADDIS 3 WIDE DRAWER CLR & BLK] [E=6001246678330] [F=GMGC01] [G=Decorative Storage] [H=4] [I=1498.2]
+R7: [A=B17] [B=BWH Polokwane] [C=783251] [D=MULTI MAX ORGANISER 6 DIVISION 9999] [E=6001246897984] [F=GMGC01] [G=Decorative Storage] [H=7] [I=1378.44]
+R8: [A=B17] [B=BWH Polokwane] [C=352429] [D=ADDIS STORAGE UNIT 3 DRAWER BLK] [E=6001246747746] [F=GMGC01] [G=Decorative Storage] [H=2] [I=672.3]
+R9: [A=B17] [B=BWH Polokwane] [C=394316] [D=ADDIS ROUGHTOTE STORAGE BOX 45LT] [E=6001246966062] [F=GMGC03] [G=Plastic Storage] [H=4] [I=375.32]
+R10: [A=B17] [B=BWH Polokwane] [C=655605] [D=ADDIS STORE N GUARD 38.5L] [E=6001246763944] [F=GMGC03] [G=Plastic Storage] [H=2] [I=374]
+
+... (158 rows omitted) ...
+
+R169: [A=S112] [B=BEX Umgeni Road Conv] [C=518494] [D=STORAGE BOX 15LT CLEARLY NEAT] [E=6001246388260] [F=GMGC03] [G=Plastic Storage] [H=1] [I=73.62]
+R170: [A=S118] [B=BEX Pinetown New] [C=850017561001] [D=ADDIS UNIBOX, DARK GREY] [E=6001246875425] [F=GMGC01] [G=Decorative Storage] [H=1] [I=39.13]
+R171: [A=S145] [B=BEX Baobab Polokwane] [C=850017561001] [D=ADDIS UNIBOX, DARK GREY] [E=6001246875425] [F=GMGC01] [G=Decorative Storage] [H=1] [I=39.13]
