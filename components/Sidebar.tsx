@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Session, avatarSrcFor } from '@/lib/useAuth';
 import Logo from '@/components/Logo';
+import HelpButton from '@/components/HelpButton';
 
 const COLLAPSE_KEY = 'rvl_sidebar_collapsed';
 
@@ -153,6 +154,9 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 flex flex-col gap-1 overflow-y-auto">
         <NavLink href="/dashboard" label="Dashboard" active={pathname === '/dashboard'} />
+        {has('view_dashboard') && (
+          <NavLink href="/guide" label="User Guide" active={pathname === '/guide'} />
+        )}
 
         {/* Control Centre — only links the user has perm for */}
         {showControlSection && (
@@ -226,6 +230,7 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
         </button>
       </div>
       </aside>
+      <HelpButton />
     </>
   );
 }
