@@ -79,10 +79,7 @@ export default function ReceiptCapturePage() {
   const [receiptValue, setReceiptValue] = useState('');
   const [upliftedById, setUpliftedById] = useState('');
   const [upliftedByName, setUpliftedByName] = useState('');
-  const [storeRef1, setStoreRef1] = useState('');
-  const [storeRef2, setStoreRef2] = useState('');
-  const [storeRef3, setStoreRef3] = useState('');
-  const [storeRef4, setStoreRef4] = useState('');
+  const [storeRefs, setStoreRefs] = useState<string[]>(['']);
 
   // Box scanning
   const [scanBarcode, setScanBarcode] = useState('');
@@ -112,10 +109,10 @@ export default function ReceiptCapturePage() {
           setReceiptValue(found.receiptValue ?? '');
           setUpliftedById(found.receiptUpliftedById ?? '');
           setUpliftedByName(found.receiptUpliftedByName ?? '');
-          setStoreRef1(found.receiptStoreRef1 ?? '');
-          setStoreRef2(found.receiptStoreRef2 ?? '');
-          setStoreRef3(found.receiptStoreRef3 ?? '');
-          setStoreRef4(found.receiptStoreRef4 ?? '');
+          // Hydrate store refs — collect non-empty values, default to one empty field
+          const refs = [found.receiptStoreRef1, found.receiptStoreRef2, found.receiptStoreRef3, found.receiptStoreRef4]
+            .filter((r): r is string => !!r);
+          setStoreRefs(refs.length > 0 ? refs : ['']);
           setBoxes(found.receiptBoxes ?? []);
         } else {
           notify('Pick slip not found', 'error');
@@ -158,10 +155,10 @@ export default function ReceiptCapturePage() {
           value: receiptValue,
           upliftedById,
           upliftedByName,
-          storeRef1,
-          storeRef2,
-          storeRef3,
-          storeRef4,
+          storeRef1: storeRefs[0] ?? '',
+          storeRef2: storeRefs[1] ?? '',
+          storeRef3: storeRefs[2] ?? '',
+          storeRef4: storeRefs[3] ?? '',
           boxes: currentBoxes ?? boxes,
         }),
       });
@@ -411,46 +408,50 @@ export default function ReceiptCapturePage() {
               ))}
             </select>
           </div>
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Store Reference 1</label>
-            <input
-              type="text"
-              value={storeRef1}
-              onChange={e => setStoreRef1(e.target.value)}
-              disabled={isReceipted}
-              className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm disabled:bg-gray-50 disabled:text-gray-500"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Store Reference 2</label>
-            <input
-              type="text"
-              value={storeRef2}
-              onChange={e => setStoreRef2(e.target.value)}
-              disabled={isReceipted}
-              className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm disabled:bg-gray-50 disabled:text-gray-500"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Store Reference 3</label>
-            <input
-              type="text"
-              value={storeRef3}
-              onChange={e => setStoreRef3(e.target.value)}
-              disabled={isReceipted}
-              className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm disabled:bg-gray-50 disabled:text-gray-500"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Store Reference 4</label>
-            <input
-              type="text"
-              value={storeRef4}
-              onChange={e => setStoreRef4(e.target.value)}
-              disabled={isReceipted}
-              className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm disabled:bg-gray-50 disabled:text-gray-500"
-            />
-          </div>
+          {storeRefs.map((ref, i) => (
+            <div key={i} className="flex items-end gap-1.5">
+              <div className="flex-1">
+                <label className="block text-xs text-gray-600 mb-1">Store Reference (GRV) {i + 1}</label>
+                <input
+                  type="text"
+                  value={ref}
+                  onChange={e => {
+                    const next = [...storeRefs];
+                    next[i] = e.target.value;
+                    setStoreRefs(next);
+                  }}
+                  disabled={isReceipted}
+                  className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm disabled:bg-gray-50 disabled:text-gray-500"
+                />
+              </div>
+              {!isReceipted && storeRefs.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setStoreRefs(prev => prev.filter((_, j) => j !== i))}
+                  title="Remove"
+                  className="px-1.5 py-1.5 text-red-400 hover:text-red-600 mb-px"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          ))}
+          {!isReceipted && storeRefs.length < 4 && (
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={() => setStoreRefs(prev => [...prev, ''])}
+                className="flex items-center gap-1 text-xs font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-dark)] py-1.5"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                Add Store Reference (GRV)
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Manual save button for receipt details */}

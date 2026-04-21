@@ -1,6 +1,6 @@
 /**
  * iRamFlow SVG logo component.
- * Renders "iRam" in bold + "Flow" in lighter weight with a subtle wave accent.
+ * Renders "iRam" in bold + "Flow" in lighter weight with a clean return arrow.
  * Uses the iRam brand green #7CC042.
  */
 
@@ -25,14 +25,18 @@ export default function Logo({ size = 40, className = '', light = false }: LogoP
       xmlns="http://www.w3.org/2000/svg"
       className={className}
     >
-      {/* Flow wave accent — sits behind text */}
+      {/* Return arrow — clean curved arrow pointing left (stock returning) */}
       <path
-        d="M2 32 C20 26, 30 36, 50 30 S80 22, 100 28 S115 32, 118 30"
+        d="M108 10 L108 6 L102 10 L108 14 L108 10"
+        fill="#7CC042"
+      />
+      <path
+        d="M106 10 C96 10, 90 10, 86 14 C82 18, 82 24, 86 28"
         stroke="#7CC042"
-        strokeWidth="2.5"
+        strokeWidth="2"
         strokeLinecap="round"
         fill="none"
-        opacity="0.5"
+        opacity="0.6"
       />
 
       {/* "iRam" — bold */}
