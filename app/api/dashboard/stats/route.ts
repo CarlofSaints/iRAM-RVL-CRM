@@ -79,11 +79,23 @@ export async function GET(req: NextRequest) {
   let warehouseTotalQty = 0;
   let warehouseTotalVal = 0;
 
+  // Build lookup maps to resolve slip.warehouse (free-text) → warehouse code
+  // Matches by code (exact) or name (case-insensitive), falls back to raw value
+  const whCodeSet = new Set(warehouses.map(w => w.code.toUpperCase().trim()));
+  const whNameToCode = new Map(warehouses.map(w => [w.name.toUpperCase().trim(), w.code.toUpperCase().trim()]));
+
+  function resolveWarehouseCode(raw: string): string {
+    const upper = raw.toUpperCase().trim();
+    if (whCodeSet.has(upper)) return upper;          // already a valid code
+    const byName = whNameToCode.get(upper);
+    if (byName) return byName;                        // matched by name
+    return upper;                                     // fallback — use raw
+  }
+
   for (const run of pickSlipRuns) {
     for (const slip of run.slips) {
       if (slip.status !== 'receipted') continue;
-      // Normalize warehouse key to uppercase-trimmed for reliable lookup by w.code
-      const wh = (slip.warehouse || 'UNKNOWN').toUpperCase().trim();
+      const wh = resolveWarehouseCode(slip.warehouse || 'UNKNOWN');
 
       // Per-client warehouse qty
       if (!clientWarehouseQty.has(slip.clientId)) clientWarehouseQty.set(slip.clientId, {});
