@@ -25,20 +25,6 @@ export default function Logo({ size = 40, className = '', light = false }: LogoP
       xmlns="http://www.w3.org/2000/svg"
       className={className}
     >
-      {/* Return arrow — clean curved arrow pointing left (stock returning) */}
-      <path
-        d="M108 10 L108 6 L102 10 L108 14 L108 10"
-        fill="#7CC042"
-      />
-      <path
-        d="M106 10 C96 10, 90 10, 86 14 C82 18, 82 24, 86 28"
-        stroke="#7CC042"
-        strokeWidth="2"
-        strokeLinecap="round"
-        fill="none"
-        opacity="0.6"
-      />
-
       {/* "iRam" — bold */}
       <text
         x="2"
