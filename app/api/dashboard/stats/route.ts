@@ -82,7 +82,8 @@ export async function GET(req: NextRequest) {
   for (const run of pickSlipRuns) {
     for (const slip of run.slips) {
       if (slip.status !== 'receipted') continue;
-      const wh = slip.warehouse || 'UNKNOWN';
+      // Normalize warehouse key to uppercase-trimmed for reliable lookup by w.code
+      const wh = (slip.warehouse || 'UNKNOWN').toUpperCase().trim();
 
       // Per-client warehouse qty
       if (!clientWarehouseQty.has(slip.clientId)) clientWarehouseQty.set(slip.clientId, {});

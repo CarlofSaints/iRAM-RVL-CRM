@@ -275,7 +275,8 @@ export default function DashboardPage() {
                       <td className="px-3 py-2 text-right font-medium">{fmtNum(c.totalQty)}</td>
                       <td className="px-3 py-2 text-right font-medium">{fmtRand(c.totalVal)}</td>
                       {warehouses.map(w => {
-                        const whQty = c.warehouseQty?.[w.code] ?? 0;
+                        const whKey = w.code.toUpperCase().trim();
+                        const whQty = c.warehouseQty?.[whKey] ?? 0;
                         return (
                           <td key={w.code} className={`px-3 py-2 text-right ${whQty > 0 ? 'font-medium text-gray-900' : 'text-gray-400'}`}>
                             {fmtNum(whQty)}
@@ -297,7 +298,8 @@ export default function DashboardPage() {
                       <td className="px-3 py-2 text-right">{fmtNum(filteredTotalQty)}</td>
                       <td className="px-3 py-2 text-right">{fmtRand(filteredTotalVal)}</td>
                       {warehouses.map(w => {
-                        const whTotal = filteredClients.reduce((sum, c) => sum + (c.warehouseQty?.[w.code] ?? 0), 0);
+                        const whKey = w.code.toUpperCase().trim();
+                        const whTotal = filteredClients.reduce((sum, c) => sum + (c.warehouseQty?.[whKey] ?? 0), 0);
                         return (
                           <td key={w.code} className={`px-3 py-2 text-right ${whTotal > 0 ? 'text-gray-900' : 'text-gray-400'}`}>
                             {fmtNum(whTotal)}

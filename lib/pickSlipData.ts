@@ -18,7 +18,6 @@ import type { PickSlipPdfRow } from './pickSlipPdf';
 export interface ReceiptBox {
   id: string;
   stickerBarcode: string;
-  numberOfBoxes: number;
   scannedAt: string;
 }
 
@@ -63,9 +62,10 @@ export interface PickSlipRecord {
   spDriveId?: string;
   /** SP file ID from upload response */
   spFileId?: string;
-  /** Receipt fields — populated during warehouse box receipting */
-  receiptDate?: string;
+  /** Receipt fields — populated during warehouse stock receipting */
+  receiptQty?: string;
   receiptValue?: string;
+  receiptTotalBoxes?: number;
   receiptUpliftedById?: string;
   receiptUpliftedByName?: string;
   receiptStoreRef1?: string;

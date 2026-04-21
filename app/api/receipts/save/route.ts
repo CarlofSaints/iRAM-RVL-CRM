@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
-import { loadUsers } from '@/lib/userData';
 import { updateSlipInRun, getPickSlipRun, type ReceiptBox } from '@/lib/pickSlipData';
 import { findAndLinkSticker, unlinkSticker } from '@/lib/stickerData';
 
@@ -16,12 +15,13 @@ export async function POST(req: NextRequest) {
   if (guard instanceof NextResponse) return guard;
 
   const body = await req.json();
-  const { slipId, clientId, loadId, date, value, upliftedById, upliftedByName, storeRef1, storeRef2, storeRef3, storeRef4, boxes } = body as {
+  const { slipId, clientId, loadId, qty, value, totalBoxes, upliftedById, upliftedByName, storeRef1, storeRef2, storeRef3, storeRef4, boxes } = body as {
     slipId: string;
     clientId: string;
     loadId: string;
-    date?: string;
+    qty?: string;
     value?: string;
+    totalBoxes?: number;
     upliftedById?: string;
     upliftedByName?: string;
     storeRef1?: string;
@@ -69,8 +69,9 @@ export async function POST(req: NextRequest) {
 
   // Persist receipt data on the pick slip
   const updated = await updateSlipInRun(clientId, loadId, slipId, {
-    receiptDate: date,
+    receiptQty: qty,
     receiptValue: value,
+    receiptTotalBoxes: totalBoxes,
     receiptUpliftedById: upliftedById,
     receiptUpliftedByName: upliftedByName,
     receiptStoreRef1: storeRef1,

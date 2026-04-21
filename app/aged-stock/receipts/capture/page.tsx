@@ -17,8 +17,9 @@ interface SlipDto {
   totalQty: number;
   totalVal: number;
   status: string;
-  receiptDate?: string;
+  receiptQty?: string;
   receiptValue?: string;
+  receiptTotalBoxes?: number;
   receiptUpliftedById?: string;
   receiptUpliftedByName?: string;
   receiptStoreRef1?: string;
@@ -33,7 +34,6 @@ interface SlipDto {
 interface ReceiptBox {
   id: string;
   stickerBarcode: string;
-  numberOfBoxes: number;
   scannedAt: string;
 }
 
@@ -75,17 +75,20 @@ export default function ReceiptCapturePage() {
   const [completing, setCompleting] = useState(false);
 
   // Receipt form fields
-  const [receiptDate, setReceiptDate] = useState('');
+  const [receiptQty, setReceiptQty] = useState('');
   const [receiptValue, setReceiptValue] = useState('');
+  const [receiptTotalBoxes, setReceiptTotalBoxes] = useState('');
   const [upliftedById, setUpliftedById] = useState('');
   const [upliftedByName, setUpliftedByName] = useState('');
   const [storeRefs, setStoreRefs] = useState<string[]>(['']);
 
   // Box scanning
   const [scanBarcode, setScanBarcode] = useState('');
-  const [scanBoxCount, setScanBoxCount] = useState(1);
   const [scanLoading, setScanLoading] = useState(false);
   const [boxes, setBoxes] = useState<ReceiptBox[]>([]);
+
+  // Box count mismatch confirmation modal
+  const [showMismatchModal, setShowMismatchModal] = useState(false);
 
   const isReceipted = slip?.status === 'receipted';
 
@@ -105,8 +108,9 @@ export default function ReceiptCapturePage() {
         if (found) {
           setSlip(found);
           // Hydrate form from existing receipt data
-          setReceiptDate(found.receiptDate ?? '');
+          setReceiptQty(found.receiptQty ?? '');
           setReceiptValue(found.receiptValue ?? '');
+          setReceiptTotalBoxes(found.receiptTotalBoxes != null ? String(found.receiptTotalBoxes) : '');
           setUpliftedById(found.receiptUpliftedById ?? '');
           setUpliftedByName(found.receiptUpliftedByName ?? '');
           // Hydrate store refs — collect non-empty values, default to one empty field
@@ -151,8 +155,9 @@ export default function ReceiptCapturePage() {
           slipId: slip.id,
           clientId: slip.clientId,
           loadId: slip.loadId,
-          date: receiptDate,
+          qty: receiptQty,
           value: receiptValue,
+          totalBoxes: receiptTotalBoxes ? Number(receiptTotalBoxes) : undefined,
           upliftedById,
           upliftedByName,
           storeRef1: storeRefs[0] ?? '',
@@ -212,14 +217,12 @@ export default function ReceiptCapturePage() {
       const newBox: ReceiptBox = {
         id: uuid(),
         stickerBarcode: barcode,
-        numberOfBoxes: scanBoxCount,
         scannedAt: new Date().toISOString(),
       };
 
       const updatedBoxes = [...boxes, newBox];
       setBoxes(updatedBoxes);
       setScanBarcode('');
-      setScanBoxCount(1);
 
       // Auto-save after adding box
       await saveReceipt(updatedBoxes);
@@ -240,20 +243,25 @@ export default function ReceiptCapturePage() {
   }
 
   // ── Complete receipt ──
-  async function handleComplete() {
+  async function handleComplete(force = false) {
     if (!slip) return;
     if (boxes.length === 0) {
       notify('Scan at least one box before completing', 'error');
       return;
     }
 
+    // Validate box count if user entered a total
+    const expectedBoxes = receiptTotalBoxes ? Number(receiptTotalBoxes) : 0;
+    if (!force && expectedBoxes > 0 && expectedBoxes !== boxes.length) {
+      setShowMismatchModal(true);
+      return;
+    }
+
     // Save first, then complete
     setCompleting(true);
     try {
-      // Save current state
       await saveReceipt();
 
-      // Then mark as receipted
       const res = await authFetch('/api/receipts/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -298,7 +306,7 @@ export default function ReceiptCapturePage() {
       <div className="text-center py-20">
         <p className="text-gray-500 mb-4">Pick slip not found</p>
         <button onClick={() => router.push('/aged-stock/receipts')} className="text-[var(--color-primary)] hover:underline text-sm">
-          Back to Box Receipts
+          Back to Receive Stock
         </button>
       </div>
     );
@@ -311,7 +319,7 @@ export default function ReceiptCapturePage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Warehouse Box Receipts</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Receive Stock (WH)</h1>
           <p className="text-sm text-gray-600 mt-1">
             {isReceipted
               ? `Receipted on ${fmtDate(slip.receiptedAt!)} by ${slip.receiptedByName}`
@@ -374,11 +382,12 @@ export default function ReceiptCapturePage() {
         <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Receipt Details</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
-            <label className="block text-xs text-gray-600 mb-1">Date</label>
+            <label className="block text-xs text-gray-600 mb-1">Quantity</label>
             <input
-              type="date"
-              value={receiptDate}
-              onChange={e => setReceiptDate(e.target.value)}
+              type="text"
+              value={receiptQty}
+              onChange={e => setReceiptQty(e.target.value)}
+              placeholder="e.g. 150"
               disabled={isReceipted}
               className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm disabled:bg-gray-50 disabled:text-gray-500"
             />
@@ -390,6 +399,18 @@ export default function ReceiptCapturePage() {
               value={receiptValue}
               onChange={e => setReceiptValue(e.target.value)}
               placeholder="e.g. R 1,500.00"
+              disabled={isReceipted}
+              className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm disabled:bg-gray-50 disabled:text-gray-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Total Boxes</label>
+            <input
+              type="number"
+              min={0}
+              value={receiptTotalBoxes}
+              onChange={e => setReceiptTotalBoxes(e.target.value)}
+              placeholder="Expected number of boxes"
               disabled={isReceipted}
               className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm disabled:bg-gray-50 disabled:text-gray-500"
             />
@@ -471,7 +492,15 @@ export default function ReceiptCapturePage() {
 
       {/* Box scanning section */}
       <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
-        <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Scanned Boxes</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Scanned Boxes</h2>
+          <span className="text-sm text-gray-500">
+            {boxes.length} scanned
+            {receiptTotalBoxes && Number(receiptTotalBoxes) > 0 && (
+              <> / {receiptTotalBoxes} expected</>
+            )}
+          </span>
+        </div>
 
         {/* Scan input row */}
         {!isReceipted && (
@@ -487,16 +516,6 @@ export default function ReceiptCapturePage() {
                 placeholder="STK-GAU-0001"
                 className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm font-mono"
                 autoFocus
-              />
-            </div>
-            <div className="w-32">
-              <label className="block text-xs text-gray-600 mb-1">Number of Boxes</label>
-              <input
-                type="number"
-                min={1}
-                value={scanBoxCount}
-                onChange={e => setScanBoxCount(Math.max(1, Number(e.target.value) || 1))}
-                className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm text-right"
               />
             </div>
             <button
@@ -517,7 +536,6 @@ export default function ReceiptCapturePage() {
               <tr className="text-left text-xs font-semibold text-gray-600 uppercase tracking-wide border-b border-gray-200">
                 <th className="pb-2">#</th>
                 <th className="pb-2">Box Number</th>
-                <th className="pb-2 text-right">No of Boxes</th>
                 <th className="pb-2">Scanned At</th>
                 {!isReceipted && <th className="pb-2 w-10"></th>}
               </tr>
@@ -527,7 +545,6 @@ export default function ReceiptCapturePage() {
                 <tr key={b.id} className="border-t border-gray-100">
                   <td className="py-1.5 text-gray-400">{i + 1}</td>
                   <td className="py-1.5 font-mono font-medium">{b.stickerBarcode}</td>
-                  <td className="py-1.5 text-right">{b.numberOfBoxes}</td>
                   <td className="py-1.5 text-xs text-gray-500">{fmtDate(b.scannedAt)}</td>
                   {!isReceipted && (
                     <td className="py-1.5 text-center">
@@ -545,14 +562,6 @@ export default function ReceiptCapturePage() {
                 </tr>
               ))}
             </tbody>
-            <tfoot>
-              <tr className="border-t-2 border-gray-300 font-bold">
-                <td className="py-2" colSpan={2}>Total</td>
-                <td className="py-2 text-right">{boxes.reduce((s, b) => s + b.numberOfBoxes, 0)}</td>
-                <td></td>
-                {!isReceipted && <td></td>}
-              </tr>
-            </tfoot>
           </table>
         ) : (
           <p className="text-center text-gray-400 text-sm py-6">
@@ -565,7 +574,7 @@ export default function ReceiptCapturePage() {
       {!isReceipted && (
         <div className="flex gap-3">
           <button
-            onClick={handleComplete}
+            onClick={() => handleComplete()}
             disabled={completing || boxes.length === 0}
             className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
@@ -578,6 +587,38 @@ export default function ReceiptCapturePage() {
           >
             Cancel
           </button>
+        </div>
+      )}
+
+      {/* ── Box Count Mismatch Modal ─────────────────────────────────────── */}
+      {showMismatchModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Box Count Mismatch</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              You entered <strong>{receiptTotalBoxes}</strong> total boxes but scanned <strong>{boxes.length}</strong> barcode{boxes.length !== 1 ? 's' : ''}.
+              Do you want to complete anyway?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowMismatchModal(false);
+                  handleComplete(true);
+                }}
+                disabled={completing}
+                className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50 flex items-center gap-2"
+              >
+                {completing && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Complete Anyway
+              </button>
+              <button
+                onClick={() => setShowMismatchModal(false)}
+                className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Go Back
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </>
