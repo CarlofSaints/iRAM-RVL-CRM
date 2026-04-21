@@ -101,6 +101,30 @@ export default function DashboardPage() {
   const filteredTotalQty = useMemo(() => filteredClients.reduce((sum, c) => sum + c.totalQty, 0), [filteredClients]);
   const filteredTotalVal = useMemo(() => filteredClients.reduce((sum, c) => sum + c.totalVal, 0), [filteredClients]);
 
+  // ── Column resize (hooks must be before early return) ─────────────────
+  const [colWidths, setColWidths] = useState<Record<number, number>>({});
+  const resizingCol = useRef<{ idx: number; startX: number; startW: number } | null>(null);
+
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      if (!resizingCol.current) return;
+      const diff = e.clientX - resizingCol.current.startX;
+      const newW = Math.max(50, resizingCol.current.startW + diff);
+      setColWidths(prev => ({ ...prev, [resizingCol.current!.idx]: newW }));
+    }
+    function onMouseUp() {
+      resizingCol.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
+
   if (loading || !session) return null;
 
   const counts = stats?.controlCounts ?? { clients: 0, stores: 0, products: 0, reps: 0, warehouses: 0 };
@@ -134,30 +158,6 @@ export default function DashboardPage() {
   function selectNone() {
     setSelectedClientIds(new Set());
   }
-
-  // ── Column resize ──────────────────────────────────────────────────────
-  const [colWidths, setColWidths] = useState<Record<number, number>>({});
-  const resizingCol = useRef<{ idx: number; startX: number; startW: number } | null>(null);
-
-  useEffect(() => {
-    function onMouseMove(e: MouseEvent) {
-      if (!resizingCol.current) return;
-      const diff = e.clientX - resizingCol.current.startX;
-      const newW = Math.max(50, resizingCol.current.startW + diff);
-      setColWidths(prev => ({ ...prev, [resizingCol.current!.idx]: newW }));
-    }
-    function onMouseUp() {
-      resizingCol.current = null;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    }
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-    return () => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    };
-  }, []);
 
   function startResize(colIdx: number, e: React.MouseEvent) {
     e.preventDefault();
