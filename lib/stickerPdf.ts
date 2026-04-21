@@ -1,12 +1,13 @@
 /**
  * Sticker label PDF generator.
  *
- * Generates A4 portrait PDFs with 6 stickers per page (2 cols x 3 rows).
- * Each sticker contains:
+ * Generates A4 portrait PDFs with 4 stickers per page (2 cols x 2 rows).
+ * Each sticker is 99.1mm wide x 139mm tall (standard label size).
+ * Contains:
  *   - iRam logo (top-left)
  *   - Code128 barcode (centred)
  *   - Barcode value text
- *   - 7 ruled fields for manual pen capture
+ *   - 6 rows of ruled fields (some split into two columns)
  *
  * Uses pdfkit for layout and bwip-js for barcode PNG generation.
  */
@@ -28,23 +29,34 @@ export interface StickerPdfParams {
 
 const PAGE_W = 595.28;   // A4 width (pt)
 const PAGE_H = 841.89;   // A4 height (pt)
-const MARGIN = 20;        // all sides
-const GAP = 10;           // between stickers
+
+const MM = 72 / 25.4;    // 1mm in points
+const STICKER_W = 99.1 * MM;   // ~281pt
+const STICKER_H = 139 * MM;    // ~394pt
+
 const COLS = 2;
-const ROWS = 3;
+const ROWS = 2;
 const STICKERS_PER_PAGE = COLS * ROWS;
 
-const STICKER_W = (PAGE_W - 2 * MARGIN - (COLS - 1) * GAP) / COLS;
-const STICKER_H = (PAGE_H - 2 * MARGIN - (ROWS - 1) * GAP) / ROWS;
+const GAP = 8;  // gap between stickers (pt)
+const MARGIN_X = (PAGE_W - COLS * STICKER_W - (COLS - 1) * GAP) / 2;
+const MARGIN_Y = (PAGE_H - ROWS * STICKER_H - (ROWS - 1) * GAP) / 2;
 
-const FIELDS = [
-  'Store Name',
-  'Site Number',
-  'Reference Number',
-  'Vendor Name',
-  'Vendor Code',
-  'Total QTY',
-  'Total Value',
+// Field layout — each row is full-width, split into two columns, or the
+// special "Box _ of _" layout with inline underlines.
+type FieldRow =
+  | { type: 'full'; label: string }
+  | { type: 'split'; left: string; right: string }
+  | { type: 'box-of' };
+
+const FIELD_ROWS: FieldRow[] = [
+  { type: 'split', left: 'Site Number', right: 'Date' },
+  { type: 'full', label: 'Store Name' },
+  { type: 'full', label: 'Reference Number' },
+  { type: 'split', left: 'Vendor Name', right: 'Vendor Code' },
+  { type: 'split', left: 'Total QTY', right: 'Total Value' },
+  { type: 'full', label: 'Rep Name' },
+  { type: 'box-of' },
 ];
 
 /**
@@ -82,7 +94,7 @@ export async function generateStickerPdf(params: StickerPdfParams): Promise<Buff
   // Create PDF
   const doc = new PDFDocument({
     size: 'A4',
-    margins: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN },
+    margins: { top: MARGIN_Y, bottom: MARGIN_Y, left: MARGIN_X, right: MARGIN_X },
     bufferPages: true,
     info: {
       Title: `Sticker Labels - ${warehouseName}`,
@@ -105,8 +117,8 @@ export async function generateStickerPdf(params: StickerPdfParams): Promise<Buff
       const col = slot % COLS;
       const row = Math.floor(slot / COLS);
 
-      const x = MARGIN + col * (STICKER_W + GAP);
-      const y = MARGIN + row * (STICKER_H + GAP);
+      const x = MARGIN_X + col * (STICKER_W + GAP);
+      const y = MARGIN_Y + row * (STICKER_H + GAP);
 
       drawSticker(doc, {
         x,
@@ -142,7 +154,7 @@ interface StickerDrawParams {
 
 function drawSticker(doc: InstanceType<typeof PDFDocument>, p: StickerDrawParams) {
   const { x, y, w, h, barcodeValue, barcodePng, logoBuffer } = p;
-  const pad = 8; // inner padding
+  const pad = 10; // inner padding
 
   // Border
   doc.save();
@@ -153,18 +165,18 @@ function drawSticker(doc: InstanceType<typeof PDFDocument>, p: StickerDrawParams
   // Logo (top-left)
   if (logoBuffer) {
     try {
-      doc.image(logoBuffer, x + pad, cy, { height: 22 });
+      doc.image(logoBuffer, x + pad, cy, { height: 28 });
     } catch { /* skip */ }
   }
-  cy += 26;
+  cy += 34;
 
   // Barcode image (centred)
   if (barcodePng) {
     try {
-      const bcW = Math.min(w - 2 * pad, 200);
+      const bcW = Math.min(w - 2 * pad, 220);
       const bcX = x + (w - bcW) / 2;
       doc.image(barcodePng, bcX, cy, { width: bcW });
-      cy += 38;
+      cy += 44;
     } catch {
       cy += 10;
     }
@@ -178,28 +190,79 @@ function drawSticker(doc: InstanceType<typeof PDFDocument>, p: StickerDrawParams
     width: w - 2 * pad,
     align: 'center',
   });
-  cy += 14;
+  cy += 16;
 
-  // 7 ruled fields
+  // ── Fields ──────────────────────────────────────────────────────────
   const fieldW = w - 2 * pad;
-  const fieldSpacing = (y + h - pad - cy) / FIELDS.length;
-  const lineH = Math.min(fieldSpacing, 24);
+  const availH = (y + h - pad) - cy;
+  const rowH = Math.min(availH / FIELD_ROWS.length, 38);
+  const colGap = 8; // gap between left/right columns in split rows
 
-  for (const label of FIELDS) {
-    // Label text (bold)
-    doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#000000');
-    doc.text(`${label}:`, x + pad, cy + 1, {
-      width: fieldW,
-      align: 'left',
-    });
-    // Underline for writing
-    const lineY = cy + lineH - 3;
-    doc.lineWidth(0.5).strokeColor('#999999')
-      .moveTo(x + pad, lineY)
-      .lineTo(x + pad + fieldW, lineY)
-      .stroke();
-    cy += lineH;
+  for (const fieldRow of FIELD_ROWS) {
+    if (fieldRow.type === 'full') {
+      drawField(doc, x + pad, cy, fieldW, rowH, fieldRow.label);
+    } else if (fieldRow.type === 'split') {
+      const halfW = (fieldW - colGap) / 2;
+      drawField(doc, x + pad, cy, halfW, rowH, fieldRow.left);
+      drawField(doc, x + pad + halfW + colGap, cy, halfW, rowH, fieldRow.right);
+    } else if (fieldRow.type === 'box-of') {
+      drawBoxOfField(doc, x + pad, cy, fieldW, rowH);
+    }
+    cy += rowH;
   }
 
   doc.restore();
+}
+
+/** Standard ruled field: bold label with underline for writing. */
+function drawField(
+  doc: InstanceType<typeof PDFDocument>,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  label: string,
+) {
+  doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#000000');
+  doc.text(`${label}:`, x, y + 2, { width: w, align: 'left' });
+
+  const lineY = y + h - 3;
+  doc.lineWidth(0.5).strokeColor('#999999')
+    .moveTo(x, lineY)
+    .lineTo(x + w, lineY)
+    .stroke();
+}
+
+/** Special "Box ___ of ___" field with two inline underline blanks. */
+function drawBoxOfField(
+  doc: InstanceType<typeof PDFDocument>,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+) {
+  doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#000000');
+
+  const boxTextW = doc.widthOfString('Box');
+  const ofTextW = doc.widthOfString('of');
+
+  // Position "of" at the centre of the field
+  const ofX = x + (w / 2) - (ofTextW / 2);
+
+  doc.text('Box', x, y + 2);
+  doc.text('of', ofX, y + 2);
+
+  const lineY = y + h - 3;
+
+  // Underline after "Box" → before "of"
+  doc.lineWidth(0.5).strokeColor('#999999')
+    .moveTo(x + boxTextW + 4, lineY)
+    .lineTo(ofX - 4, lineY)
+    .stroke();
+
+  // Underline after "of" → end
+  doc.lineWidth(0.5).strokeColor('#999999')
+    .moveTo(ofX + ofTextW + 4, lineY)
+    .lineTo(x + w, lineY)
+    .stroke();
 }

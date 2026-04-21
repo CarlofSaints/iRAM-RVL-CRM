@@ -1,1 +1,12 @@
-Aged Stock: filter blank pick slips + sortable grid columns 
+Sticker labels: fix dimensions, new fields, simpler barcode
+
+- Layout: 4 per page (2x2), 99.1mm x 139mm stickers (was 6 per page)
+- Barcode: STK-{warehouse}-{seq} — removed date from barcode value
+- Sequence: global per warehouse (all-time) instead of per warehouse+date
+- Fields now in two-column layout with 7 rows:
+  Site Number | Date, Store Name, Reference Number,
+  Vendor Name | Vendor Code, Total QTY | Total Value,
+  Rep Name, Box ___ of ___
+- Added Date, Rep Name, and Box _ of _ fields
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>

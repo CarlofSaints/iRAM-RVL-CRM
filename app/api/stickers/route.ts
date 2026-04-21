@@ -66,8 +66,7 @@ export async function POST(req: NextRequest) {
 
   // Build barcode values
   const now = new Date();
-  const dateStr = now.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
-  const startSeq = await nextStickerSequence(warehouse.code, dateStr);
+  const startSeq = await nextStickerSequence(warehouse.code);
 
   const stickers: Sticker[] = [];
   for (let i = 0; i < quantity; i++) {
@@ -75,7 +74,7 @@ export async function POST(req: NextRequest) {
     const seqStr = String(seq).padStart(4, '0');
     stickers.push({
       id: crypto.randomUUID(),
-      barcodeValue: `STK-${warehouse.code}-${dateStr}-${seqStr}`,
+      barcodeValue: `STK-${warehouse.code}-${seqStr}`,
     });
   }
 

@@ -153,28 +153,19 @@ export async function saveBatch(batch: StickerBatch): Promise<void> {
 
 /**
  * Compute the next global sequence number for stickers in the given
- * warehouse+date combination. Reads the index, then loads each matching
- * batch to count total stickers already generated. Returns offset + 1
- * (i.e. the first available sequence number).
+ * warehouse. Reads the index and sums all stickers ever generated for
+ * that warehouse. Returns offset + 1 (i.e. the first available number).
  */
 export async function nextStickerSequence(
   warehouseCode: string,
-  dateStr: string // YYYYMMDD
 ): Promise<number> {
   const index = await listBatches();
 
-  // Filter batches for the same warehouse and date
-  const matching = index.filter(b => {
-    if (b.warehouseCode !== warehouseCode) return false;
-    // Extract YYYYMMDD from createdAt (ISO)
-    const batchDate = b.createdAt.slice(0, 10).replace(/-/g, '');
-    return batchDate === dateStr;
-  });
-
-  // Sum quantities from matching batches
   let total = 0;
-  for (const m of matching) {
-    total += m.quantity;
+  for (const b of index) {
+    if (b.warehouseCode === warehouseCode) {
+      total += b.quantity;
+    }
   }
 
   return total + 1;
