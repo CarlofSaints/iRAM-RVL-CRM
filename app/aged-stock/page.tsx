@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
@@ -48,13 +49,14 @@ function fmtDate(iso: string): string {
 
 export default function AgedStockDashboardPage() {
   const { session } = useAuth('view_aged_stock');
+  const searchParams = useSearchParams();
   const [toast, setToast] = useState<ToastData | null>(null);
   const [rows, setRows] = useState<RowDto[]>([]);
   const [loadsByClient, setLoadsByClient] = useState<Record<string, LoadDto[]>>({});
   const [loading, setLoading] = useState(true);
 
-  // Filters
-  const [clientFilter, setClientFilter] = useState('');
+  // Filters — seed from URL param (e.g. ?client=abc from dashboard link)
+  const [clientFilter, setClientFilter] = useState(searchParams.get('client') ?? '');
   const [storeQuery, setStoreQuery] = useState('');
   const [articleQuery, setArticleQuery] = useState('');
   const [barcodeQuery, setBarcodeQuery] = useState('');
