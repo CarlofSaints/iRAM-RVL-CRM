@@ -56,6 +56,7 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
     { href: '/control-centre/products', label: 'Products', perm: 'manage_products' },
     { href: '/control-centre/reps', label: 'Reps', perm: 'manage_reps' },
     { href: '/control-centre/warehouses', label: 'Warehouses', perm: 'manage_warehouses' },
+    { href: '/control-centre/channels', label: 'Channels', perm: 'manage_stores' },
   ];
   const visibleControlLinks = controlLinks.filter(l => has(l.perm));
   const showControlSection = visibleControlLinks.length > 0;

@@ -15,7 +15,7 @@ export default function ControlCentreOverview() {
   const [counts, setCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    const types = ['clients', 'stores', 'products', 'reps', 'warehouses'];
+    const types = ['clients', 'stores', 'products', 'reps', 'warehouses', 'channels'];
     types.forEach(async (type) => {
       try {
         const res = await authFetch(`/api/control/${type}`, { cache: 'no-store' });
@@ -33,6 +33,7 @@ export default function ControlCentreOverview() {
     { label: 'Products', href: '/control-centre/products', count: counts.products ?? 0, description: 'Product catalogue per vendor' },
     { label: 'Reps', href: '/control-centre/reps', count: counts.reps ?? 0, description: 'Field representatives' },
     { label: 'Warehouses', href: '/control-centre/warehouses', count: counts.warehouses ?? 0, description: 'Regional warehouse locations' },
+    { label: 'Channels', href: '/control-centre/channels', count: counts.channels ?? 0, description: 'Retail channels (e.g. Massbuild, Game, Builders)' },
   ];
 
   return (
