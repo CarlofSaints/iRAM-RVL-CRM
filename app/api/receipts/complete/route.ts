@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { updateSlipInRun } from '@/lib/pickSlipData';
+import { logAudit } from '@/lib/auditLog';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,6 +41,15 @@ export async function POST(req: NextRequest) {
   if (!updated) {
     return NextResponse.json({ error: 'Pick slip not found' }, { status: 404 });
   }
+
+  await logAudit({
+    action: 'receipt_complete',
+    userId: guard.userId,
+    userName,
+    slipId,
+    clientId,
+    detail: `Receipt completed for pick slip ${slipId}`,
+  });
 
   return NextResponse.json(
     { ok: true, slip: updated },

@@ -40,6 +40,7 @@ const STATUS_LABELS: Record<string, string> = {
   'in-transit': 'In Transit',
   'returned-to-vendor': 'Returned to Vendor',
   'failed-release': 'Failed Release',
+  'partial-release': 'Partial Release',
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -50,6 +51,7 @@ const STATUS_COLORS: Record<string, string> = {
   'in-transit': 'bg-purple-100 text-purple-700',
   'returned-to-vendor': 'bg-red-100 text-red-700',
   'failed-release': 'bg-red-100 text-red-700',
+  'partial-release': 'bg-red-100 text-red-700',
 };
 
 export default function ReceiptsListPage() {
@@ -63,6 +65,8 @@ export default function ReceiptsListPage() {
   const [slips, setSlips] = useState<SlipDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortCol, setSortCol] = useState<string>('');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   useEffect(() => {
     if (!session) return;
@@ -80,16 +84,49 @@ export default function ReceiptsListPage() {
       .finally(() => setLoading(false));
   }, [session]);
 
+  function toggleSort(col: string) {
+    if (sortCol === col) {
+      setSortDir(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortCol(col);
+      setSortDir('asc');
+    }
+  }
+
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return slips.filter(s => {
-      // Only show actionable statuses (not already receipted or returned)
+    const list = slips.filter(s => {
       if (s.status === 'returned-to-vendor') return false;
       if (!q) return true;
       const hay = `${s.vendorNumber} ${s.siteName} ${s.siteCode} ${s.id} ${s.clientName}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [slips, searchQuery]);
+
+    if (!sortCol) return list;
+
+    const sorted = [...list].sort((a, b) => {
+      let av: string | number = '';
+      let bv: string | number = '';
+      switch (sortCol) {
+        case 'id': av = a.id; bv = b.id; break;
+        case 'client': av = a.clientName; bv = b.clientName; break;
+        case 'vendor': av = a.vendorNumber; bv = b.vendorNumber; break;
+        case 'store': av = a.siteName; bv = b.siteName; break;
+        case 'warehouse': av = a.warehouse; bv = b.warehouse; break;
+        case 'qty': av = a.totalQty; bv = b.totalQty; break;
+        case 'value': av = a.totalVal; bv = b.totalVal; break;
+        case 'date': av = a.generatedAt; bv = b.generatedAt; break;
+        case 'status': av = a.status; bv = b.status; break;
+        default: return 0;
+      }
+      if (typeof av === 'number' && typeof bv === 'number') {
+        return sortDir === 'asc' ? av - bv : bv - av;
+      }
+      const cmp = String(av).localeCompare(String(bv));
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return sorted;
+  }, [slips, searchQuery, sortCol, sortDir]);
 
   if (!session) return null;
 
@@ -99,9 +136,9 @@ export default function ReceiptsListPage() {
 
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Receive Stock (WH)</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Receive/Release Stock</h1>
           <p className="text-sm text-gray-600 mt-1">
-            Receipt aged stock into warehouses by scanning sticker barcodes
+            Receipt and release aged stock via warehouse scanning
           </p>
         </div>
       </div>
@@ -123,15 +160,32 @@ export default function ReceiptsListPage() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 sticky top-0 z-10">
               <tr className="text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">
-                <th className="px-3 py-2">Pick Slip ID</th>
-                <th className="px-3 py-2">Client</th>
-                <th className="px-3 py-2">Vendor #</th>
-                <th className="px-3 py-2">Store</th>
-                <th className="px-3 py-2">Warehouse</th>
-                <th className="px-3 py-2 text-right">Total Qty</th>
-                <th className="px-3 py-2 text-right">Total Value</th>
-                <th className="px-3 py-2">Date</th>
-                <th className="px-3 py-2">Status</th>
+                {([
+                  { key: 'id', label: 'Pick Slip ID', right: false },
+                  { key: 'client', label: 'Client', right: false },
+                  { key: 'vendor', label: 'Vendor #', right: false },
+                  { key: 'store', label: 'Store', right: false },
+                  { key: 'warehouse', label: 'Warehouse', right: false },
+                  { key: 'qty', label: 'Total Qty', right: true },
+                  { key: 'value', label: 'Total Value', right: true },
+                  { key: 'date', label: 'Date', right: false },
+                  { key: 'status', label: 'Status', right: false },
+                ] as const).map(col => (
+                  <th
+                    key={col.key}
+                    className={`px-3 py-2 cursor-pointer select-none hover:text-[var(--color-primary)] transition-colors ${col.right ? 'text-right' : ''}`}
+                    onClick={() => toggleSort(col.key)}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {col.label}
+                      {sortCol === col.key && (
+                        <svg className={`w-3 h-3 transition-transform ${sortDir === 'desc' ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                        </svg>
+                      )}
+                    </span>
+                  </th>
+                ))}
                 <th className="px-3 py-2">Actions</th>
               </tr>
             </thead>
@@ -163,12 +217,12 @@ export default function ReceiptsListPage() {
                           ? 'text-purple-600 border-purple-200 bg-purple-50 hover:bg-purple-100'
                           : s.status === 'failed-release'
                           ? 'text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100'
-                          : s.status === 'in-transit'
+                          : (s.status === 'in-transit' || s.status === 'partial-release')
                           ? 'text-green-600 border-green-200 bg-green-50'
                           : 'text-[var(--color-primary)] border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)]/5'
                       }`}
                     >
-                      {s.status === 'receipted' ? 'Release' : s.status === 'failed-release' ? 'Retry Release' : s.status === 'in-transit' ? 'View' : 'Capture'}
+                      {s.status === 'receipted' ? 'Release' : s.status === 'failed-release' ? 'Retry Release' : (s.status === 'in-transit' || s.status === 'partial-release') ? 'View' : 'Capture'}
                     </button>
                   </td>
                 </tr>

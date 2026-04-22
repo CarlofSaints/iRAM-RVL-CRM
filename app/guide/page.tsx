@@ -246,20 +246,28 @@ function buildSections(): Section[] {
     },
     {
       id: 'receiving-stock',
-      title: '8. Receiving Stock (Warehouse)',
+      title: '8. Receive/Release Stock',
       content: (
         <>
           <p className="text-sm text-gray-600 leading-relaxed">
-            The <InlineLink href="/aged-stock/receipts">Receive Stock</InlineLink> page is used by warehouse staff
-            to receipt incoming stock:
+            The <InlineLink href="/aged-stock/receipts">Receive/Release Stock</InlineLink> page is used by warehouse staff
+            to receipt incoming stock and release it for return:
           </p>
-          <ol className="list-decimal list-inside text-sm text-gray-600 mt-2 space-y-1">
+          <p className="text-sm text-gray-600 leading-relaxed font-semibold mt-3">Receiving:</p>
+          <ol className="list-decimal list-inside text-sm text-gray-600 mt-1 space-y-1">
             <li><strong>Scan barcode</strong> &mdash; use a barcode scanner or enter the sticker code manually.</li>
             <li><strong>Warehouse mismatch warning</strong> &mdash; if the barcode belongs to a different warehouse, a warning is displayed.</li>
-            <li><strong>Capture details</strong> &mdash; record quantities, condition, and any notes.</li>
+            <li><strong>Capture details</strong> &mdash; record value, total boxes, uplifted by, and store references.</li>
             <li><strong>Submit receipt</strong> &mdash; the stock is marked as receipted and the pick slip status updates automatically.</li>
           </ol>
-          <GuideScreenshot caption="Receive Stock page with pick slip list and capture actions" src="/guide/receive-stock.png" />
+          <p className="text-sm text-gray-600 leading-relaxed font-semibold mt-3">Releasing:</p>
+          <ol className="list-decimal list-inside text-sm text-gray-600 mt-1 space-y-1">
+            <li><strong>Select rep/user</strong> &mdash; only users with a release code configured are shown.</li>
+            <li><strong>Scan barcodes</strong> &mdash; each barcode must match one that was receipted. Mismatches are rejected.</li>
+            <li><strong>Box count check</strong> &mdash; all boxes must be released. A partial release requires an RVL Manager override.</li>
+            <li><strong>Enter release code</strong> &mdash; the code must match the selected rep/user&apos;s stored code.</li>
+          </ol>
+          <GuideScreenshot caption="Receive/Release Stock page with pick slip list and capture actions" src="/guide/receive-stock.png" />
         </>
       ),
     },

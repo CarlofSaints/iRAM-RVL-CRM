@@ -116,7 +116,7 @@ export async function GET(req: NextRequest) {
 
         warehouseTotalQty += slip.totalQty;
         warehouseTotalVal += slip.totalVal;
-      } else if (slip.status === 'in-transit') {
+      } else if (slip.status === 'in-transit' || slip.status === 'partial-release') {
         // Per-client in-transit aggregation
         clientInTransitQty.set(slip.clientId, (clientInTransitQty.get(slip.clientId) ?? 0) + slip.totalQty);
         clientInTransitVal.set(slip.clientId, (clientInTransitVal.get(slip.clientId) ?? 0) + slip.totalVal);

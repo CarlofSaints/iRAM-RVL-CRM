@@ -50,6 +50,14 @@ interface RepDto {
   releaseCode?: string;
 }
 
+interface UserDto {
+  id: string;
+  name: string;
+  surname: string;
+  releaseCode?: string;
+  role: string;
+}
+
 type PageMode = 'receipt' | 'release' | 'view';
 
 function fmtDate(iso: string): string {
@@ -59,13 +67,22 @@ function fmtDate(iso: string): string {
   } catch { return iso; }
 }
 
+function fmtDateTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const date = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    return `${date} ${time}`;
+  } catch { return iso; }
+}
+
 function uuid(): string {
   return crypto.randomUUID();
 }
 
 function resolveMode(status: string): PageMode {
   if (status === 'receipted' || status === 'failed-release') return 'release';
-  if (status === 'in-transit' || status === 'returned-to-vendor') return 'view';
+  if (status === 'in-transit' || status === 'returned-to-vendor' || status === 'partial-release') return 'view';
   return 'receipt'; // generated, sent, picked
 }
 
@@ -77,6 +94,7 @@ const STATUS_BADGE: Record<string, string> = {
   'in-transit': 'bg-purple-100 text-purple-700',
   'returned-to-vendor': 'bg-red-100 text-red-700',
   'failed-release': 'bg-red-100 text-red-700',
+  'partial-release': 'bg-red-100 text-red-700',
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -87,6 +105,7 @@ const STATUS_LABEL: Record<string, string> = {
   'in-transit': 'In Transit',
   'returned-to-vendor': 'Returned to Vendor',
   'failed-release': 'Failed Release',
+  'partial-release': 'Partial Release',
 };
 
 export default function ReceiptCapturePage() {
@@ -106,6 +125,7 @@ export default function ReceiptCapturePage() {
 
   const [slip, setSlip] = useState<SlipDto | null>(null);
   const [reps, setReps] = useState<RepDto[]>([]);
+  const [releaseUsers, setReleaseUsers] = useState<UserDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -142,6 +162,11 @@ export default function ReceiptCapturePage() {
   const [releaseCode, setReleaseCode] = useState('');
   const [releasing, setReleasing] = useState(false);
 
+  // Manager override for box count mismatch on release
+  const [showReleaseCountModal, setShowReleaseCountModal] = useState(false);
+  const [managerOverrideCode, setManagerOverrideCode] = useState('');
+  const [managerOverrideRepId, setManagerOverrideRepId] = useState('');
+
   const mode: PageMode = slip ? resolveMode(slip.status) : 'receipt';
   const isReadOnly = mode === 'view';
 
@@ -150,9 +175,10 @@ export default function ReceiptCapturePage() {
     if (!session || !slipId) return;
     setLoading(true);
     try {
-      const [slipsRes, repsRes] = await Promise.all([
+      const [slipsRes, repsRes, usersRes] = await Promise.all([
         authFetch('/api/pick-slips', { cache: 'no-store' }),
         authFetch('/api/control/reps', { cache: 'no-store' }),
+        authFetch('/api/users', { cache: 'no-store' }),
       ]);
 
       if (slipsRes.ok) {
@@ -186,6 +212,12 @@ export default function ReceiptCapturePage() {
         const repsData = await repsRes.json();
         setReps(Array.isArray(repsData) ? repsData : []);
       }
+
+      if (usersRes.ok) {
+        const usersData = await usersRes.json();
+        // Users with release codes (for release dropdown)
+        setReleaseUsers((usersData as UserDto[]).filter(u => !!u.releaseCode));
+      }
     } catch {
       notify('Failed to load data', 'error');
     } finally {
@@ -206,7 +238,9 @@ export default function ReceiptCapturePage() {
   function onReleaseRepChange(repId: string) {
     setReleaseRepId(repId);
     const rep = reps.find(r => r.id === repId);
-    setReleaseRepName(rep ? `${rep.name} ${rep.surname}` : '');
+    const user = releaseUsers.find(u => u.id === repId);
+    const match = rep || user;
+    setReleaseRepName(match ? `${match.name} ${match.surname}` : '');
   }
 
   // ── Save receipt data ──
@@ -402,26 +436,17 @@ export default function ReceiptCapturePage() {
       return;
     }
 
-    // Validate barcode exists in system
-    setReleaseScanLoading(true);
-    try {
-      const res = await authFetch(`/api/receipts/lookup?barcode=${encodeURIComponent(barcode)}`, { cache: 'no-store' });
-      const data = await res.json();
-
-      if (!data.found) {
-        notify(`Barcode "${barcode}" not found in the system`, 'error');
-        setReleaseScanLoading(false);
-        releaseScanRef.current?.focus();
-        return;
-      }
-
-      addReleaseBox(barcode);
-    } catch {
-      notify('Network error scanning barcode', 'error');
-    } finally {
-      setReleaseScanLoading(false);
+    // Validate barcode was received on this slip
+    const receiptBarcodes = boxes.map(b => b.stickerBarcode);
+    if (!receiptBarcodes.includes(barcode)) {
+      notify('The barcode you scanned/entered does not match what was received. Ensure you enter the correct one!', 'error');
+      setReleaseScanBarcode('');
       releaseScanRef.current?.focus();
+      return;
     }
+
+    addReleaseBox(barcode);
+    releaseScanRef.current?.focus();
   }
 
   function deleteReleaseBox(boxId: string) {
@@ -436,7 +461,7 @@ export default function ReceiptCapturePage() {
   }
 
   // ── Complete release ──
-  async function handleRelease() {
+  async function handleRelease(managerCode?: string, managerRepId?: string) {
     if (!slip) return;
     if (!releaseRepId) {
       notify('Select a rep before releasing', 'error');
@@ -448,6 +473,13 @@ export default function ReceiptCapturePage() {
     }
     if (!releaseCode.trim()) {
       notify('Enter the release code', 'error');
+      return;
+    }
+
+    // Check box count mismatch — require manager override
+    const receiptBoxCount = boxes.length;
+    if (!managerCode && releaseBoxes.length !== receiptBoxCount && receiptBoxCount > 0) {
+      setShowReleaseCountModal(true);
       return;
     }
 
@@ -464,15 +496,19 @@ export default function ReceiptCapturePage() {
           releaseRepName,
           releaseBoxes,
           releaseCode: releaseCode.trim(),
+          managerOverrideCode: managerCode,
+          managerOverrideRepId: managerRepId,
         }),
       });
       const data = await res.json();
       if (data.status === 'in-transit') {
         notify('Stock released — now in transit');
         router.push('/aged-stock/receipts');
+      } else if (data.status === 'partial-release') {
+        notify('Partial release — box count mismatch overridden by manager');
+        router.push('/aged-stock/receipts');
       } else if (data.status === 'failed-release') {
         notify(data.error || 'Release code does not match — status set to Failed Release', 'error');
-        // Reload to reflect the new status
         loadData();
       } else {
         notify(data.error || 'Release failed', 'error');
@@ -497,7 +533,7 @@ export default function ReceiptCapturePage() {
       <div className="text-center py-20">
         <p className="text-gray-500 mb-4">Pick slip not found</p>
         <button onClick={() => router.push('/aged-stock/receipts')} className="text-[var(--color-primary)] hover:underline text-sm">
-          Back to Receive Stock
+          Back to Receive/Release Stock
         </button>
       </div>
     );
@@ -511,7 +547,7 @@ export default function ReceiptCapturePage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">
-            {mode === 'release' ? 'Release Stock' : mode === 'view' ? 'View Pick Slip' : 'Receive Stock (WH)'}
+            {mode === 'release' ? 'Release Stock' : mode === 'view' ? 'View Pick Slip' : 'Receive Stock'}
           </h1>
           <p className="text-sm text-gray-600 mt-1">
             {mode === 'release' && slip.status === 'failed-release'
@@ -519,11 +555,11 @@ export default function ReceiptCapturePage() {
               : mode === 'release'
               ? 'Release stock from warehouse for transit back to the vendor'
               : mode === 'view' && slip.releasedAt
-              ? `Released on ${fmtDate(slip.releasedAt)} by ${slip.releasedByName}`
+              ? `Released on ${fmtDateTime(slip.releasedAt)} by ${slip.releasedByName}`
               : mode === 'view'
               ? `Status: ${STATUS_LABEL[slip.status] || slip.status}`
               : slip.status === 'receipted'
-              ? `Receipted on ${fmtDate(slip.receiptedAt!)} by ${slip.receiptedByName}`
+              ? `Receipted on ${fmtDateTime(slip.receiptedAt!)} by ${slip.receiptedByName}`
               : 'Scan sticker barcodes to receipt stock into the warehouse'}
           </p>
         </div>
@@ -598,16 +634,6 @@ export default function ReceiptCapturePage() {
           <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
             <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Receipt Details</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">Quantity</label>
-                <input
-                  type="text"
-                  value={receiptQty}
-                  onChange={e => setReceiptQty(e.target.value)}
-                  placeholder="e.g. 150"
-                  className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm"
-                />
-              </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Value</label>
                 <input
@@ -751,7 +777,7 @@ export default function ReceiptCapturePage() {
                     <tr key={b.id} className="border-t border-gray-100">
                       <td className="py-1.5 text-gray-400">{i + 1}</td>
                       <td className="py-1.5 font-mono font-medium">{b.stickerBarcode}</td>
-                      <td className="py-1.5 text-xs text-gray-500">{fmtDate(b.scannedAt)}</td>
+                      <td className="py-1.5 text-xs text-gray-500">{fmtDateTime(b.scannedAt)}</td>
                       <td className="py-1.5 text-center">
                         <button
                           onClick={() => deleteBox(b.id)}
@@ -810,12 +836,15 @@ export default function ReceiptCapturePage() {
                   onChange={e => onReleaseRepChange(e.target.value)}
                   className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm"
                 >
-                  <option value="">Select rep...</option>
+                  <option value="">Select rep/user...</option>
                   {reps.filter(r => r.releaseCode).map(r => (
-                    <option key={r.id} value={r.id}>{r.name} {r.surname}</option>
+                    <option key={r.id} value={r.id}>{r.name} {r.surname} (Rep)</option>
+                  ))}
+                  {releaseUsers.filter(u => !reps.some(r => r.id === u.id)).map(u => (
+                    <option key={u.id} value={u.id}>{u.name} {u.surname}</option>
                   ))}
                 </select>
-                <span className="text-[10px] text-gray-400 mt-0.5 block">Only reps with a release code are shown</span>
+                <span className="text-[10px] text-gray-400 mt-0.5 block">Only reps/users with a release code are shown</span>
               </div>
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Release Code <span className="text-red-500">*</span></label>
@@ -878,7 +907,7 @@ export default function ReceiptCapturePage() {
                     <tr key={b.id} className="border-t border-gray-100">
                       <td className="py-1.5 text-gray-400">{i + 1}</td>
                       <td className="py-1.5 font-mono font-medium">{b.stickerBarcode}</td>
-                      <td className="py-1.5 text-xs text-gray-500">{fmtDate(b.scannedAt)}</td>
+                      <td className="py-1.5 text-xs text-gray-500">{fmtDateTime(b.scannedAt)}</td>
                       <td className="py-1.5 text-center">
                         <button
                           onClick={() => deleteReleaseBox(b.id)}
@@ -904,7 +933,7 @@ export default function ReceiptCapturePage() {
           {/* Release action buttons */}
           <div className="flex gap-3">
             <button
-              onClick={handleRelease}
+              onClick={() => handleRelease()}
               disabled={releasing || releaseBoxes.length === 0 || !releaseRepId || !releaseCode.trim()}
               className="px-5 py-2.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
@@ -931,10 +960,6 @@ export default function ReceiptCapturePage() {
             <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Receipt Details</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
               <div>
-                <span className="text-gray-500 text-xs block">Quantity</span>
-                <span className="font-medium">{slip.receiptQty || '—'}</span>
-              </div>
-              <div>
                 <span className="text-gray-500 text-xs block">Value</span>
                 <span className="font-medium">{slip.receiptValue || '—'}</span>
               </div>
@@ -948,7 +973,7 @@ export default function ReceiptCapturePage() {
               </div>
               <div>
                 <span className="text-gray-500 text-xs block">Receipted At</span>
-                <span className="font-medium">{slip.receiptedAt ? fmtDate(slip.receiptedAt) : '—'}</span>
+                <span className="font-medium">{slip.receiptedAt ? fmtDateTime(slip.receiptedAt) : '—'}</span>
               </div>
               <div>
                 <span className="text-gray-500 text-xs block">Receipted By</span>
@@ -985,7 +1010,7 @@ export default function ReceiptCapturePage() {
                     <tr key={b.id} className="border-t border-gray-100">
                       <td className="py-1.5 text-gray-400">{i + 1}</td>
                       <td className="py-1.5 font-mono font-medium">{b.stickerBarcode}</td>
-                      <td className="py-1.5 text-xs text-gray-500">{fmtDate(b.scannedAt)}</td>
+                      <td className="py-1.5 text-xs text-gray-500">{fmtDateTime(b.scannedAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1004,7 +1029,7 @@ export default function ReceiptCapturePage() {
                 </div>
                 <div>
                   <span className="text-gray-500 text-xs block">Released At</span>
-                  <span className="font-medium">{fmtDate(slip.releasedAt)}</span>
+                  <span className="font-medium">{fmtDateTime(slip.releasedAt)}</span>
                 </div>
                 <div>
                   <span className="text-gray-500 text-xs block">Released By</span>
@@ -1031,7 +1056,7 @@ export default function ReceiptCapturePage() {
                     <tr key={b.id} className="border-t border-gray-100">
                       <td className="py-1.5 text-gray-400">{i + 1}</td>
                       <td className="py-1.5 font-mono font-medium">{b.stickerBarcode}</td>
-                      <td className="py-1.5 text-xs text-gray-500">{fmtDate(b.scannedAt)}</td>
+                      <td className="py-1.5 text-xs text-gray-500">{fmtDateTime(b.scannedAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1107,6 +1132,74 @@ export default function ReceiptCapturePage() {
                 className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
               >
                 Go Back
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Release Box Count Mismatch — Manager Override Modal ──────────── */}
+      {showReleaseCountModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-bold text-red-700 mb-2">Box Count Mismatch</h2>
+            <p className="text-sm text-gray-600 mb-1">
+              <strong>{boxes.length}</strong> box{boxes.length !== 1 ? 'es were' : ' was'} received, but you are releasing <strong>{releaseBoxes.length}</strong>.
+            </p>
+            <p className="text-sm text-gray-600 mb-4">
+              An RVL Manager must authorize this partial release. The slip will be marked as <span className="text-red-600 font-bold">Partial Release</span>.
+            </p>
+            <div className="flex flex-col gap-3 mb-4">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Manager</label>
+                <select
+                  value={managerOverrideRepId}
+                  onChange={e => setManagerOverrideRepId(e.target.value)}
+                  className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm"
+                >
+                  <option value="">Select manager...</option>
+                  {releaseUsers.filter(u => u.role === 'rvl-manager' || u.role === 'super-admin').map(u => (
+                    <option key={u.id} value={u.id}>{u.name} {u.surname}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Manager Release Code</label>
+                <input
+                  type="password"
+                  value={managerOverrideCode}
+                  onChange={e => setManagerOverrideCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
+                  maxLength={4}
+                  placeholder="4-char code"
+                  className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm font-mono tracking-widest"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  if (!managerOverrideRepId || !managerOverrideCode.trim()) {
+                    notify('Select a manager and enter their release code', 'error');
+                    return;
+                  }
+                  setShowReleaseCountModal(false);
+                  handleRelease(managerOverrideCode.trim(), managerOverrideRepId);
+                }}
+                disabled={releasing || !managerOverrideRepId || managerOverrideCode.length !== 4}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                {releasing && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Authorize Partial Release
+              </button>
+              <button
+                onClick={() => {
+                  setShowReleaseCountModal(false);
+                  setManagerOverrideCode('');
+                  setManagerOverrideRepId('');
+                }}
+                className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
               </button>
             </div>
           </div>

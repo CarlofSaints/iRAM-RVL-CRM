@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { loadControl } from '@/lib/controlData';
 import { updateSlipInRun, getPickSlipRun, type ReceiptBox } from '@/lib/pickSlipData';
+import { logAudit } from '@/lib/auditLog';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +26,8 @@ export async function POST(req: NextRequest) {
     releaseRepName,
     releaseBoxes,
     releaseCode,
+    managerOverrideCode,
+    managerOverrideRepId,
   } = body as {
     slipId: string;
     clientId: string;
@@ -33,6 +36,8 @@ export async function POST(req: NextRequest) {
     releaseRepName: string;
     releaseBoxes: ReceiptBox[];
     releaseCode: string;
+    managerOverrideCode?: string;
+    managerOverrideRepId?: string;
   };
 
   if (!slipId || !clientId || !loadId) {
@@ -58,28 +63,53 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Cannot release a slip with status "${slip.status}"` }, { status: 400 });
   }
 
-  // Look up the rep's stored release code
-  const reps = await loadControl<{ id: string; releaseCode?: string }>('reps');
-  const rep = reps.find(r => r.id === releaseRepId);
-  if (!rep) {
-    return NextResponse.json({ error: 'Rep not found' }, { status: 404 });
-  }
-  if (!rep.releaseCode) {
-    return NextResponse.json({ error: 'This rep does not have a release code configured' }, { status: 400 });
-  }
-
-  // Resolve user name for audit
+  // Load users first — needed for rep lookup AND audit
   const users = await loadUsers();
   const me = users.find(u => u.id === guard.userId);
+
+  // Look up the rep's stored release code — check both control reps AND users
+  const reps = await loadControl<{ id: string; releaseCode?: string }>('reps');
+  const rep = reps.find(r => r.id === releaseRepId);
+  const repUser = users.find(u => u.id === releaseRepId);
+  const storedCode = rep?.releaseCode || repUser?.releaseCode;
+  if (!rep && !repUser) {
+    return NextResponse.json({ error: 'Rep/user not found' }, { status: 404 });
+  }
+  if (!storedCode) {
+    return NextResponse.json({ error: 'This rep/user does not have a release code configured' }, { status: 400 });
+  }
   const userName = me ? `${me.name} ${me.surname}` : guard.userId;
 
   // Compare release codes (case-insensitive)
-  const codeMatch = releaseCode.toUpperCase().trim() === rep.releaseCode.toUpperCase().trim();
+  const codeMatch = releaseCode.toUpperCase().trim() === storedCode.toUpperCase().trim();
 
   if (codeMatch) {
-    // Success — set to in-transit
+    // Check if this is a manager-authorized partial release
+    const isPartial = !!managerOverrideCode;
+    let managerValid = true;
+
+    if (isPartial && managerOverrideRepId) {
+      // Validate manager's release code
+      const manager = users.find(u => u.id === managerOverrideRepId);
+      if (!manager || !manager.releaseCode) {
+        return NextResponse.json(
+          { ok: false, error: 'Manager does not have a release code configured' },
+          { status: 400, headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
+      managerValid = managerOverrideCode.toUpperCase().trim() === manager.releaseCode.toUpperCase().trim();
+      if (!managerValid) {
+        return NextResponse.json(
+          { ok: false, error: 'Manager release code does not match' },
+          { status: 400, headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
+    }
+
+    const finalStatus = isPartial ? 'partial-release' : 'in-transit';
+
     const updated = await updateSlipInRun(clientId, loadId, slipId, {
-      status: 'in-transit',
+      status: finalStatus,
       releaseRepId,
       releaseRepName,
       releaseBoxes: releaseBoxes ?? [],
@@ -88,8 +118,19 @@ export async function POST(req: NextRequest) {
       releasedByName: userName,
     });
 
+    await logAudit({
+      action: isPartial ? 'partial_release' : 'release_complete',
+      userId: guard.userId,
+      userName,
+      slipId,
+      clientId,
+      detail: isPartial
+        ? `Partial release of ${(releaseBoxes ?? []).length} boxes (manager override by ${managerOverrideRepId})`
+        : `Stock released — ${(releaseBoxes ?? []).length} boxes in transit. Rep: ${releaseRepName}`,
+    });
+
     return NextResponse.json(
-      { ok: true, status: 'in-transit', slip: updated },
+      { ok: true, status: finalStatus, slip: updated },
       { headers: { 'Cache-Control': 'no-store' } },
     );
   } else {
@@ -99,6 +140,15 @@ export async function POST(req: NextRequest) {
       releaseRepId,
       releaseRepName,
       releaseBoxes: releaseBoxes ?? [],
+    });
+
+    await logAudit({
+      action: 'failed_release',
+      userId: guard.userId,
+      userName,
+      slipId,
+      clientId,
+      detail: `Release code mismatch for rep ${releaseRepName} (${releaseRepId})`,
     });
 
     return NextResponse.json(

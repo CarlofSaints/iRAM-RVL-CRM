@@ -16,6 +16,7 @@ interface AccountData {
   avatarUpdatedAt?: string;
   hasAvatar?: boolean;
   subscription: { tier: 'standard' | 'pro'; upgradedAt?: string; requestedUpgradeAt?: string };
+  releaseCode?: string;
   createdAt: string;
 }
 
@@ -46,6 +47,10 @@ export default function AccountPage() {
   const [confirmPw, setConfirmPw] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
 
+  // Release code
+  const [releaseCodeVal, setReleaseCodeVal] = useState('');
+  const [releaseCodeLoading, setReleaseCodeLoading] = useState(false);
+
   // Upgrade
   const [upgradeLoading, setUpgradeLoading] = useState(false);
 
@@ -58,6 +63,7 @@ export default function AccountPage() {
       const d: AccountData = await res.json();
       setData(d);
       setNewEmail(d.email);
+      setReleaseCodeVal(d.releaseCode ?? '');
     }
   }
 
@@ -135,6 +141,27 @@ export default function AccountPage() {
       setCurrentPw(''); setNewPw(''); setConfirmPw('');
     } finally {
       setPwLoading(false);
+    }
+  }
+
+  async function handleReleaseCodeSave(e: React.FormEvent) {
+    e.preventDefault();
+    const cleaned = releaseCodeVal.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (cleaned.length !== 4) { notify('Release code must be exactly 4 alphanumeric characters', 'error'); return; }
+    setReleaseCodeLoading(true);
+    try {
+      const res = await authFetch('/api/account/release-code', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ releaseCode: cleaned }),
+      });
+      const json = await res.json();
+      if (!res.ok) { notify(json.error || 'Failed to save release code', 'error'); return; }
+      notify('Release code updated');
+      setReleaseCodeVal(json.releaseCode);
+      setData(d => d ? { ...d, releaseCode: json.releaseCode } : d);
+    } finally {
+      setReleaseCodeLoading(false);
     }
   }
 
@@ -312,7 +339,37 @@ export default function AccountPage() {
 
           {/* Security tab */}
           {tab === 'security' && (
-            <div className="p-6">
+            <div className="p-6 flex flex-col gap-8">
+              {/* Release Code */}
+              <section>
+                <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Release Code</h2>
+                <p className="text-xs text-gray-500 mb-3">
+                  Your 4-character release code is used to authorize stock releases from the warehouse. Keep it private.
+                </p>
+                <form onSubmit={handleReleaseCodeSave} className="flex items-end gap-3 max-w-xs">
+                  <div className="flex-1 flex flex-col gap-1">
+                    <label className="text-xs text-gray-500 font-medium">Code (4 chars, A-Z / 0-9)</label>
+                    <input
+                      type="password"
+                      value={releaseCodeVal}
+                      onChange={e => setReleaseCodeVal(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
+                      maxLength={4}
+                      placeholder="e.g. AB12"
+                      className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                    />
+                  </div>
+                  <button type="submit" disabled={releaseCodeLoading || releaseCodeVal.length !== 4}
+                    className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-50 text-white text-sm font-bold px-5 py-2 rounded-lg transition-colors">
+                    {releaseCodeLoading ? 'Saving...' : data?.releaseCode ? 'Update' : 'Set Code'}
+                  </button>
+                </form>
+                {data?.releaseCode && (
+                  <p className="text-xs text-green-600 mt-2">Release code is set.</p>
+                )}
+              </section>
+
+              {/* Change Password */}
+              <section>
               <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Change Password</h2>
               <form onSubmit={handlePasswordChange} className="grid grid-cols-1 gap-4 max-w-md">
                 <div className="flex flex-col gap-1">
@@ -337,6 +394,7 @@ export default function AccountPage() {
                   </button>
                 </div>
               </form>
+              </section>
             </div>
           )}
 

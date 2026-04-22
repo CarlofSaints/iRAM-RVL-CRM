@@ -1,21 +1,11 @@
-Sticker label overhaul + aged stock parser: 4 new formats
+Receipt/Release enhancements + Audit Log
 
-Sticker labels:
-- Layout: 4 per page (2x2), 99.1mm x 139mm (was 6 per page)
-- Barcode: STK-{warehouse}-{seq} — removed date from value
-- Sequence: global per warehouse (all-time) instead of per date
-- Fixed barcode image overlapping text (height-capped with fit)
-- Two-column field layout with 7 rows:
-  Site Number | Date, Store Name, Reference Number,
-  Vendor Name | Vendor Code, Total QTY | Total Value,
-  Rep Name, Box ___ of ___
-
-Aged stock parser:
-- New 'bw-site' format for SAP BW Site-Article exports
-  (STA007, Topline Site Article, Usabco Home Storage)
-- SafeTop variant with headers shifted to row 3
-- Dynamic header row scanning (handles blank/shifted rows)
-- Multi-sheet support: prefers "Site Article" sheet, skips
-  hidden SAP sheets (_com.sap.*), tries each until detected
+- Timestamps now include time (DD/MM/YYYY HH:MM)
+- Release barcode validation against receipted barcodes
+- Box count validation with RVL Manager override (partial-release status)
+- Release code field on Account Security tab for all users
+- Audit log system (monthly Blob files) + admin page
+- Fixed page titles to Receive/Release Stock
+- Updated User Guide with release flow steps
 
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>

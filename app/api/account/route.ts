@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
       avatarUpdatedAt: user.avatarUpdatedAt,
       hasAvatar: !!user.avatarKey,
       subscription: user.subscription ?? { tier: 'standard' },
+      releaseCode: user.releaseCode ?? '',
       createdAt: user.createdAt,
       firstLoginAt: user.firstLoginAt,
     },

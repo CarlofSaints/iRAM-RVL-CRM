@@ -28,7 +28,8 @@ export type PickSlipStatus =
   | 'receipted'
   | 'in-transit'
   | 'returned-to-vendor'
-  | 'failed-release';
+  | 'failed-release'
+  | 'partial-release';
 
 export interface PickSlipRecord {
   /** Unique pick slip ID, e.g. PS-9448-20260309-001 */

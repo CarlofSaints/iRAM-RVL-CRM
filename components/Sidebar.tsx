@@ -67,7 +67,7 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
     { href: '/aged-stock/load', label: 'Load Aged Stock', perm: 'load_aged_stock' },
     { href: '/aged-stock/picking-slips', label: 'Picking Slips', perm: 'view_aged_stock' },
     { href: '/aged-stock/stickers', label: 'Sticker Labels', perm: 'view_aged_stock' },
-    { href: '/aged-stock/receipts', label: 'Receive Stock (WH)', perm: 'receipt_stock' },
+    { href: '/aged-stock/receipts', label: 'Receive/Release Stock', perm: 'receipt_stock' },
   ];
   const visibleAgedStockLinks = agedStockLinks.filter(l => has(l.perm));
   const showAgedStockSection = visibleAgedStockLinks.length > 0;
@@ -154,9 +154,6 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 flex flex-col gap-1 overflow-y-auto">
         <NavLink href="/dashboard" label="Dashboard" active={pathname === '/dashboard'} />
-        {has('view_dashboard') && (
-          <NavLink href="/guide" label="User Guide" active={pathname === '/guide'} />
-        )}
 
         {/* Control Centre — only links the user has perm for */}
         {showControlSection && (
@@ -218,10 +215,16 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
         {has('manage_roles') && (
           <NavLink href="/admin/roles" label="Roles & Permissions" active={pathname === '/admin/roles'} />
         )}
+        {has('manage_users') && (
+          <NavLink href="/admin/audit-log" label="Audit Log" active={pathname === '/admin/audit-log'} />
+        )}
       </nav>
 
-      {/* Logout */}
-      <div className="px-3 py-4 border-t border-white/10">
+      {/* User Guide + Logout */}
+      <div className="px-3 py-4 border-t border-white/10 flex flex-col gap-1">
+        {has('view_dashboard') && (
+          <NavLink href="/guide" label="User Guide" active={pathname === '/guide'} />
+        )}
         <button
           onClick={onLogout}
           className="w-full px-4 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:bg-white/10 hover:text-white transition-colors text-left"

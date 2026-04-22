@@ -32,6 +32,8 @@ export interface User {
   avatarUpdatedAt?: string;
   /** Subscription tier + upgrade timestamps. Defaults to standard when undefined. */
   subscription?: UserSubscription;
+  /** 4-char release code for warehouse stock release (A-Z, 0-9). */
+  releaseCode?: string;
   forcePasswordChange: boolean;
   firstLoginAt: string | null;
   createdAt: string;
