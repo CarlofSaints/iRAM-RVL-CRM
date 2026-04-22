@@ -58,7 +58,8 @@ export async function POST(req: NextRequest) {
 
   if (sendWelcome) {
     try {
-      await sendWelcomeEmail(email, `${name} ${surname}`, password);
+      const roleName = roles.find(r => r.id === role)?.name;
+      await sendWelcomeEmail(email, `${name} ${surname}`, password, roleName);
     } catch (err) {
       console.error('[users] Welcome email failed:', err);
     }

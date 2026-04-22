@@ -53,7 +53,7 @@ function buildSections(): Section[] {
             Navigate to the <InlineLink href="/login">Login page</InlineLink> and enter your email address and password.
             If this is your first time logging in, your administrator will have provided your initial credentials.
           </p>
-          <GuideScreenshot caption="Login page with email and password fields" />
+          <GuideScreenshot caption="Login page with email and password fields" src="/guide/login.png" />
 
           <h3 className="text-base font-semibold text-gray-800 mt-6 mb-2">Forgot Password</h3>
           <p className="text-sm text-gray-600 leading-relaxed">
@@ -67,7 +67,7 @@ function buildSections(): Section[] {
             On first login you will be prompted to <InlineLink href="/change-password">change your password</InlineLink>.
             Choose a strong password you can remember &mdash; you will not be able to continue until it is updated.
           </p>
-          <GuideScreenshot caption="Change password form" />
+          <GuideScreenshot caption="Change password form" src="/guide/change-password.png" />
 
           <h3 className="text-base font-semibold text-gray-800 mt-6 mb-2">Account Settings</h3>
           <p className="text-sm text-gray-600 leading-relaxed">

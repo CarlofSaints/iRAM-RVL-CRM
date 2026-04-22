@@ -19,8 +19,13 @@ function emailShell(bodyContent: string) {
       <table width="100%" cellpadding="0" cellspacing="0" style="background:${PRIMARY};">
         <tr>
           <td style="padding:20px 28px;">
-            <div style="color:#fff;font-size:20px;font-weight:bold;letter-spacing:1px;margin:0;">iRamFlow</div>
-            <div style="color:#fff;margin:3px 0 0;opacity:0.85;font-size:12px;">Reverse Logistics &bull; Powered by OuterJoin</div>
+            <table cellpadding="0" cellspacing="0"><tr>
+              <td style="vertical-align:middle;padding-right:14px;"><img src="${getAppUrl()}/email/iram-logo-white.png" alt="iRam" width="48" height="48" style="display:block;" /></td>
+              <td style="vertical-align:middle;">
+                <div style="color:#fff;font-size:20px;font-weight:bold;letter-spacing:1px;margin:0;">iRamFlow</div>
+                <div style="color:#fff;margin:3px 0 0;opacity:0.85;font-size:12px;">Reverse Logistics &bull; Powered by OuterJoin</div>
+              </td>
+            </tr></table>
           </td>
         </tr>
       </table>
@@ -34,12 +39,13 @@ function emailShell(bodyContent: string) {
   `;
 }
 
-export async function sendWelcomeEmail(to: string, name: string, password: string) {
+export async function sendWelcomeEmail(to: string, name: string, password: string, roleName?: string) {
   const appUrl = getAppUrl();
   const body = `
     <p style="margin:0 0 14px;">Hi <strong>${name}</strong>,</p>
     <p style="margin:0 0 8px;">Your account has been created on <strong>iRamFlow</strong>.</p>
-    <p style="margin:0 0 20px;color:#555;font-size:14px;">This is the portal used to manage Reverse Logistics Value operations.</p>
+    <p style="margin:0 0 ${roleName ? '8px' : '20px'};color:#555;font-size:14px;">This is the portal used to manage Reverse Logistics in iRam.</p>
+    ${roleName ? `<p style="margin:0 0 20px;color:#555;font-size:14px;">You have been assigned the role of <strong>${roleName}</strong>.</p>` : ''}
     <table style="background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:14px 16px;width:100%;margin-bottom:20px;">
       <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Login URL</td><td style="font-size:13px;"><a href="${appUrl}/login" style="color:${PRIMARY};">${appUrl}/login</a></td></tr>
       <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Email</td><td style="font-size:13px;">${to}</td></tr>
