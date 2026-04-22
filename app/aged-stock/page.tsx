@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import * as XLSX from 'xlsx';
@@ -56,7 +56,10 @@ export default function AgedStockDashboardPage() {
   const [loading, setLoading] = useState(true);
 
   // Filters — seed from URL param (e.g. ?client=abc from dashboard link)
-  const [clientFilter, setClientFilter] = useState(searchParams.get('client') ?? '');
+  const initClient = searchParams.get('client');
+  const [clientFilter, setClientFilter] = useState<string[]>(initClient ? [initClient] : []);
+  const [clientDropdownOpen, setClientDropdownOpen] = useState(false);
+  const clientDropdownRef = useRef<HTMLDivElement>(null);
   const [storeQuery, setStoreQuery] = useState('');
   const [articleQuery, setArticleQuery] = useState('');
   const [barcodeQuery, setBarcodeQuery] = useState('');
@@ -105,8 +108,19 @@ export default function AgedStockDashboardPage() {
   // Reset load filter when client filter changes (loads are per-client)
   useEffect(() => { setLoadFilter(''); }, [clientFilter]);
 
-  const loadOptions: LoadDto[] = clientFilter
-    ? (loadsByClient[clientFilter] ?? [])
+  // Close client dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (clientDropdownRef.current && !clientDropdownRef.current.contains(e.target as Node)) {
+        setClientDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const loadOptions: LoadDto[] = clientFilter.length === 1
+    ? (loadsByClient[clientFilter[0]] ?? [])
     : [];
 
   const filtered = useMemo(() => {
@@ -116,7 +130,7 @@ export default function AgedStockDashboardPage() {
     const vq = vendorCodeQuery.trim().toLowerCase();
 
     return rows.filter(r => {
-      if (clientFilter && r.clientId !== clientFilter) return false;
+      if (clientFilter.length > 0 && !clientFilter.includes(r.clientId)) return false;
       if (loadFilter && r.loadId !== loadFilter) return false;
       if (sq) {
         const hay = `${r.siteCode} ${r.siteName}`.toLowerCase();
@@ -147,10 +161,10 @@ export default function AgedStockDashboardPage() {
 
   const canGeneratePickSlips =
     (session?.permissions ?? []).includes('load_aged_stock') &&
-    !!clientFilter && !!loadFilter;
+    clientFilter.length === 1 && !!loadFilter;
 
   async function handleGeneratePickSlips(force = false) {
-    if (!clientFilter || !loadFilter) return;
+    if (clientFilter.length !== 1 || !loadFilter) return;
     setPsGenerating(true);
     setPsResult(null);
     setPsDuplicate(false);
@@ -158,7 +172,7 @@ export default function AgedStockDashboardPage() {
       const res = await authFetch(`/api/aged-stock/loads/${loadFilter}/pick-slips`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId: clientFilter, force }),
+        body: JSON.stringify({ clientId: clientFilter[0], force }),
       });
       const data = await res.json();
       if (res.status === 409 && data.code === 'ALREADY_GENERATED') {
@@ -211,9 +225,9 @@ export default function AgedStockDashboardPage() {
     XLSX.utils.book_append_sheet(wb, ws, 'Aged Stock');
 
     const date = new Date().toISOString().slice(0, 10);
-    const suffix = clientFilter
-      ? ` - ${clientOptions.find(c => c.id === clientFilter)?.name ?? 'client'}`
-      : '';
+    const suffix = clientFilter.length === 1
+      ? ` - ${clientOptions.find(c => c.id === clientFilter[0])?.name ?? 'client'}`
+      : clientFilter.length > 1 ? ' - Multiple Clients' : '';
     XLSX.writeFile(wb, `Aged Stock${suffix} - ${date}.xlsx`);
   }
 
@@ -262,27 +276,64 @@ export default function AgedStockDashboardPage() {
 
       {/* Filters */}
       <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div>
+        <div ref={clientDropdownRef} className="relative">
           <label className="block text-xs text-gray-600 mb-1">Client</label>
-          <select
-            value={clientFilter}
-            onChange={e => setClientFilter(e.target.value)}
-            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+          <button
+            type="button"
+            onClick={() => setClientDropdownOpen(o => !o)}
+            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm text-left bg-white flex items-center justify-between gap-1"
           >
-            <option value="">All clients</option>
-            {clientOptions.map(c => (
-              <option key={c.id} value={c.id}>
-                {c.vendorNumbers.length ? `${c.name} - ${c.vendorNumbers.join(', ')}` : c.name}
-              </option>
-            ))}
-          </select>
+            <span className="truncate">
+              {clientFilter.length === 0
+                ? 'All clients'
+                : clientFilter.length === 1
+                  ? (clientOptions.find(c => c.id === clientFilter[0])?.name ?? 'client')
+                  : `${clientFilter.length} clients selected`}
+            </span>
+            <svg className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${clientDropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/></svg>
+          </button>
+          {clientDropdownOpen && (
+            <div className="absolute z-30 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto">
+              {clientFilter.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setClientFilter([])}
+                  className="w-full px-3 py-1.5 text-xs text-[var(--color-primary)] hover:bg-gray-50 text-left border-b border-gray-100"
+                >
+                  Clear selection
+                </button>
+              )}
+              {clientOptions.map(c => {
+                const checked = clientFilter.includes(c.id);
+                const label = c.vendorNumbers.length ? `${c.name} - ${c.vendorNumbers.join(', ')}` : c.name;
+                return (
+                  <label
+                    key={c.id}
+                    className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() =>
+                        setClientFilter(prev =>
+                          checked ? prev.filter(id => id !== c.id) : [...prev, c.id]
+                        )
+                      }
+                      className="accent-[var(--color-primary)]"
+                    />
+                    <span className="truncate">{label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
         <div>
           <label className="block text-xs text-gray-600 mb-1">Load (date)</label>
           <select
             value={loadFilter}
             onChange={e => setLoadFilter(e.target.value)}
-            disabled={!clientFilter}
+            disabled={clientFilter.length !== 1}
             className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm disabled:bg-gray-50 disabled:text-gray-400"
           >
             <option value="">All loads</option>
@@ -465,7 +516,7 @@ export default function AgedStockDashboardPage() {
             {!psGenerating && !psResult && !psDuplicate && (
               <>
                 <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-700 mb-4 space-y-1">
-                  <p><span className="font-medium">Client:</span> {clientOptions.find(c => c.id === clientFilter)?.name}</p>
+                  <p><span className="font-medium">Client:</span> {clientOptions.find(c => c.id === clientFilter[0])?.name}</p>
                   <p><span className="font-medium">Load:</span> {loadOptions.find(l => l.id === loadFilter)?.fileName} ({fmtDate(loadOptions.find(l => l.id === loadFilter)?.loadedAt ?? '')})</p>
                   <p><span className="font-medium">Stores:</span> {psStoreCount}</p>
                   <p><span className="font-medium">Rows:</span> {filtered.length.toLocaleString()}</p>
