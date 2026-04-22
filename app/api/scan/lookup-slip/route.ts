@@ -1,0 +1,101 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { requirePermission } from '@/lib/rolesData';
+import { loadUsers } from '@/lib/userData';
+import { clientScopeFor, filterClientIdsByScope } from '@/lib/clientScope';
+import { loadControl } from '@/lib/controlData';
+import { listLoads } from '@/lib/agedStockData';
+import { listAllPickSlipRuns } from '@/lib/pickSlipData';
+
+export const dynamic = 'force-dynamic';
+
+interface ClientRecord {
+  id: string;
+  name: string;
+  vendorNumbers: string[];
+}
+
+/**
+ * GET /api/scan/lookup-slip?slipId=PS-XXXX
+ *
+ * Validate a pick slip barcode for the scan screen.
+ * Returns slip summary if valid and in a bookable status.
+ */
+export async function GET(req: NextRequest) {
+  const guard = await requirePermission(req, 'scan_stock');
+  if (guard instanceof NextResponse) return guard;
+
+  const slipId = req.nextUrl.searchParams.get('slipId')?.trim();
+  if (!slipId) {
+    return NextResponse.json({ error: 'slipId query param is required' }, { status: 400 });
+  }
+
+  const users = await loadUsers();
+  const me = users.find(u => u.id === guard.userId);
+  if (!me) return NextResponse.json({ error: 'User not found' }, { status: 401 });
+
+  const scope = clientScopeFor({
+    role: me.role,
+    permissions: guard.permissions,
+    linkedClientId: me.linkedClientId,
+    assignedClientIds: me.assignedClientIds,
+  });
+
+  const allClients = await loadControl<ClientRecord>('clients');
+  const allClientIds = allClients.map(c => c.id);
+  const scopedIds = filterClientIdsByScope(scope, allClientIds);
+
+  if (scopedIds.length === 0) {
+    return NextResponse.json(
+      { found: false, error: 'No clients in scope' },
+      { headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+
+  const runs = await listAllPickSlipRuns(scopedIds, listLoads);
+
+  // Search all runs for the slip
+  for (const run of runs) {
+    const slip = run.slips.find(s => s.id === slipId);
+    if (slip) {
+      // Only allow booking for pre-booked/receipted statuses
+      const bookableStatuses = ['generated', 'sent', 'picked'];
+      if (!bookableStatuses.includes(slip.status)) {
+        return NextResponse.json(
+          {
+            found: true,
+            bookable: false,
+            error: `Pick slip is already "${slip.status}" — cannot book`,
+            status: slip.status,
+          },
+          { headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
+
+      return NextResponse.json(
+        {
+          found: true,
+          bookable: true,
+          slip: {
+            id: slip.id,
+            loadId: slip.loadId,
+            clientId: slip.clientId,
+            clientName: slip.clientName,
+            vendorNumber: slip.vendorNumber,
+            siteCode: slip.siteCode,
+            siteName: slip.siteName,
+            warehouse: slip.warehouse,
+            totalQty: slip.totalQty,
+            totalVal: slip.totalVal,
+            status: slip.status,
+          },
+        },
+        { headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
+  }
+
+  return NextResponse.json(
+    { found: false, error: 'Pick slip not found' },
+    { headers: { 'Cache-Control': 'no-store' } },
+  );
+}

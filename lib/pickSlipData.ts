@@ -25,6 +25,7 @@ export type PickSlipStatus =
   | 'generated'
   | 'sent'
   | 'picked'
+  | 'booked'
   | 'receipted'
   | 'in-transit'
   | 'returned-to-vendor'
@@ -78,6 +79,12 @@ export interface PickSlipRecord {
   receiptedAt?: string;
   receiptedBy?: string;
   receiptedByName?: string;
+  /** Booking fields — populated when a rep books stock via the scan screen */
+  bookedAt?: string;
+  bookedBy?: string;
+  bookedByName?: string;
+  bookedRepId?: string;
+  bookedRepName?: string;
   /** Store references — replaces legacy receiptStoreRef1-4 */
   receiptStoreRefs?: string[];
   /** Release fields — populated during warehouse stock release */

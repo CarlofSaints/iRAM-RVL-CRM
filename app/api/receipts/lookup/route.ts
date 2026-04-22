@@ -9,10 +9,17 @@ export const dynamic = 'force-dynamic';
  *
  * Validate a scanned barcode — returns sticker info + whether it's
  * already linked to another pick slip.
+ *
+ * Gated by `receipt_stock` OR `scan_stock` — the scan screen also
+ * needs to validate barcodes before booking.
  */
 export async function GET(req: NextRequest) {
-  const guard = await requirePermission(req, 'receipt_stock');
-  if (guard instanceof NextResponse) return guard;
+  // Allow either receipt_stock or scan_stock
+  let guard = await requirePermission(req, 'receipt_stock');
+  if (guard instanceof NextResponse) {
+    guard = await requirePermission(req, 'scan_stock');
+    if (guard instanceof NextResponse) return guard;
+  }
 
   const barcode = req.nextUrl.searchParams.get('barcode')?.trim();
   if (!barcode) {

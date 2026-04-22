@@ -101,7 +101,7 @@ export async function GET(req: NextRequest) {
 
   for (const run of pickSlipRuns) {
     for (const slip of run.slips) {
-      if (slip.status === 'receipted') {
+      if (slip.status === 'receipted' || slip.status === 'booked') {
         const wh = resolveWarehouseCode(slip.warehouse || 'UNKNOWN');
 
         // Per-client warehouse qty

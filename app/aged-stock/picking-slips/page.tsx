@@ -16,7 +16,7 @@ interface PdfRow {
   val: number;
 }
 
-type SlipStatus = 'generated' | 'sent' | 'picked' | 'receipted' | 'in-transit' | 'returned-to-vendor';
+type SlipStatus = 'generated' | 'sent' | 'picked' | 'booked' | 'receipted' | 'in-transit' | 'returned-to-vendor';
 
 interface SlipDto {
   id: string;
@@ -72,6 +72,7 @@ const STATUS_LABELS: Record<SlipStatus, string> = {
   'generated': 'Generated',
   'sent': 'Sent',
   'picked': 'Picked',
+  'booked': 'Booked',
   'receipted': 'Receipted',
   'in-transit': 'In Transit',
   'returned-to-vendor': 'Returned to Vendor',
@@ -81,6 +82,7 @@ const STATUS_COLORS: Record<SlipStatus, string> = {
   'generated': 'bg-gray-100 text-gray-700',
   'sent': 'bg-blue-100 text-blue-700',
   'picked': 'bg-amber-100 text-amber-700',
+  'booked': 'bg-teal-100 text-teal-700',
   'receipted': 'bg-green-100 text-green-700',
   'in-transit': 'bg-purple-100 text-purple-700',
   'returned-to-vendor': 'bg-red-100 text-red-700',

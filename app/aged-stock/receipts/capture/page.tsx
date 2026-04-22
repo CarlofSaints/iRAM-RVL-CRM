@@ -83,13 +83,14 @@ function uuid(): string {
 function resolveMode(status: string): PageMode {
   if (status === 'receipted' || status === 'failed-release') return 'release';
   if (status === 'in-transit' || status === 'returned-to-vendor' || status === 'partial-release') return 'view';
-  return 'receipt'; // generated, sent, picked
+  return 'receipt'; // generated, sent, picked, booked
 }
 
 const STATUS_BADGE: Record<string, string> = {
   'generated': 'bg-gray-100 text-gray-700',
   'sent': 'bg-blue-100 text-blue-700',
   'picked': 'bg-amber-100 text-amber-700',
+  'booked': 'bg-teal-100 text-teal-700',
   'receipted': 'bg-green-100 text-green-700',
   'in-transit': 'bg-purple-100 text-purple-700',
   'returned-to-vendor': 'bg-red-100 text-red-700',
@@ -101,6 +102,7 @@ const STATUS_LABEL: Record<string, string> = {
   'generated': 'Generated',
   'sent': 'Sent',
   'picked': 'Picked',
+  'booked': 'Booked',
   'receipted': 'Receipted',
   'in-transit': 'In Transit',
   'returned-to-vendor': 'Returned to Vendor',

@@ -36,6 +36,7 @@ const STATUS_LABELS: Record<string, string> = {
   'generated': 'Generated',
   'sent': 'Sent',
   'picked': 'Picked',
+  'booked': 'Booked',
   'receipted': 'Receipted',
   'in-transit': 'In Transit',
   'returned-to-vendor': 'Returned to Vendor',
@@ -47,6 +48,7 @@ const STATUS_COLORS: Record<string, string> = {
   'generated': 'bg-gray-100 text-gray-700',
   'sent': 'bg-blue-100 text-blue-700',
   'picked': 'bg-amber-100 text-amber-700',
+  'booked': 'bg-teal-100 text-teal-700',
   'receipted': 'bg-green-100 text-green-700',
   'in-transit': 'bg-purple-100 text-purple-700',
   'returned-to-vendor': 'bg-red-100 text-red-700',
@@ -219,10 +221,12 @@ export default function ReceiptsListPage() {
                           ? 'text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100'
                           : (s.status === 'in-transit' || s.status === 'partial-release')
                           ? 'text-green-600 border-green-200 bg-green-50'
+                          : s.status === 'booked'
+                          ? 'text-teal-600 border-teal-200 bg-teal-50 hover:bg-teal-100'
                           : 'text-[var(--color-primary)] border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)]/5'
                       }`}
                     >
-                      {s.status === 'receipted' ? 'Release' : s.status === 'failed-release' ? 'Retry Release' : (s.status === 'in-transit' || s.status === 'partial-release') ? 'View' : 'Capture'}
+                      {s.status === 'receipted' ? 'Release' : s.status === 'failed-release' ? 'Retry Release' : (s.status === 'in-transit' || s.status === 'partial-release') ? 'View' : s.status === 'booked' ? 'Complete Receipt' : 'Capture'}
                     </button>
                   </td>
                 </tr>
