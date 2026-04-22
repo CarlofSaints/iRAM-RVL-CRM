@@ -12,8 +12,16 @@ interface Section {
   content: React.ReactNode;
 }
 
-/* ---------- reusable screenshot placeholder ---------- */
-function GuideScreenshot({ caption }: { caption: string }) {
+/* ---------- reusable screenshot / placeholder ---------- */
+function GuideScreenshot({ caption, src }: { caption: string; src?: string }) {
+  if (src) {
+    return (
+      <div className="my-4">
+        <img src={src} alt={caption} className="w-full rounded-lg border border-gray-200 shadow-sm" />
+        <p className="text-xs text-gray-400 mt-1 italic text-center">{caption}</p>
+      </div>
+    );
+  }
   return (
     <div className="my-4 rounded-lg border-2 border-dashed border-gray-300 bg-gray-100 flex flex-col items-center justify-center py-12 px-6 text-center">
       <svg className="w-10 h-10 text-gray-400 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -47,6 +55,13 @@ function buildSections(): Section[] {
           </p>
           <GuideScreenshot caption="Login page with email and password fields" />
 
+          <h3 className="text-base font-semibold text-gray-800 mt-6 mb-2">Forgot Password</h3>
+          <p className="text-sm text-gray-600 leading-relaxed">
+            If you forget your password, click &quot;Forgot Password?&quot; on the login page. Enter your email and
+            a temporary password will be sent to you.
+          </p>
+          <GuideScreenshot caption="Reset password modal" src="/guide/reset-password.png" />
+
           <h3 className="text-base font-semibold text-gray-800 mt-6 mb-2">First-Time Password Change</h3>
           <p className="text-sm text-gray-600 leading-relaxed">
             On first login you will be prompted to <InlineLink href="/change-password">change your password</InlineLink>.
@@ -59,7 +74,7 @@ function buildSections(): Section[] {
             Visit <InlineLink href="/account">My Account</InlineLink> to upload a profile photo, change your email address,
             or update your password at any time. You can also upgrade your subscription tier from the Billing section.
           </p>
-          <GuideScreenshot caption="Account page showing avatar upload, email, and password sections" />
+          <GuideScreenshot caption="Account page showing profile picture, display name, and email sections" src="/guide/account.png" />
         </>
       ),
     },
@@ -78,7 +93,7 @@ function buildSections(): Section[] {
             <li><strong>Client filter</strong> &mdash; select/deselect individual clients to focus the view.</li>
             <li><strong>Export to Excel</strong> &mdash; download the aged stock summary as a spreadsheet.</li>
           </ul>
-          <GuideScreenshot caption="Dashboard overview showing KPI cards, aged stock grid, and warehouse summary" />
+          <GuideScreenshot caption="Dashboard overview showing KPI cards, aged stock grid, and warehouse summary" src="/guide/dashboard.png" />
         </>
       ),
     },
@@ -91,6 +106,7 @@ function buildSections(): Section[] {
             The <InlineLink href="/control-centre">Control Centre</InlineLink> is where master data is maintained.
             Each section is accessible from the sidebar under &quot;Control Centre&quot;:
           </p>
+          <GuideScreenshot caption="Control Centre overview with section cards" src="/guide/control-centre.png" />
 
           <h3 className="text-base font-semibold text-gray-800 mt-4 mb-2">Clients / Suppliers</h3>
           <p className="text-sm text-gray-600 leading-relaxed">
@@ -98,13 +114,14 @@ function buildSections(): Section[] {
             aged stock is managed. Each client has a name, one or more vendor numbers, and optional SharePoint integration
             links for product data.
           </p>
-          <GuideScreenshot caption="Clients list with vendor numbers and SP links" />
+          <GuideScreenshot caption="Clients list with vendor numbers and type badges" src="/guide/clients.png" />
 
           <h3 className="text-base font-semibold text-gray-800 mt-4 mb-2">Stores</h3>
           <p className="text-sm text-gray-600 leading-relaxed">
             <InlineLink href="/control-centre/stores">Stores</InlineLink> hold the retail locations where aged stock
             originates. You can import stores in bulk via Excel upload.
           </p>
+          <GuideScreenshot caption="Stores list with site codes, channels, managers, and warehouse assignments" src="/guide/stores.png" />
 
           <h3 className="text-base font-semibold text-gray-800 mt-4 mb-2">Products</h3>
           <p className="text-sm text-gray-600 leading-relaxed">
@@ -112,7 +129,7 @@ function buildSections(): Section[] {
             control files linked to each client. Use the &quot;Refresh&quot; button to pull the latest data.
             Products include article codes, barcodes, and vendor product codes.
           </p>
-          <GuideScreenshot caption="Products page showing SP-synced product data with refresh button" />
+          <GuideScreenshot caption="Products page with client selector and SharePoint refresh" src="/guide/products.png" />
 
           <h3 className="text-base font-semibold text-gray-800 mt-4 mb-2">Reps</h3>
           <p className="text-sm text-gray-600 leading-relaxed">
@@ -124,7 +141,7 @@ function buildSections(): Section[] {
             <InlineLink href="/control-centre/warehouses">Warehouses</InlineLink> are physical locations where returned
             stock is received and stored. Each warehouse has a unique code used in sticker barcodes.
           </p>
-          <GuideScreenshot caption="Warehouses list showing codes and names" />
+          <GuideScreenshot caption="Warehouses list showing codes, names, and regions" src="/guide/warehouses.png" />
         </>
       ),
     },
@@ -145,7 +162,7 @@ function buildSections(): Section[] {
           <p className="text-sm text-gray-600 leading-relaxed mt-3">
             Each load is dated and append-only &mdash; new uploads never overwrite previous data.
           </p>
-          <GuideScreenshot caption="Load page showing file upload, format detection, and period multi-select" />
+          <GuideScreenshot caption="Load Aged Stock page with client picker and file upload" src="/guide/load-aged-stock.png" />
         </>
       ),
     },
@@ -164,7 +181,7 @@ function buildSections(): Section[] {
             <li><strong>Export to Excel</strong> &mdash; download the filtered view as a spreadsheet.</li>
             <li><strong>Generate Pick Slips</strong> &mdash; select a load and generate pick slips for collection (see next section).</li>
           </ul>
-          <GuideScreenshot caption="Aged stock grid with filters, data columns, and export button" />
+          <GuideScreenshot caption="Aged stock grid with filters, data columns, and export button" src="/guide/aged-stock.png" />
         </>
       ),
     },
@@ -201,7 +218,7 @@ function buildSections(): Section[] {
           <p className="text-sm text-gray-600 leading-relaxed">
             Each pick slip progresses through: <strong>Generated</strong> &rarr; <strong>Sent</strong> &rarr; <strong>Picked</strong> &rarr; <strong>Receipted</strong>.
           </p>
-          <GuideScreenshot caption="Picking slips management page with filters, bulk actions, and status badges" />
+          <GuideScreenshot caption="Picking slips management page with filters, bulk actions, and status badges" src="/guide/picking-slips.png" />
         </>
       ),
     },
@@ -223,7 +240,7 @@ function buildSections(): Section[] {
             Print the PDF and affix stickers to returned stock arriving at the warehouse. The barcode is scanned
             during the receipting process (see next section).
           </p>
-          <GuideScreenshot caption="Sticker labels page showing batch list and sample PDF preview" />
+          <GuideScreenshot caption="Sticker labels page with batch history and generate form" src="/guide/stickers.png" />
         </>
       ),
     },
@@ -242,7 +259,7 @@ function buildSections(): Section[] {
             <li><strong>Capture details</strong> &mdash; record quantities, condition, and any notes.</li>
             <li><strong>Submit receipt</strong> &mdash; the stock is marked as receipted and the pick slip status updates automatically.</li>
           </ol>
-          <GuideScreenshot caption="Receipt capture page with barcode scanner input and stock details form" />
+          <GuideScreenshot caption="Receive Stock page with pick slip list and capture actions" src="/guide/receive-stock.png" />
         </>
       ),
     },
@@ -260,7 +277,7 @@ function buildSections(): Section[] {
             <li><strong>Client assignments</strong> &mdash; non-customer users can be assigned to specific clients, scoping what data they see.</li>
             <li><strong>Reset passwords</strong> &mdash; force a password change on next login.</li>
           </ul>
-          <GuideScreenshot caption="User management table with role badges and client assignments" />
+          <GuideScreenshot caption="User management with add form, role selector, and client assignments" src="/guide/user-management.png" />
         </>
       ),
     },
@@ -278,7 +295,7 @@ function buildSections(): Section[] {
             <li><strong>Permission keys</strong> &mdash; toggle individual permissions on/off for each role (e.g. <code className="bg-gray-100 px-1 rounded text-xs">view_aged_stock</code>, <code className="bg-gray-100 px-1 rounded text-xs">manage_clients</code>).</li>
             <li><strong>Custom roles</strong> &mdash; create specialised roles for external users or contractors with limited access.</li>
           </ul>
-          <GuideScreenshot caption="Roles page with permission toggles grid" />
+          <GuideScreenshot caption="Roles and permissions page with role list and type badges" src="/guide/roles.png" />
         </>
       ),
     },

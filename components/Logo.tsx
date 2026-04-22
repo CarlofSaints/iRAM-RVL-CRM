@@ -36,7 +36,7 @@ export default function Logo({ size = 40, className = '', light = false }: LogoP
         fill={light ? '#ffffff' : '#32373C'}
       >
         <tspan>i</tspan>
-        <tspan fill="#7CC042">R</tspan>
+        <tspan fill={light ? '#ffffff' : '#7CC042'}>R</tspan>
         <tspan>am</tspan>
       </text>
 
