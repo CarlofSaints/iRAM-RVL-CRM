@@ -27,7 +27,8 @@ export type PickSlipStatus =
   | 'picked'
   | 'receipted'
   | 'in-transit'
-  | 'returned-to-vendor';
+  | 'returned-to-vendor'
+  | 'failed-release';
 
 export interface PickSlipRecord {
   /** Unique pick slip ID, e.g. PS-9448-20260309-001 */
@@ -76,6 +77,15 @@ export interface PickSlipRecord {
   receiptedAt?: string;
   receiptedBy?: string;
   receiptedByName?: string;
+  /** Store references — replaces legacy receiptStoreRef1-4 */
+  receiptStoreRefs?: string[];
+  /** Release fields — populated during warehouse stock release */
+  releaseRepId?: string;
+  releaseRepName?: string;
+  releaseBoxes?: ReceiptBox[];
+  releasedAt?: string;
+  releasedBy?: string;
+  releasedByName?: string;
 }
 
 export interface PickSlipRunIndex {

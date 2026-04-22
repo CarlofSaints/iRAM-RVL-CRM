@@ -26,9 +26,15 @@ interface DashboardStats {
       totalVal: number;
       warehouseQty: Record<string, number>;
       warehouseVal: Record<string, number>;
+      inTransitQty: number;
+      inTransitVal: number;
     }>;
   };
   warehouseStock: {
+    totalQty: number;
+    totalVal: number;
+  };
+  inTransitStock: {
     totalQty: number;
     totalVal: number;
   };
@@ -192,7 +198,8 @@ export default function DashboardPage() {
         row[`${w.code} Qty`] = c.warehouseQty?.[whKey] ?? 0;
         row[`${w.code} Value`] = c.warehouseVal?.[whKey] ?? 0;
       }
-      row['In Transit'] = 0;
+      row['Transit Qty'] = c.inTransitQty ?? 0;
+      row['Transit Value'] = c.inTransitVal ?? 0;
       return row;
     });
     // Totals row
@@ -207,7 +214,8 @@ export default function DashboardPage() {
       totals[`${w.code} Qty`] = filteredClients.reduce((sum, c) => sum + (c.warehouseQty?.[whKey] ?? 0), 0);
       totals[`${w.code} Value`] = filteredClients.reduce((sum, c) => sum + (c.warehouseVal?.[whKey] ?? 0), 0);
     }
-    totals['In Transit'] = 0;
+    totals['Transit Qty'] = filteredClients.reduce((sum, c) => sum + (c.inTransitQty ?? 0), 0);
+    totals['Transit Value'] = filteredClients.reduce((sum, c) => sum + (c.inTransitVal ?? 0), 0);
     rows.push(totals);
 
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -258,9 +266,9 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Aged Stock + Warehouse Stock KPI cards */}
+        {/* Aged Stock + Warehouse Stock + In Transit KPI cards */}
         {hasAgedStock && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
               <div className="flex items-center gap-3">
                 <div className="w-3 h-3 rounded-full bg-amber-500" />
@@ -293,6 +301,22 @@ export default function DashboardPage() {
               <div className="text-3xl font-bold text-gray-900 mt-2">{fmtRand(stats.warehouseStock?.totalVal ?? 0)}</div>
               <div className="text-xs text-gray-400 mt-1">Total value across all warehouses</div>
             </div>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full bg-cyan-500" />
+                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">In Transit Volume</span>
+              </div>
+              <div className="text-3xl font-bold text-gray-900 mt-2">{fmtNum(stats.inTransitStock?.totalQty ?? 0)}</div>
+              <div className="text-xs text-gray-400 mt-1">Units in transit to vendors</div>
+            </div>
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full bg-pink-500" />
+                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">In Transit Value</span>
+              </div>
+              <div className="text-3xl font-bold text-gray-900 mt-2">{fmtRand(stats.inTransitStock?.totalVal ?? 0)}</div>
+              <div className="text-xs text-gray-400 mt-1">Value in transit to vendors</div>
+            </div>
           </div>
         )}
 
@@ -301,7 +325,7 @@ export default function DashboardPage() {
           // Column index counter for resize handles
           let ci = 0;
           const colIdx = () => ci++;
-          const totalCols = 4 + warehouses.length * 2 + 1;
+          const totalCols = 4 + warehouses.length * 2 + 2;
 
           return (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
@@ -391,8 +415,13 @@ export default function DashboardPage() {
                       ];
                     })}
                     {(() => { const i = colIdx(); return (
-                      <th key="transit" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative whitespace-nowrap">
-                        In Transit<ResizeHandle colIdx={i} />
+                      <th key="transitQty" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative whitespace-nowrap">
+                        Transit Qty<ResizeHandle colIdx={i} />
+                      </th>
+                    ); })()}
+                    {(() => { const i = colIdx(); return (
+                      <th key="transitVal" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative whitespace-nowrap">
+                        Transit Val<ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
                   </tr>
@@ -421,7 +450,12 @@ export default function DashboardPage() {
                           </td>,
                         ];
                       })}
-                      <td className="px-3 py-2 text-right text-gray-400">0</td>
+                      <td className={`px-3 py-2 text-right ${(c.inTransitQty ?? 0) > 0 ? 'font-medium text-gray-900' : 'text-gray-400'}`}>
+                        {fmtNum(c.inTransitQty ?? 0)}
+                      </td>
+                      <td className={`px-3 py-2 text-right ${(c.inTransitVal ?? 0) > 0 ? 'font-medium text-gray-900' : 'text-gray-400'}`}>
+                        {fmtRand(c.inTransitVal ?? 0)}
+                      </td>
                     </tr>
                   ))}
                   {filteredClients.length === 0 && (
@@ -448,7 +482,14 @@ export default function DashboardPage() {
                           </td>,
                         ];
                       })}
-                      <td className="px-3 py-2 text-right text-gray-400">0</td>
+                      {(() => {
+                        const tQty = filteredClients.reduce((sum, c) => sum + (c.inTransitQty ?? 0), 0);
+                        const tVal = filteredClients.reduce((sum, c) => sum + (c.inTransitVal ?? 0), 0);
+                        return <>
+                          <td className={`px-3 py-2 text-right ${tQty > 0 ? 'text-gray-900' : 'text-gray-400'}`}>{fmtNum(tQty)}</td>
+                          <td className={`px-3 py-2 text-right ${tVal > 0 ? 'text-gray-900' : 'text-gray-400'}`}>{fmtRand(tVal)}</td>
+                        </>;
+                      })()}
                     </tr>
                   </tfoot>
                 )}

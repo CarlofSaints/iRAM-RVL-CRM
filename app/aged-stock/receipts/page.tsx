@@ -39,6 +39,7 @@ const STATUS_LABELS: Record<string, string> = {
   'receipted': 'Receipted',
   'in-transit': 'In Transit',
   'returned-to-vendor': 'Returned to Vendor',
+  'failed-release': 'Failed Release',
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -48,6 +49,7 @@ const STATUS_COLORS: Record<string, string> = {
   'receipted': 'bg-green-100 text-green-700',
   'in-transit': 'bg-purple-100 text-purple-700',
   'returned-to-vendor': 'bg-red-100 text-red-700',
+  'failed-release': 'bg-red-100 text-red-700',
 };
 
 export default function ReceiptsListPage() {
@@ -158,11 +160,15 @@ export default function ReceiptsListPage() {
                       onClick={() => router.push(`/aged-stock/receipts/capture?slipId=${encodeURIComponent(s.id)}&clientId=${encodeURIComponent(s.clientId)}&loadId=${encodeURIComponent(s.loadId)}`)}
                       className={`px-2.5 py-1 text-xs font-medium rounded border ${
                         s.status === 'receipted'
+                          ? 'text-purple-600 border-purple-200 bg-purple-50 hover:bg-purple-100'
+                          : s.status === 'failed-release'
+                          ? 'text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100'
+                          : s.status === 'in-transit'
                           ? 'text-green-600 border-green-200 bg-green-50'
                           : 'text-[var(--color-primary)] border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)]/5'
                       }`}
                     >
-                      {s.status === 'receipted' ? 'View' : 'Capture'}
+                      {s.status === 'receipted' ? 'Release' : s.status === 'failed-release' ? 'Retry Release' : s.status === 'in-transit' ? 'View' : 'Capture'}
                     </button>
                   </td>
                 </tr>

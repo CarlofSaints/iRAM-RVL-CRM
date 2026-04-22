@@ -69,15 +69,22 @@ export async function GET(req: NextRequest) {
     totalVal: number;
     warehouseQty: Record<string, number>;
     warehouseVal: Record<string, number>;
+    inTransitQty: number;
+    inTransitVal: number;
   }> = [];
 
   // Also aggregate warehouse stock from receipted pick slips
   const pickSlipRuns = await listAllPickSlipRuns(scopedClientIds, listLoads);
-  // Build per-client warehouse aggregations
+  // Build per-client warehouse + in-transit aggregations
   const clientWarehouseQty = new Map<string, Record<string, number>>();
   const clientWarehouseVal = new Map<string, Record<string, number>>();
   let warehouseTotalQty = 0;
   let warehouseTotalVal = 0;
+
+  const clientInTransitQty = new Map<string, number>();
+  const clientInTransitVal = new Map<string, number>();
+  let inTransitTotalQty = 0;
+  let inTransitTotalVal = 0;
 
   // Build lookup maps to resolve slip.warehouse (free-text) → warehouse code
   // Matches by code (exact) or name (case-insensitive), falls back to raw value
@@ -94,21 +101,28 @@ export async function GET(req: NextRequest) {
 
   for (const run of pickSlipRuns) {
     for (const slip of run.slips) {
-      if (slip.status !== 'receipted') continue;
-      const wh = resolveWarehouseCode(slip.warehouse || 'UNKNOWN');
+      if (slip.status === 'receipted') {
+        const wh = resolveWarehouseCode(slip.warehouse || 'UNKNOWN');
 
-      // Per-client warehouse qty
-      if (!clientWarehouseQty.has(slip.clientId)) clientWarehouseQty.set(slip.clientId, {});
-      const cWhQty = clientWarehouseQty.get(slip.clientId)!;
-      cWhQty[wh] = (cWhQty[wh] ?? 0) + slip.totalQty;
+        // Per-client warehouse qty
+        if (!clientWarehouseQty.has(slip.clientId)) clientWarehouseQty.set(slip.clientId, {});
+        const cWhQty = clientWarehouseQty.get(slip.clientId)!;
+        cWhQty[wh] = (cWhQty[wh] ?? 0) + slip.totalQty;
 
-      // Per-client warehouse val
-      if (!clientWarehouseVal.has(slip.clientId)) clientWarehouseVal.set(slip.clientId, {});
-      const cWhVal = clientWarehouseVal.get(slip.clientId)!;
-      cWhVal[wh] = (cWhVal[wh] ?? 0) + slip.totalVal;
+        // Per-client warehouse val
+        if (!clientWarehouseVal.has(slip.clientId)) clientWarehouseVal.set(slip.clientId, {});
+        const cWhVal = clientWarehouseVal.get(slip.clientId)!;
+        cWhVal[wh] = (cWhVal[wh] ?? 0) + slip.totalVal;
 
-      warehouseTotalQty += slip.totalQty;
-      warehouseTotalVal += slip.totalVal;
+        warehouseTotalQty += slip.totalQty;
+        warehouseTotalVal += slip.totalVal;
+      } else if (slip.status === 'in-transit') {
+        // Per-client in-transit aggregation
+        clientInTransitQty.set(slip.clientId, (clientInTransitQty.get(slip.clientId) ?? 0) + slip.totalQty);
+        clientInTransitVal.set(slip.clientId, (clientInTransitVal.get(slip.clientId) ?? 0) + slip.totalVal);
+        inTransitTotalQty += slip.totalQty;
+        inTransitTotalVal += slip.totalVal;
+      }
     }
   }
 
@@ -129,7 +143,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    if (cQty > 0 || cVal > 0 || clientWarehouseQty.has(clientId)) {
+    if (cQty > 0 || cVal > 0 || clientWarehouseQty.has(clientId) || clientInTransitQty.has(clientId)) {
       byClient.push({
         clientId: client.id,
         clientName: client.name,
@@ -138,6 +152,8 @@ export async function GET(req: NextRequest) {
         totalVal: cVal,
         warehouseQty: clientWarehouseQty.get(clientId) ?? {},
         warehouseVal: clientWarehouseVal.get(clientId) ?? {},
+        inTransitQty: clientInTransitQty.get(clientId) ?? 0,
+        inTransitVal: clientInTransitVal.get(clientId) ?? 0,
       });
       totalQty += cQty;
       totalVal += cVal;
@@ -150,6 +166,7 @@ export async function GET(req: NextRequest) {
       warehouses: warehouses.map(w => ({ code: w.code, name: w.name })),
       agedStock: { totalQty, totalVal, byClient },
       warehouseStock: { totalQty: warehouseTotalQty, totalVal: warehouseTotalVal },
+      inTransitStock: { totalQty: inTransitTotalQty, totalVal: inTransitTotalVal },
     },
     { headers: { 'Cache-Control': 'no-store' } }
   );

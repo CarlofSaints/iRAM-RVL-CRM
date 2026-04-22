@@ -12,6 +12,7 @@ interface Rep {
   phone: string;
   email: string;
   region: string;
+  releaseCode?: string;
   createdAt: string;
 }
 
@@ -27,6 +28,7 @@ export default function RepsPage() {
   const [addPhone, setAddPhone] = useState('');
   const [addEmail, setAddEmail] = useState('');
   const [addRegion, setAddRegion] = useState('');
+  const [addReleaseCode, setAddReleaseCode] = useState('');
   const [addAsUser, setAddAsUser] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
 
@@ -38,6 +40,7 @@ export default function RepsPage() {
   const [editPhone, setEditPhone] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editRegion, setEditRegion] = useState('');
+  const [editReleaseCode, setEditReleaseCode] = useState('');
   const [editLoading, setEditLoading] = useState(false);
 
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
@@ -60,7 +63,7 @@ export default function RepsPage() {
       const res = await authFetch('/api/control/reps', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: addName, surname: addSurname, phone: addPhone, email: addEmail, region: addRegion }),
+        body: JSON.stringify({ name: addName, surname: addSurname, phone: addPhone, email: addEmail, region: addRegion, releaseCode: addReleaseCode.toUpperCase() || undefined }),
       });
       if (!res.ok) { notify('Failed to add rep', 'error'); return; }
 
@@ -89,7 +92,7 @@ export default function RepsPage() {
       }
 
       setAddName(''); setAddSurname(''); setAddPhone(''); setAddEmail(''); setAddRegion('');
-      setAddAsUser(false);
+      setAddReleaseCode(''); setAddAsUser(false);
       fetchItems();
     } finally { setAddLoading(false); }
   }
@@ -101,6 +104,7 @@ export default function RepsPage() {
     setEditPhone(item.phone);
     setEditEmail(item.email);
     setEditRegion(item.region);
+    setEditReleaseCode(item.releaseCode ?? '');
   }
 
   async function handleEdit(e: React.FormEvent) {
@@ -111,7 +115,7 @@ export default function RepsPage() {
       const res = await authFetch('/api/control/reps', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: editItem.id, name: editName, surname: editSurname, phone: editPhone, email: editEmail, region: editRegion }),
+        body: JSON.stringify({ id: editItem.id, name: editName, surname: editSurname, phone: editPhone, email: editEmail, region: editRegion, releaseCode: editReleaseCode.toUpperCase() || undefined }),
       });
       if (!res.ok) { notify('Failed to update', 'error'); return; }
       notify('Rep updated');
@@ -212,6 +216,13 @@ export default function RepsPage() {
             <input value={addRegion} onChange={e => setAddRegion(e.target.value)}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
           </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-gray-500 font-medium">Release Code</label>
+            <input value={addReleaseCode} onChange={e => setAddReleaseCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
+              maxLength={4} placeholder="e.g. AB12" pattern="[A-Z0-9]{4}"
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
+            <span className="text-[10px] text-gray-400">4 chars, letters + digits. Used to verify stock release.</span>
+          </div>
           <div className="sm:col-span-2 lg:col-span-3 flex flex-wrap items-center justify-between gap-4 pt-2 border-t border-gray-100 mt-2">
             <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
               <input
@@ -250,6 +261,7 @@ export default function RepsPage() {
                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Phone</th>
                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Region</th>
+                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Release Code</th>
                 <th className="px-6 py-3" />
               </tr>
             </thead>
@@ -260,6 +272,7 @@ export default function RepsPage() {
                   <td className="px-6 py-3 text-gray-600">{item.phone}</td>
                   <td className="px-6 py-3 text-gray-600">{item.email}</td>
                   <td className="px-6 py-3 text-gray-600">{item.region}</td>
+                  <td className="px-6 py-3 font-mono tracking-widest text-gray-600">{item.releaseCode || '—'}</td>
                   <td className="px-6 py-3">
                     <div className="flex gap-2 justify-end">
                       <button onClick={() => openEdit(item)} className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
@@ -269,7 +282,7 @@ export default function RepsPage() {
                 </tr>
               ))}
               {filtered.length === 0 && (
-                <tr><td colSpan={5} className="px-6 py-8 text-center text-gray-400 text-sm">No records found</td></tr>
+                <tr><td colSpan={6} className="px-6 py-8 text-center text-gray-400 text-sm">No records found</td></tr>
               )}
             </tbody>
           </table>
@@ -302,10 +315,16 @@ export default function RepsPage() {
                 <input type="email" value={editEmail} onChange={e => setEditEmail(e.target.value)}
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
               </div>
-              <div className="flex flex-col gap-1 col-span-2">
+              <div className="flex flex-col gap-1">
                 <label className="text-xs text-gray-500 font-medium">Region</label>
                 <input value={editRegion} onChange={e => setEditRegion(e.target.value)}
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-gray-500 font-medium">Release Code</label>
+                <input value={editReleaseCode} onChange={e => setEditReleaseCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
+                  maxLength={4} placeholder="e.g. AB12" pattern="[A-Z0-9]{4}"
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
               </div>
               <div className="col-span-2 flex gap-3 pt-2">
                 <button type="submit" disabled={editLoading}
