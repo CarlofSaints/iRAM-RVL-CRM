@@ -16,6 +16,10 @@
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const bwipjs = require('bwip-js') as {
+  toBuffer(opts: { bcid: string; text: string; scale: number; height: number; includetext: boolean }): Promise<Buffer>;
+};
 
 export interface PickSlipPdfRow {
   barcode: string;
@@ -93,8 +97,21 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
     if (fs.existsSync(ojPath)) ojLogoBuffer = fs.readFileSync(ojPath);
   } catch { /* skip */ }
 
+  // Generate Code128 barcode image for the pick slip ID
+  let barcodeBuffer: Buffer | null = null;
+  try {
+    barcodeBuffer = await bwipjs.toBuffer({
+      bcid: 'code128',
+      text: pickSlipId,
+      scale: 3,
+      height: 10,
+      includetext: true,
+    });
+  } catch { /* skip barcode if generation fails */ }
+
   // Calculate pagination — how many data rows fit per page
-  const headerBlockH = 100; // title + header info
+  const barcodeH = barcodeBuffer ? 50 : 0; // space for barcode + gap
+  const headerBlockH = 100 + barcodeH; // title + header info + barcode
   const tableHeaderH = 30;
   const rowH = 28; // enough for 2-line product descriptions
   const footerH = 150; // total row + boxes row + signature + branding (logo is 40pt tall)
@@ -193,6 +210,17 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
       doc.font('Helvetica-Bold').fontSize(10);
       doc.text(`RTV NUMBERS - ${siteCode}`, leftX, y);
       y += 20;
+
+      // ── Pick slip barcode (Code128) ──
+      if (barcodeBuffer) {
+        try {
+          const bcW = 200;
+          const bcH = 40;
+          const bcX = marginL + (usableW - bcW) / 2;
+          doc.image(barcodeBuffer, bcX, y, { width: bcW, height: bcH });
+          y += bcH + 10;
+        } catch { /* skip if image fails */ }
+      }
     } else {
       // Continuation pages — lighter header
       doc.font('Helvetica').fontSize(9);

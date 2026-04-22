@@ -33,11 +33,14 @@ export default function LoadAgedStockPage() {
   const router = useRouter();
   const [toast, setToast] = useState<ToastData | null>(null);
   const [clients, setClients] = useState<ScopedClient[]>([]);
-  const [clientId, setClientId] = useState('');
+  const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
+  const [clientDropdownOpen, setClientDropdownOpen] = useState(false);
+  const clientDropdownRef = useRef<HTMLDivElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [committing, setCommitting] = useState(false);
+  const [commitProgress, setCommitProgress] = useState('');
   const [parsed, setParsed] = useState<ParseResponse | null>(null);
   const [selectedPeriods, setSelectedPeriods] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -55,23 +58,35 @@ export default function LoadAgedStockPage() {
     })();
   }, []);
 
+  // Close client dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (clientDropdownRef.current && !clientDropdownRef.current.contains(e.target as Node)) {
+        setClientDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
   function resetForNewFile() {
     setFile(null);
     setParsed(null);
     setSelectedPeriods([]);
+    setCommitProgress('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
   async function doParse(fileToParse: File) {
-    if (!clientId) {
-      notify('Pick a client first', 'error');
+    if (selectedClientIds.length === 0) {
+      notify('Pick at least one client first', 'error');
       return;
     }
     setParsing(true);
     setParsed(null);
     try {
       const form = new FormData();
-      form.append('clientId', clientId);
+      form.append('clientId', selectedClientIds[0]);
       form.append('file', fileToParse);
       const res = await authFetch('/api/aged-stock/parse', { method: 'POST', body: form });
       const json = await res.json();
@@ -102,29 +117,67 @@ export default function LoadAgedStockPage() {
   }
 
   async function doCommit() {
-    if (!parsed) return;
+    if (!parsed || !file) return;
     if (selectedPeriods.length === 0) {
       notify('Select at least one period to load', 'error');
       return;
     }
     setCommitting(true);
+    setCommitProgress('');
+    const total = selectedClientIds.length;
+    let totalRows = 0;
+    let failed = 0;
+
     try {
-      const res = await authFetch('/api/aged-stock/commit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ draftId: parsed.draftId, selectedPeriodKeys: selectedPeriods }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.ok) {
-        notify(json?.error ?? 'Commit failed', 'error');
-        return;
+      for (let i = 0; i < selectedClientIds.length; i++) {
+        const cId = selectedClientIds[i];
+        const cName = clients.find(c => c.id === cId)?.name ?? 'client';
+        setCommitProgress(`Loading ${cName} (${i + 1}/${total})…`);
+
+        let draftIdToCommit = parsed.draftId;
+
+        // First client already has a draft from parse; others need their own
+        if (i > 0) {
+          const form = new FormData();
+          form.append('clientId', cId);
+          form.append('file', file);
+          const parseRes = await authFetch('/api/aged-stock/parse', { method: 'POST', body: form });
+          const parseJson = await parseRes.json();
+          if (!parseRes.ok || !parseJson.ok) {
+            notify(`Parse failed for ${cName}: ${parseJson?.error ?? parseJson?.errors?.join('; ') ?? 'Unknown error'}`, 'error');
+            failed++;
+            continue;
+          }
+          draftIdToCommit = parseJson.draftId;
+        }
+
+        const res = await authFetch('/api/aged-stock/commit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ draftId: draftIdToCommit, selectedPeriodKeys: selectedPeriods }),
+        });
+        const json = await res.json();
+        if (!res.ok || !json.ok) {
+          notify(`Commit failed for ${cName}: ${json?.error ?? 'Unknown error'}`, 'error');
+          failed++;
+          continue;
+        }
+        totalRows += json.rowCount ?? 0;
       }
-      notify(`Loaded ${json.rowCount} rows — redirecting…`);
-      setTimeout(() => router.push('/aged-stock'), 600);
+
+      if (failed === 0) {
+        notify(`Loaded ${totalRows.toLocaleString()} rows across ${total} client${total === 1 ? '' : 's'} — redirecting…`);
+      } else {
+        notify(`Loaded ${totalRows.toLocaleString()} rows. ${failed} client${failed === 1 ? '' : 's'} failed.`, failed === total ? 'error' : 'success');
+      }
+      if (failed < total) {
+        setTimeout(() => router.push('/aged-stock'), 600);
+      }
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Commit failed', 'error');
     } finally {
       setCommitting(false);
+      setCommitProgress('');
     }
   }
 
@@ -170,19 +223,60 @@ export default function LoadAgedStockPage() {
           Pick a client, drop in the aged stock xlsx, select the aging period(s) to load.
         </p>
 
-        {/* Step 1 — Client */}
+        {/* Step 1 — Client(s) */}
         <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Client</label>
-          <select
-            value={clientId}
-            onChange={e => { setClientId(e.target.value); resetForNewFile(); }}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent"
-          >
-            <option value="">— Select a client —</option>
-            {clients.map(c => (
-              <option key={c.id} value={c.id}>{clientLabel(c)}</option>
-            ))}
-          </select>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Client(s)</label>
+          <div ref={clientDropdownRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setClientDropdownOpen(o => !o)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-left bg-white flex items-center justify-between gap-1 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent"
+            >
+              <span className="truncate">
+                {selectedClientIds.length === 0
+                  ? '— Select client(s) —'
+                  : selectedClientIds.length === 1
+                    ? clientLabel(clients.find(c => c.id === selectedClientIds[0])!)
+                    : `${selectedClientIds.length} clients selected`}
+              </span>
+              <svg className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${clientDropdownOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/></svg>
+            </button>
+            {clientDropdownOpen && (
+              <div className="absolute z-30 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto">
+                {selectedClientIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedClientIds([]); resetForNewFile(); }}
+                    className="w-full px-3 py-1.5 text-xs text-[var(--color-primary)] hover:bg-gray-50 text-left border-b border-gray-100"
+                  >
+                    Clear selection
+                  </button>
+                )}
+                {clients.map(c => {
+                  const checked = selectedClientIds.includes(c.id);
+                  return (
+                    <label
+                      key={c.id}
+                      className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setSelectedClientIds(prev =>
+                            checked ? prev.filter(id => id !== c.id) : [...prev, c.id]
+                          );
+                          resetForNewFile();
+                        }}
+                        className="accent-[var(--color-primary)]"
+                      />
+                      <span className="truncate">{clientLabel(c)}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
           {clients.length === 0 && (
             <p className="text-xs text-gray-500 mt-2">
               You have no assigned clients. Ask a Super Admin to assign clients to your account.
@@ -191,7 +285,7 @@ export default function LoadAgedStockPage() {
         </div>
 
         {/* Step 2 — Drop file */}
-        {clientId && (
+        {selectedClientIds.length > 0 && (
           <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">Aged stock file</label>
             <div
@@ -277,7 +371,7 @@ export default function LoadAgedStockPage() {
                 disabled={committing || selectedPeriods.length === 0}
                 className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {committing ? 'Loading…' : 'Load Aged Stock'}
+                {committing ? (commitProgress || 'Loading…') : `Load Aged Stock${selectedClientIds.length > 1 ? ` (${selectedClientIds.length} clients)` : ''}`}
               </button>
             </div>
 

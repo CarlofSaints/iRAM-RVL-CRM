@@ -66,7 +66,7 @@ export default function AgedStockDashboardPage() {
   const [vendorCodeQuery, setVendorCodeQuery] = useState('');
   const [loadFilter, setLoadFilter] = useState(''); // "" = all loads
 
-  // Pick slip generation
+  // Pick slip generation (single client + load)
   const [psModal, setPsModal] = useState(false);
   const [psGenerating, setPsGenerating] = useState(false);
   const [psResult, setPsResult] = useState<{
@@ -74,6 +74,15 @@ export default function AgedStockDashboardPage() {
     uploadErrors?: string[]; folderErrors?: string[];
   } | null>(null);
   const [psDuplicate, setPsDuplicate] = useState(false);
+
+  // Pick slip generation — all clients
+  const [psAllModal, setPsAllModal] = useState(false);
+  const [psAllGenerating, setPsAllGenerating] = useState(false);
+  const [psAllProgress, setPsAllProgress] = useState('');
+  const [psAllResults, setPsAllResults] = useState<Array<{
+    clientName: string; loadFileName: string;
+    generated: number; uploaded: number; failed: number; skipped: boolean; error?: string;
+  }>>([]);
 
   const notify = (message: string, type: 'success' | 'error' = 'success') =>
     setToast({ message, type });
@@ -163,6 +172,28 @@ export default function AgedStockDashboardPage() {
     (session?.permissions ?? []).includes('load_aged_stock') &&
     clientFilter.length === 1 && !!loadFilter;
 
+  // For "Generate All": gather the most recent load per visible client
+  const allClientLoadPairs = useMemo(() => {
+    const visibleClientIds = clientFilter.length > 0
+      ? clientFilter
+      : clientOptions.map(c => c.id);
+    const pairs: Array<{ clientId: string; clientName: string; loadId: string; loadFileName: string }> = [];
+    for (const cId of visibleClientIds) {
+      const loads = loadsByClient[cId];
+      if (!loads || loads.length === 0) continue;
+      // Most recent load first (sorted by loadedAt desc)
+      const sorted = [...loads].sort((a, b) => b.loadedAt.localeCompare(a.loadedAt));
+      const latest = sorted[0];
+      const cName = clientOptions.find(c => c.id === cId)?.name ?? cId;
+      pairs.push({ clientId: cId, clientName: cName, loadId: latest.id, loadFileName: latest.fileName });
+    }
+    return pairs;
+  }, [clientFilter, clientOptions, loadsByClient]);
+
+  const canGenerateAllPickSlips =
+    (session?.permissions ?? []).includes('load_aged_stock') &&
+    allClientLoadPairs.length > 0;
+
   async function handleGeneratePickSlips(force = false) {
     if (clientFilter.length !== 1 || !loadFilter) return;
     setPsGenerating(true);
@@ -199,6 +230,48 @@ export default function AgedStockDashboardPage() {
     } finally {
       setPsGenerating(false);
     }
+  }
+
+  async function handleGenerateAllPickSlips() {
+    if (allClientLoadPairs.length === 0) return;
+    setPsAllGenerating(true);
+    setPsAllResults([]);
+    setPsAllProgress('');
+
+    const results: typeof psAllResults = [];
+    for (let i = 0; i < allClientLoadPairs.length; i++) {
+      const { clientId, clientName, loadId, loadFileName } = allClientLoadPairs[i];
+      setPsAllProgress(`${clientName} (${i + 1}/${allClientLoadPairs.length})`);
+      try {
+        const res = await authFetch(`/api/aged-stock/loads/${loadId}/pick-slips`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientId, force: false }),
+        });
+        const data = await res.json();
+        if (res.status === 409 && data.code === 'ALREADY_GENERATED') {
+          results.push({ clientName, loadFileName, generated: 0, uploaded: 0, failed: 0, skipped: true });
+          continue;
+        }
+        if (!res.ok) {
+          results.push({ clientName, loadFileName, generated: 0, uploaded: 0, failed: 0, skipped: false, error: data.error ?? 'Failed' });
+          continue;
+        }
+        results.push({
+          clientName, loadFileName,
+          generated: data.generated ?? 0,
+          uploaded: data.uploaded ?? 0,
+          failed: data.failed ?? 0,
+          skipped: false,
+        });
+      } catch {
+        results.push({ clientName, loadFileName, generated: 0, uploaded: 0, failed: 0, skipped: false, error: 'Network error' });
+      }
+    }
+
+    setPsAllResults(results);
+    setPsAllGenerating(false);
+    setPsAllProgress('');
   }
 
   function exportToExcel() {
@@ -262,6 +335,16 @@ export default function AgedStockDashboardPage() {
               className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Generate Pick Slips
+            </button>
+          )}
+          {(session.permissions ?? []).includes('load_aged_stock') && (
+            <button
+              onClick={() => { setPsAllResults([]); setPsAllModal(true); }}
+              disabled={!canGenerateAllPickSlips}
+              title={!canGenerateAllPickSlips ? 'No clients with loads available' : `Generate for ${allClientLoadPairs.length} client(s)`}
+              className="px-4 py-2 border border-[var(--color-primary)] text-[var(--color-primary)] rounded-md text-sm font-medium hover:bg-green-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Generate All Pick Slips
             </button>
           )}
           <button
@@ -446,6 +529,99 @@ export default function AgedStockDashboardPage() {
           </div>
         )}
       </div>
+
+      {/* Generate All Pick Slips Modal */}
+      {psAllModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-4">Generate All Pick Slips</h2>
+
+            {/* Generating spinner */}
+            {psAllGenerating && (
+              <div className="flex flex-col items-center py-8 gap-3">
+                <div className="h-8 w-8 border-4 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin" />
+                <p className="text-sm text-gray-600">{psAllProgress || 'Generating…'}</p>
+              </div>
+            )}
+
+            {/* Results */}
+            {!psAllGenerating && psAllResults.length > 0 && (
+              <div className="mb-4">
+                <div className="bg-gray-50 rounded-lg p-4 mb-4 max-h-60 overflow-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-gray-500 border-b border-gray-200">
+                        <th className="pb-1 pr-2">Client</th>
+                        <th className="pb-1 pr-2">Generated</th>
+                        <th className="pb-1 pr-2">Uploaded</th>
+                        <th className="pb-1">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {psAllResults.map((r, i) => (
+                        <tr key={i} className="border-t border-gray-100">
+                          <td className="py-1 pr-2 font-medium">{r.clientName}</td>
+                          <td className="py-1 pr-2">{r.generated}</td>
+                          <td className="py-1 pr-2">{r.uploaded}</td>
+                          <td className="py-1">
+                            {r.skipped
+                              ? <span className="text-amber-600">Already exists</span>
+                              : r.error
+                                ? <span className="text-red-600">{r.error}</span>
+                                : <span className="text-green-600">Done</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="text-xs text-gray-500 mb-4">
+                  Total: {psAllResults.reduce((s, r) => s + r.generated, 0)} pick slips generated,{' '}
+                  {psAllResults.reduce((s, r) => s + r.uploaded, 0)} uploaded
+                  {psAllResults.some(r => r.skipped) && `, ${psAllResults.filter(r => r.skipped).length} skipped (already generated)`}
+                </div>
+                <button
+                  onClick={() => setPsAllModal(false)}
+                  className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90"
+                >
+                  Close
+                </button>
+              </div>
+            )}
+
+            {/* Confirmation (initial state) */}
+            {!psAllGenerating && psAllResults.length === 0 && (
+              <>
+                <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-700 mb-4">
+                  <p className="mb-2">This will generate pick slips for the <strong>most recent load</strong> of each client:</p>
+                  <ul className="list-disc list-inside text-xs space-y-0.5 max-h-40 overflow-auto">
+                    {allClientLoadPairs.map(p => (
+                      <li key={p.clientId}>{p.clientName} — {p.loadFileName}</li>
+                    ))}
+                  </ul>
+                </div>
+                <p className="text-xs text-gray-500 mb-4">
+                  Loads that already have pick slips will be skipped. One PDF per store per vendor number, uploaded to SharePoint.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleGenerateAllPickSlips}
+                    className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90"
+                  >
+                    Generate All ({allClientLoadPairs.length} client{allClientLoadPairs.length === 1 ? '' : 's'})
+                  </button>
+                  <button
+                    onClick={() => setPsAllModal(false)}
+                    className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Pick Slips Modal */}
       {psModal && (

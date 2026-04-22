@@ -3,7 +3,7 @@ import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { clientScopeFor } from '@/lib/clientScope';
 import { getLoad } from '@/lib/agedStockData';
-import { getClient, listSpLinks } from '@/lib/spLinkData';
+import { getClient, listSpLinks, loadLinkProducts } from '@/lib/spLinkData';
 import { loadControl } from '@/lib/controlData';
 import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
 import { generatePickSlipPdf } from '@/lib/pickSlipPdf';
@@ -16,6 +16,11 @@ import {
 } from '@/lib/pickSlipData';
 
 export const dynamic = 'force-dynamic';
+
+/** Strip non-alphanumeric, leading zeros, lowercase — matches commit route logic. */
+function normArticle(s: string): string {
+  return s.replace(/[^A-Za-z0-9]/g, '').replace(/^0+/, '').toLowerCase();
+}
 
 interface StoreRecord {
   id: string;
@@ -104,16 +109,36 @@ export async function POST(
     }
   }
 
+  // Build article → vendorNumber lookup from SP link products so we can
+  // split rows by vendor number (a client like Genkem may have 2+ vendor numbers)
+  const articleToVendor = new Map<string, string>();
+  for (const link of spLinks) {
+    const products = await loadLinkProducts(clientId, link.id);
+    for (const p of products) {
+      const k = normArticle(p.articleNumber);
+      if (!k) continue;
+      if (!articleToVendor.has(k)) {
+        articleToVendor.set(k, link.vendorNumber);
+      }
+    }
+  }
+
   // Load store control data → siteCode → store record (for warehouse)
   const stores = await loadControl<StoreRecord>('stores');
   const storeByCode = new Map(stores.map(s => [s.siteCode.trim().toLowerCase(), s]));
 
-  // Group load rows by siteCode
-  const rowsBySite = new Map<string, typeof load.rows>();
+  // Default vendor = first with a pick slip folder configured
+  const defaultVendor = linksWithPickSlipFolder[0].vendorNumber;
+
+  // Group load rows by siteCode + vendorNumber
+  const rowsBySiteVendor = new Map<string, { siteCode: string; vendorNumber: string; rows: typeof load.rows }>();
   for (const row of load.rows) {
-    const key = row.siteCode;
-    if (!rowsBySite.has(key)) rowsBySite.set(key, []);
-    rowsBySite.get(key)!.push(row);
+    const vendorNum = articleToVendor.get(normArticle(row.articleCode)) ?? defaultVendor;
+    const key = `${row.siteCode}|${vendorNum}`;
+    if (!rowsBySiteVendor.has(key)) {
+      rowsBySiteVendor.set(key, { siteCode: row.siteCode, vendorNumber: vendorNum, rows: [] });
+    }
+    rowsBySiteVendor.get(key)!.rows.push(row);
   }
 
   // Resolve SP folders (cache driveId+folderId per unique URL)
@@ -164,24 +189,13 @@ export async function POST(
   // Build sequence counters per vendor — start from previous runs if force-overwriting
   const existingRuns: PickSlipRunIndex[] = existingRun ? [existingRun] : [];
 
-  // Generate pick slips: one per store
+  // Generate pick slips: one per store per vendor number
   const slips: PickSlipRecord[] = [];
   const uploadErrors: string[] = [];
-  const seqCounters = new Map<string, number>(); // key: vendorNumber → next sequence
+  const seqCounters = new Map<string, number>(); // key: vendorNumber-dateStr → next sequence
 
-  // Determine which vendor number to use for each store group.
-  // The client may have multiple vendor numbers — use the first one that has
-  // a pick slip folder configured.
-  const clientVendors = client.vendorNumbers ?? [];
-  const defaultVendor = linksWithPickSlipFolder[0].vendorNumber;
-
-  for (const [siteCode, siteRows] of rowsBySite) {
-    // Find the vendor number for this site group — use the one from the load's
-    // client record that has a pick slip folder URL configured
-    let vendorNumber = defaultVendor;
-    for (const v of clientVendors) {
-      if (vendorToLink.has(v)) { vendorNumber = v; break; }
-    }
+  for (const [, group] of rowsBySiteVendor) {
+    const { siteCode, vendorNumber, rows: siteRows } = group;
 
     const link = vendorToLink.get(vendorNumber);
     if (!link?.pickSlipFolderUrl) continue;
@@ -235,7 +249,7 @@ export async function POST(
         rows: pdfRows,
       });
     } catch (err) {
-      uploadErrors.push(`PDF gen failed for ${siteCode}: ${err instanceof Error ? err.message : String(err)}`);
+      uploadErrors.push(`PDF gen failed for ${siteCode} (${vendorNumber}): ${err instanceof Error ? err.message : String(err)}`);
       continue;
     }
 
@@ -256,7 +270,7 @@ export async function POST(
       spWebUrl = uploaded.webUrl;
       spFileId = uploaded.id;
     } catch (err) {
-      uploadErrors.push(`Upload failed for ${siteCode}: ${err instanceof Error ? err.message : String(err)}`);
+      uploadErrors.push(`Upload failed for ${siteCode} (${vendorNumber}): ${err instanceof Error ? err.message : String(err)}`);
     }
 
     slips.push({
