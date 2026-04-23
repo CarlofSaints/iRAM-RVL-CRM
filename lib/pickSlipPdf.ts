@@ -39,6 +39,8 @@ export interface PickSlipPdfParams {
   warehouse: string;
   loadDate: string; // YYYY-MM-DD
   rows: PickSlipPdfRow[];
+  /** When true, renders a "MANUAL CAPTURE" label and blanks value column */
+  manual?: boolean;
 }
 
 /**
@@ -47,7 +49,7 @@ export interface PickSlipPdfParams {
 export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Buffer> {
   const {
     pickSlipId, clientName, vendorNumber, siteName, siteCode,
-    warehouse, loadDate, rows,
+    warehouse, loadDate, rows, manual,
   } = params;
 
   // Page setup
@@ -221,6 +223,17 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
           y += bcH + 10;
         } catch { /* skip if image fails */ }
       }
+
+      // ── "MANUAL CAPTURE" label for manual pick slips ──
+      if (manual) {
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#CC0000');
+        doc.text('MANUAL CAPTURE', marginL, y, {
+          width: usableW,
+          align: 'center',
+        });
+        doc.fillColor('#000000');
+        y += 18;
+      }
     } else {
       // Continuation pages — lighter header
       doc.font('Helvetica').fontSize(9);
@@ -270,8 +283,8 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
         r.vendorProductCode,
         r.articleCode,
         productText,
-        r.val.toString(),
-        r.qty.toString(),
+        manual ? '' : r.val.toString(),
+        manual ? '' : r.qty.toString(),
         '', '', '', '', '', // Uplifted, Display, Store Refuse, Not Found, Damage — empty
       ];
 
@@ -298,7 +311,9 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
       doc.rect(tableX, y, totalLabelW, 18).stroke();
       doc.text('Total', tableX + totalLabelW - 40, y + 4, { width: 36, align: 'right' });
       doc.rect(tableX + totalLabelW, y, cols[5], 18).stroke();
-      doc.text(totalQty.toString(), tableX + totalLabelW + 2, y + 4, { width: cols[5] - 4, align: 'right' });
+      if (!manual) {
+        doc.text(totalQty.toString(), tableX + totalLabelW + 2, y + 4, { width: cols[5] - 4, align: 'right' });
+      }
       // Draw remaining empty cells on total row
       let tx = tableX + totalLabelW + cols[5];
       for (let c = 6; c < cols.length; c++) {

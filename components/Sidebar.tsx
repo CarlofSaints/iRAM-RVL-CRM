@@ -66,6 +66,7 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
   const agedStockLinks: Array<{ href: string; label: string; perm: string }> = [
     { href: '/aged-stock', label: 'Dashboard', perm: 'view_aged_stock' },
     { href: '/aged-stock/load', label: 'Load Aged Stock', perm: 'load_aged_stock' },
+    { href: '/aged-stock/manual-capture', label: 'Manual Capture', perm: 'manage_pick_slips' },
     { href: '/aged-stock/picking-slips', label: 'Picking Slips', perm: 'view_aged_stock' },
     { href: '/aged-stock/stickers', label: 'Sticker Labels', perm: 'view_aged_stock' },
     { href: '/aged-stock/scan', label: 'Scan to Receive/Release', perm: 'scan_stock' },

@@ -26,6 +26,7 @@ interface DashboardRow {
   val: number;
   date: string;
   category: 'aged' | 'warehouse' | 'transit' | 'display' | 'store-refused' | 'not-found' | 'damaged' | 'collected';
+  manual?: boolean;
 }
 
 interface DashboardStats {
@@ -348,6 +349,9 @@ export default function DashboardPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
+  // Type filter (Manual / Loaded / All)
+  const [typeFilter, setTypeFilter] = useState<'' | 'manual' | 'loaded'>('');
+
   // Cross-filter selections
   const [selectedWarehouse, setSelectedWarehouse] = useState<string | null>(null);
   const [selectedClient, setSelectedClient] = useState<string | null>(null);
@@ -490,10 +494,14 @@ export default function DashboardPage() {
         if (dateTo && d > dateTo) return false;
       }
 
+      // Type filter
+      if (typeFilter === 'manual' && !r.manual) return false;
+      if (typeFilter === 'loaded' && r.manual) return false;
+
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allRows, clientFilter, repFilter, storeFilter, pickSlipFilter, warehouseFilter, productFilter, dateFrom, dateTo]);
+  }, [allRows, clientFilter, repFilter, storeFilter, pickSlipFilter, warehouseFilter, productFilter, dateFrom, dateTo, typeFilter]);
 
   // 2. cardTotals = baseFiltered filtered by BOTH cross-selects
   const cardTotals = useMemo(() => {
@@ -817,7 +825,7 @@ export default function DashboardPage() {
   // ── Helpers ─────────────────────────────────────────────────────────────
 
   const hasAnyFilter = clientFilter.size > 0 || repFilter.size > 0 || storeFilter.size > 0 ||
-    pickSlipFilter.size > 0 || warehouseFilter.size > 0 || productFilter.size > 0 || dateFrom || dateTo;
+    pickSlipFilter.size > 0 || warehouseFilter.size > 0 || productFilter.size > 0 || dateFrom || dateTo || typeFilter;
 
   function clearAllFilters() {
     setClientFilter(new Set());
@@ -828,6 +836,7 @@ export default function DashboardPage() {
     setProductFilter(new Set());
     setDateFrom('');
     setDateTo('');
+    setTypeFilter('');
     setSelectedWarehouse(null);
     setSelectedClient(null);
   }
@@ -1019,6 +1028,19 @@ export default function DashboardPage() {
                       onChange={e => setDateTo(e.target.value)}
                       className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-[var(--color-primary)] focus:border-[var(--color-primary)]"
                     />
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-xs text-gray-500 font-medium">Type</label>
+                    <select
+                      value={typeFilter}
+                      onChange={e => setTypeFilter(e.target.value as '' | 'manual' | 'loaded')}
+                      className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-[var(--color-primary)] focus:border-[var(--color-primary)]"
+                    >
+                      <option value="">All</option>
+                      <option value="manual">Manual</option>
+                      <option value="loaded">Loaded</option>
+                    </select>
                   </div>
 
                   {(hasAnyFilter || selectedWarehouse || selectedClient) && (

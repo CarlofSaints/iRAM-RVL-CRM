@@ -40,6 +40,8 @@ interface SlipDto {
   spWebUrlEdited?: string;
   spDriveId?: string;
   spFileId?: string;
+  manual?: boolean;
+  channel?: string;
 }
 
 interface RepDto {
@@ -116,6 +118,7 @@ export default function PickingSlipsPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [vendorFilter, setVendorFilter] = useState('');
   const [channelFilter, setChannelFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState<'' | 'manual' | 'loaded'>('');
 
   // Sort
   const [sortCol, setSortCol] = useState<SortCol>('generatedAt');
@@ -229,9 +232,11 @@ export default function PickingSlipsPage() {
       }
       if (rq && !s.id.toLowerCase().includes(rq)) return false;
       if (statusFilter && s.status !== statusFilter) return false;
+      if (typeFilter === 'manual' && !s.manual) return false;
+      if (typeFilter === 'loaded' && s.manual) return false;
       return true;
     });
-  }, [slips, clientFilter, vendorFilter, channelFilter, channelBySiteCode, storeQuery, refQuery, statusFilter]);
+  }, [slips, clientFilter, vendorFilter, channelFilter, channelBySiteCode, storeQuery, refQuery, statusFilter, typeFilter]);
 
   const sorted = useMemo(() => {
     const list = [...filtered];
@@ -424,7 +429,7 @@ export default function PickingSlipsPage() {
       </div>
 
       {/* Filters */}
-      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-3">
         <div>
           <label className="block text-xs text-gray-600 mb-1">Client</label>
           <select
@@ -495,6 +500,18 @@ export default function PickingSlipsPage() {
             {(Object.keys(STATUS_LABELS) as SlipStatus[]).map(k => (
               <option key={k} value={k}>{STATUS_LABELS[k]}</option>
             ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-600 mb-1">Type</label>
+          <select
+            value={typeFilter}
+            onChange={e => setTypeFilter(e.target.value as '' | 'manual' | 'loaded')}
+            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+          >
+            <option value="">All types</option>
+            <option value="manual">Manual</option>
+            <option value="loaded">Loaded</option>
           </select>
         </div>
       </div>
@@ -594,6 +611,11 @@ export default function PickingSlipsPage() {
                     <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[s.status] || 'bg-gray-100 text-gray-700'}`}>
                       {STATUS_LABELS[s.status] || s.status}
                     </span>
+                    {s.manual && (
+                      <span className="inline-block ml-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
+                        Manual
+                      </span>
+                    )}
                   </td>
                   {canManage && (
                     <td className="px-3 py-1.5 whitespace-nowrap">

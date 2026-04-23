@@ -28,6 +28,7 @@ export interface DashboardRow {
   val: number;
   date: string;
   category: 'aged' | 'warehouse' | 'transit' | 'display' | 'store-refused' | 'not-found' | 'damaged' | 'collected';
+  manual: boolean;
 }
 
 /**
@@ -118,6 +119,7 @@ export async function GET(req: NextRequest) {
           val: r.val,
           date: meta.loadedAt,
           category: 'aged',
+          manual: false,
         });
       }
     }
@@ -157,6 +159,7 @@ export async function GET(req: NextRequest) {
           val: pr.val,
           date: slip.generatedAt,
           category,
+          manual: !!slip.manual,
         });
       }
 
@@ -178,6 +181,7 @@ export async function GET(req: NextRequest) {
             repName: slip.bookedRepName || '',
             pickSlipRef: slip.id,
             date: slip.generatedAt,
+            manual: !!slip.manual,
           };
           if (ur.display > 0) rows.push({ ...base, qty: ur.display, val: ur.display * unitCost, category: 'display' });
           if (ur.storeRefused > 0) rows.push({ ...base, qty: ur.storeRefused, val: ur.storeRefused * unitCost, category: 'store-refused' });

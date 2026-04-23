@@ -41,6 +41,7 @@ interface SlipDto {
   unreturnedStock?: UnreturnedRow[];
   unreturnedCapturedAt?: string;
   unreturnedSkipped?: boolean;
+  manual?: boolean;
 }
 
 interface UnreturnedRow {
@@ -184,6 +185,11 @@ export default function ReceiptCapturePage() {
   const [showReleaseCountModal, setShowReleaseCountModal] = useState(false);
   const [managerOverrideCode, setManagerOverrideCode] = useState('');
   const [managerOverrideRepId, setManagerOverrideRepId] = useState('');
+
+  // ── Manual stock capture state (for manual pick slips) ──
+  const [showManualCapture, setShowManualCapture] = useState(false);
+  const [manualRows, setManualRows] = useState<Array<{ articleCode: string; description: string; qty: number; val: number }>>([]);
+  const [savingManual, setSavingManual] = useState(false);
 
   // ── Unreturned stock capture state ──
   const [showUnreturnedCapture, setShowUnreturnedCapture] = useState(false);
@@ -414,19 +420,32 @@ export default function ReceiptCapturePage() {
       });
       const data = await res.json();
       if (res.ok) {
-        notify('Receipt completed — now capture unreturned stock details');
-        // Initialize unreturned rows from pick slip products
-        const productRows: UnreturnedRow[] = (slip.rows ?? []).map(r => ({
-          articleCode: r.articleCode,
-          description: r.description,
-          pickSlipQty: r.qty,
-          display: 0,
-          storeRefused: 0,
-          notFound: 0,
-          damaged: 0,
-        }));
-        setUnreturnedRows(productRows);
-        setShowUnreturnedCapture(true);
+        if (slip.manual) {
+          // Manual slips need stock qty/val capture first
+          notify('Receipt completed — now enter the actual stock quantities and values');
+          const rows = (slip.rows ?? []).map(r => ({
+            articleCode: r.articleCode,
+            description: r.description,
+            qty: r.qty,
+            val: r.val,
+          }));
+          setManualRows(rows);
+          setShowManualCapture(true);
+        } else {
+          notify('Receipt completed — now capture unreturned stock details');
+          // Initialize unreturned rows from pick slip products
+          const productRows: UnreturnedRow[] = (slip.rows ?? []).map(r => ({
+            articleCode: r.articleCode,
+            description: r.description,
+            pickSlipQty: r.qty,
+            display: 0,
+            storeRefused: 0,
+            notFound: 0,
+            damaged: 0,
+          }));
+          setUnreturnedRows(productRows);
+          setShowUnreturnedCapture(true);
+        }
       } else {
         notify(data.error || 'Failed to complete', 'error');
       }
@@ -483,6 +502,56 @@ export default function ReceiptCapturePage() {
     } finally {
       setSavingUnreturned(false);
     }
+  }
+
+  // ── Save manual stock capture → then flow into unreturned ──
+  async function handleSaveManualCapture() {
+    if (!slip) return;
+    setSavingManual(true);
+    try {
+      const res = await authFetch('/api/receipts/manual-capture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slipId: slip.id,
+          clientId: slip.clientId,
+          loadId: slip.loadId,
+          rows: manualRows,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        notify('Stock quantities saved — now capture unreturned stock details');
+        // Update local slip with the new rows
+        const updatedSlip = { ...slip, rows: manualRows, totalQty: manualRows.reduce((s, r) => s + r.qty, 0), totalVal: manualRows.reduce((s, r) => s + r.val, 0) };
+        setSlip(updatedSlip);
+        setShowManualCapture(false);
+        // Flow into unreturned stock capture
+        const productRows: UnreturnedRow[] = manualRows
+          .filter(r => r.qty > 0)
+          .map(r => ({
+            articleCode: r.articleCode,
+            description: r.description,
+            pickSlipQty: r.qty,
+            display: 0,
+            storeRefused: 0,
+            notFound: 0,
+            damaged: 0,
+          }));
+        setUnreturnedRows(productRows);
+        setShowUnreturnedCapture(true);
+      } else {
+        notify(data.error || 'Save failed', 'error');
+      }
+    } catch {
+      notify('Network error saving manual stock capture', 'error');
+    } finally {
+      setSavingManual(false);
+    }
+  }
+
+  function updateManualRow(idx: number, field: 'qty' | 'val', value: number) {
+    setManualRows(prev => prev.map((r, i) => i === idx ? { ...r, [field]: Math.max(0, value) } : r));
   }
 
   async function handleSkipUnreturned() {
@@ -753,7 +822,7 @@ export default function ReceiptCapturePage() {
       {/* ════════════════════════════════════════════════════════════════════ */}
       {/* RECEIPT MODE                                                       */}
       {/* ════════════════════════════════════════════════════════════════════ */}
-      {mode === 'receipt' && !showUnreturnedCapture && (
+      {mode === 'receipt' && !showUnreturnedCapture && !showManualCapture && (
         <>
           {/* Receipt details form */}
           <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
@@ -934,6 +1003,92 @@ export default function ReceiptCapturePage() {
             >
               {completing && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
               Complete Receipt
+            </button>
+            <button
+              onClick={() => router.push('/aged-stock/receipts')}
+              className="px-5 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* MANUAL STOCK CAPTURE (shown after receipt for manual pick slips)   */}
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {showManualCapture && (
+        <>
+          <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-3 mb-4 flex items-start gap-3">
+            <svg className="w-5 h-5 text-orange-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <p className="text-sm font-medium text-orange-800">Manual Stock Capture</p>
+              <p className="text-xs text-orange-600 mt-0.5">
+                This is a manual pick slip. Enter the actual quantity and value for each product that was collected from the store.
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
+            <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Product Quantities &amp; Values</h2>
+
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs font-semibold text-gray-600 uppercase tracking-wide border-b border-gray-200">
+                    <th className="pb-2 pr-3">Product</th>
+                    <th className="pb-2 pr-3">Article Code</th>
+                    <th className="pb-2 pr-3 text-center">Qty</th>
+                    <th className="pb-2 text-center">Value (R)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {manualRows.map((row, idx) => (
+                    <tr key={idx} className="border-t border-gray-100">
+                      <td className="py-2 pr-3 font-medium max-w-[250px] truncate" title={row.description}>{row.description}</td>
+                      <td className="py-2 pr-3 font-mono text-gray-600 text-xs">{row.articleCode}</td>
+                      <td className="py-2 pr-3">
+                        <input
+                          type="number"
+                          min={0}
+                          value={row.qty || ''}
+                          onChange={e => updateManualRow(idx, 'qty', parseInt(e.target.value) || 0)}
+                          className="w-20 mx-auto block px-1.5 py-1 border border-gray-300 rounded text-sm text-center"
+                        />
+                      </td>
+                      <td className="py-2">
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={row.val || ''}
+                          onChange={e => updateManualRow(idx, 'val', parseFloat(e.target.value) || 0)}
+                          className="w-24 mx-auto block px-1.5 py-1 border border-gray-300 rounded text-sm text-center"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-gray-100 text-sm text-gray-600">
+              Total: <strong>{manualRows.reduce((s, r) => s + r.qty, 0).toLocaleString()}</strong> units
+              &nbsp;·&nbsp;
+              <strong>R {manualRows.reduce((s, r) => s + r.val, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              onClick={handleSaveManualCapture}
+              disabled={savingManual || manualRows.every(r => r.qty === 0)}
+              className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {savingManual && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+              Save &amp; Continue
             </button>
             <button
               onClick={() => router.push('/aged-stock/receipts')}

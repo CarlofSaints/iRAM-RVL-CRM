@@ -67,6 +67,10 @@ export interface PickSlipRecord {
   clientName: string;
   /** Line items for editing without re-reading the load */
   rows: PickSlipPdfRow[];
+  /** True if this pick slip was generated via Manual Capture */
+  manual?: boolean;
+  /** Channel (e.g. "Dis-Chem", "Clicks") — set for manual pick slips */
+  channel?: string;
   /** ISO timestamp — set after email send */
   sentAt?: string;
   /** ISO timestamp — set after edit */
@@ -160,6 +164,43 @@ async function blobWriteJson(key: string, data: unknown): Promise<void> {
   });
 }
 
+// ── Manual index helpers ─────────────────────────────────────────────────────
+
+function manualIndexKey(clientId: string): string {
+  return `pickSlips/${clientId}/_manual-index.json`;
+}
+
+/** Read the list of manual loadIds for a client. */
+export async function getManualIndex(clientId: string): Promise<string[]> {
+  if (process.env.VERCEL) {
+    return (await blobReadJson<string[]>(manualIndexKey(clientId))) ?? [];
+  }
+  try {
+    const filePath = path.join(process.cwd(), 'data', 'pickSlips', clientId, '_manual-index.json');
+    if (fs.existsSync(filePath)) {
+      return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as string[];
+    }
+  } catch { /* empty */ }
+  return [];
+}
+
+/** Append a manual loadId to the client's manual index. */
+export async function addToManualIndex(clientId: string, loadId: string): Promise<void> {
+  const ids = await getManualIndex(clientId);
+  if (!ids.includes(loadId)) {
+    ids.push(loadId);
+  }
+  if (process.env.VERCEL) {
+    await blobWriteJson(manualIndexKey(clientId), ids);
+  }
+  try {
+    const filePath = path.join(process.cwd(), 'data', 'pickSlips', clientId, '_manual-index.json');
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(ids, null, 2));
+  } catch { /* Vercel read-only FS — expected */ }
+}
+
 // ── Public helpers ───────────────────────────────────────────────────────────
 
 export async function getPickSlipRun(
@@ -219,7 +260,8 @@ export function nextSequenceFromRuns(
 
 /**
  * List all pick slip runs across the given client IDs.
- * Iterates each client's aged-stock load index → reads the run for each load.
+ * Iterates each client's aged-stock load index AND manual index →
+ * reads the run for each load.
  */
 export async function listAllPickSlipRuns(
   clientIds: string[],
@@ -227,9 +269,16 @@ export async function listAllPickSlipRuns(
 ): Promise<PickSlipRunIndex[]> {
   const runs: PickSlipRunIndex[] = [];
   for (const clientId of clientIds) {
+    // Load-based runs
     const loads = await listLoadsFn(clientId);
     for (const load of loads) {
       const run = await getPickSlipRun(clientId, load.id);
+      if (run && run.slips.length > 0) runs.push(run);
+    }
+    // Manual runs
+    const manualIds = await getManualIndex(clientId);
+    for (const manualLoadId of manualIds) {
+      const run = await getPickSlipRun(clientId, manualLoadId);
       if (run && run.slips.length > 0) runs.push(run);
     }
   }
