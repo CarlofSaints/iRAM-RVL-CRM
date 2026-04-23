@@ -53,6 +53,8 @@ export interface PickSlipRecord {
   siteCode: string;
   siteName: string;
   warehouse: string;
+  /** Canonical warehouse code resolved from control table at generation time */
+  warehouseCode?: string;
   totalQty: number;
   totalVal: number;
   rowCount: number;

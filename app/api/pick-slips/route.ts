@@ -85,6 +85,12 @@ export async function GET(req: NextRequest) {
         runDirty = true;
       }
 
+      // Backfill warehouseCode from warehouse control table
+      if (!slip.warehouseCode && slip.warehouse) {
+        slip.warehouseCode = resolveWarehouseCode(slip.warehouse);
+        runDirty = true;
+      }
+
       // Backfill rows from load data if empty
       if (!slip.rows || slip.rows.length === 0) {
         try {
@@ -131,11 +137,5 @@ export async function GET(req: NextRequest) {
   // Sort newest first
   slips.sort((a, b) => (a.generatedAt < b.generatedAt ? 1 : -1));
 
-  // Attach resolved warehouseCode so clients can compare sticker codes properly
-  const slipsWithCode = slips.map(s => ({
-    ...s,
-    warehouseCode: resolveWarehouseCode(s.warehouse || ''),
-  }));
-
-  return NextResponse.json({ slips: slipsWithCode }, { headers: { 'Cache-Control': 'no-store' } });
+  return NextResponse.json({ slips }, { headers: { 'Cache-Control': 'no-store' } });
 }

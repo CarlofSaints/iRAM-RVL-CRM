@@ -121,6 +121,16 @@ export async function POST(req: NextRequest) {
   const stores = await loadControl<StoreRecord>('stores');
   const storeById = new Map(stores.map(s => [s.id, s]));
 
+  // Warehouse resolver
+  const whList = await loadControl<{ code: string; name: string }>('warehouses');
+  const whByCode = new Map(whList.map(w => [w.code.toUpperCase().trim(), w.code.toUpperCase().trim()]));
+  const whByName = new Map(whList.map(w => [w.name.toUpperCase().trim(), w.code.toUpperCase().trim()]));
+  function toWhCode(raw: string): string {
+    const u = raw.toUpperCase().trim();
+    if (!u) return '';
+    return whByCode.get(u) ?? whByName.get(u) ?? u;
+  }
+
   // Use first vendor with pick slip folder
   const defaultLink = linksWithPickSlipFolder[0];
   const vendorNumber = defaultLink.vendorNumber;
@@ -213,6 +223,7 @@ export async function POST(req: NextRequest) {
       siteCode,
       siteName,
       warehouse,
+      warehouseCode: toWhCode(warehouse),
       totalQty: 0,
       totalVal: 0,
       rowCount: allProductRows.length,

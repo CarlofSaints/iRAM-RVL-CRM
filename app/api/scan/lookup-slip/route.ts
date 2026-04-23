@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
             siteCode: slip.siteCode,
             siteName: slip.siteName,
             warehouse: slip.warehouse,
-            warehouseCode: resolveWarehouseCode(slip.warehouse || ''),
+            warehouseCode: slip.warehouseCode || resolveWarehouseCode(slip.warehouse || ''),
             totalQty: slip.totalQty,
             totalVal: slip.totalVal,
             status: slip.status,

@@ -127,6 +127,16 @@ export async function POST(
   const stores = await loadControl<StoreRecord>('stores');
   const storeByCode = new Map(stores.map(s => [s.siteCode.trim().toLowerCase(), s]));
 
+  // Warehouse name/code resolver for canonical warehouseCode on slip
+  const whList = await loadControl<{ code: string; name: string }>('warehouses');
+  const whByCode = new Map(whList.map(w => [w.code.toUpperCase().trim(), w.code.toUpperCase().trim()]));
+  const whByName = new Map(whList.map(w => [w.name.toUpperCase().trim(), w.code.toUpperCase().trim()]));
+  function toWhCode(raw: string): string {
+    const u = raw.toUpperCase().trim();
+    if (!u) return '';
+    return whByCode.get(u) ?? whByName.get(u) ?? u;
+  }
+
   // Default vendor = first with a pick slip folder configured
   const defaultVendor = linksWithPickSlipFolder[0].vendorNumber;
 
@@ -281,6 +291,7 @@ export async function POST(
       siteCode,
       siteName,
       warehouse,
+      warehouseCode: toWhCode(warehouse),
       totalQty,
       totalVal,
       rowCount: pdfRows.length,
