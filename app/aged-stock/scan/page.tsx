@@ -15,6 +15,7 @@ interface SlipSummary {
   siteCode: string;
   siteName: string;
   warehouse: string;
+  warehouseCode: string;
   totalQty: number;
   totalVal: number;
   status: string;
@@ -184,9 +185,9 @@ export default function ScanPage() {
         setBoxes(prev => [...prev, box]);
         notify(`Barcode already linked to ${data.linkedPickSlipId}`, 'error');
       } else {
-        // Check warehouse match
+        // Check warehouse match (compare codes, not raw names)
         const stickerWh = (data.warehouseCode || '').toUpperCase().trim();
-        const slipWh = (slip.warehouse || '').toUpperCase().trim();
+        const slipWh = (slip.warehouseCode || '').toUpperCase().trim();
         const warehouseWarning = stickerWh && slipWh && stickerWh !== slipWh
           ? `Warehouse mismatch: sticker=${data.warehouseCode}, slip=${slip.warehouse}`
           : undefined;

@@ -51,6 +51,16 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // Build warehouse name→code resolver so client can compare sticker codes
+  const warehouses = await loadControl<{ code: string; name: string }>('warehouses');
+  const whCodeSet = new Set(warehouses.map(w => w.code.toUpperCase().trim()));
+  const whNameToCode = new Map(warehouses.map(w => [w.name.toUpperCase().trim(), w.code.toUpperCase().trim()]));
+  function resolveWarehouseCode(raw: string): string {
+    const upper = raw.toUpperCase().trim();
+    if (whCodeSet.has(upper)) return upper;
+    return whNameToCode.get(upper) || upper;
+  }
+
   const runs = await listAllPickSlipRuns(scopedIds, listLoads);
 
   // Search all runs for the slip
@@ -84,6 +94,7 @@ export async function GET(req: NextRequest) {
             siteCode: slip.siteCode,
             siteName: slip.siteName,
             warehouse: slip.warehouse,
+            warehouseCode: resolveWarehouseCode(slip.warehouse || ''),
             totalQty: slip.totalQty,
             totalVal: slip.totalVal,
             status: slip.status,

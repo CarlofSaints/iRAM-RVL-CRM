@@ -14,6 +14,7 @@ interface SlipDto {
   siteCode: string;
   siteName: string;
   warehouse: string;
+  warehouseCode?: string;
   totalQty: number;
   totalVal: number;
   status: string;
@@ -364,7 +365,7 @@ export default function ReceiptCapturePage() {
       }
 
       const stickerWh = (data.warehouseCode || '').toUpperCase().trim();
-      const slipWh = (slip.warehouse || '').toUpperCase().trim();
+      const slipWh = (slip.warehouseCode || slip.warehouse || '').toUpperCase().trim();
       if (stickerWh && slipWh && stickerWh !== slipWh) {
         setWarehouseMismatch({
           barcode,

@@ -49,6 +49,16 @@ export async function GET(req: NextRequest) {
   // Build client name lookup for backward compat
   const clientMap = new Map(allClients.map(c => [c.id, c]));
 
+  // Warehouse name→code resolver (slip.warehouse may be name or code)
+  const warehouses = await loadControl<{ code: string; name: string }>('warehouses');
+  const whCodeSet = new Set(warehouses.map(w => w.code.toUpperCase().trim()));
+  const whNameToCode = new Map(warehouses.map(w => [w.name.toUpperCase().trim(), w.code.toUpperCase().trim()]));
+  function resolveWarehouseCode(raw: string): string {
+    const upper = raw.toUpperCase().trim();
+    if (whCodeSet.has(upper)) return upper;
+    return whNameToCode.get(upper) || upper;
+  }
+
   const runs = await listAllPickSlipRuns(scopedIds, listLoads);
 
   // Backfill old slips missing `rows` by reading from load data.
@@ -112,5 +122,11 @@ export async function GET(req: NextRequest) {
   // Sort newest first
   slips.sort((a, b) => (a.generatedAt < b.generatedAt ? 1 : -1));
 
-  return NextResponse.json({ slips }, { headers: { 'Cache-Control': 'no-store' } });
+  // Attach resolved warehouseCode so clients can compare sticker codes properly
+  const slipsWithCode = slips.map(s => ({
+    ...s,
+    warehouseCode: resolveWarehouseCode(s.warehouse || ''),
+  }));
+
+  return NextResponse.json({ slips: slipsWithCode }, { headers: { 'Cache-Control': 'no-store' } });
 }
