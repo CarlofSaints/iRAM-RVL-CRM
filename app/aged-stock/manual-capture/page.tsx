@@ -39,6 +39,7 @@ export default function ManualCapturePage() {
   const [selectedClient, setSelectedClient] = useState('');
   const [selectedChannel, setSelectedChannel] = useState('');
   const [selectedStores, setSelectedStores] = useState<Set<string>>(new Set());
+  const [storeSearch, setStoreSearch] = useState('');
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<{ generated: number; uploaded: number } | null>(null);
 
@@ -63,23 +64,43 @@ export default function ManualCapturePage() {
   }, [session]);
 
   // Filter stores by selected channel
-  const filteredStores = useMemo(() => {
+  const channelStores = useMemo(() => {
     if (!selectedChannel) return [];
     return stores.filter(s => s.channel === selectedChannel);
   }, [stores, selectedChannel]);
 
-  // Reset stores when channel changes
+  // Further filter by search term
+  const filteredStores = useMemo(() => {
+    if (!storeSearch.trim()) return channelStores;
+    const q = storeSearch.trim().toLowerCase();
+    return channelStores.filter(s =>
+      s.name.toLowerCase().includes(q) || s.siteCode.toLowerCase().includes(q)
+    );
+  }, [channelStores, storeSearch]);
+
+  // Reset stores + search when channel changes
   useEffect(() => {
     setSelectedStores(new Set());
+    setStoreSearch('');
   }, [selectedChannel]);
 
-  const allStoresSelected = filteredStores.length > 0 && selectedStores.size === filteredStores.length;
+  const allVisibleSelected = filteredStores.length > 0 && filteredStores.every(s => selectedStores.has(s.id));
 
   function toggleSelectAll() {
-    if (allStoresSelected) {
-      setSelectedStores(new Set());
+    if (allVisibleSelected) {
+      // Deselect only the visible stores (keep any selected stores hidden by search)
+      setSelectedStores(prev => {
+        const next = new Set(prev);
+        for (const s of filteredStores) next.delete(s.id);
+        return next;
+      });
     } else {
-      setSelectedStores(new Set(filteredStores.map(s => s.id)));
+      // Add all visible stores to selection
+      setSelectedStores(prev => {
+        const next = new Set(prev);
+        for (const s of filteredStores) next.add(s.id);
+        return next;
+      });
     }
   }
 
@@ -186,29 +207,42 @@ export default function ManualCapturePage() {
           <div className="bg-white border border-gray-200 rounded-lg p-5">
             <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">
               3. Select Stores
-              {selectedChannel && filteredStores.length > 0 && (
+              {selectedChannel && channelStores.length > 0 && (
                 <span className="ml-2 text-xs font-normal text-gray-500 normal-case">
-                  {filteredStores.length} store{filteredStores.length !== 1 ? 's' : ''} in {selectedChannel}
+                  {channelStores.length} store{channelStores.length !== 1 ? 's' : ''} in {selectedChannel}
                 </span>
               )}
             </h2>
 
             {!selectedChannel ? (
               <p className="text-sm text-gray-400">Select a channel first</p>
-            ) : filteredStores.length === 0 ? (
+            ) : channelStores.length === 0 ? (
               <p className="text-sm text-gray-400">No stores found for channel &ldquo;{selectedChannel}&rdquo;</p>
             ) : (
               <>
+                <input
+                  type="text"
+                  placeholder="Search stores by name or code..."
+                  value={storeSearch}
+                  onChange={e => setStoreSearch(e.target.value)}
+                  className="w-full max-w-md px-3 py-2 mb-3 border border-gray-300 rounded-lg text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent"
+                />
+
                 <label className="flex items-center gap-2 mb-3 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={allStoresSelected}
+                    checked={allVisibleSelected}
                     onChange={toggleSelectAll}
                     className="rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
                   />
-                  <span className="text-sm font-medium text-gray-700">Select All</span>
+                  <span className="text-sm font-medium text-gray-700">
+                    Select All{storeSearch.trim() ? ` (${filteredStores.length} matching)` : ''}
+                  </span>
                 </label>
 
+                {filteredStores.length === 0 ? (
+                  <p className="text-sm text-gray-400 py-3">No stores match &ldquo;{storeSearch.trim()}&rdquo;</p>
+                ) : (
                 <div className="max-h-64 overflow-y-auto border border-gray-100 rounded-lg divide-y divide-gray-100">
                   {filteredStores.map(s => (
                     <label key={s.id} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 cursor-pointer">
@@ -226,6 +260,7 @@ export default function ManualCapturePage() {
                     </label>
                   ))}
                 </div>
+                )}
 
                 <div className="mt-2 text-xs text-gray-500">
                   {selectedStores.size} store{selectedStores.size !== 1 ? 's' : ''} selected
