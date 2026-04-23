@@ -15,6 +15,18 @@ import type { PickSlipPdfRow } from './pickSlipPdf';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+/** Per-product unreturned stock breakdown, captured after receipt */
+export interface UnreturnedStockRow {
+  articleCode: string;
+  description: string;
+  pickSlipQty: number;       // original qty from pick slip (read-only reference)
+  display: number;           // qty left on display at store
+  storeRefused: number;      // qty store refused to return
+  notFound: number;          // qty not found at store
+  damaged: number;           // qty damaged
+  // collected = pickSlipQty - (display + storeRefused + notFound + damaged)
+}
+
 export interface ReceiptBox {
   id: string;
   stickerBarcode: string;
@@ -94,6 +106,15 @@ export interface PickSlipRecord {
   releasedAt?: string;
   releasedBy?: string;
   releasedByName?: string;
+  /** Unreturned stock capture — populated after receipt */
+  unreturnedStock?: UnreturnedStockRow[];
+  unreturnedCapturedAt?: string;
+  unreturnedCapturedBy?: string;
+  unreturnedCapturedByName?: string;
+  unreturnedSkipped?: boolean;
+  unreturnedSkipReason?: string;
+  unreturnedSkipRepId?: string;
+  unreturnedSkipRepName?: string;
 }
 
 export interface PickSlipRunIndex {

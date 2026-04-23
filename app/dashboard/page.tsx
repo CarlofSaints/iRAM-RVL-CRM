@@ -25,7 +25,7 @@ interface DashboardRow {
   qty: number;
   val: number;
   date: string;
-  category: 'aged' | 'warehouse' | 'transit';
+  category: 'aged' | 'warehouse' | 'transit' | 'display' | 'store-refused' | 'not-found' | 'damaged' | 'collected';
 }
 
 interface DashboardStats {
@@ -134,6 +134,161 @@ function MultiFilter({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Summary Grid (reusable for unreturned stock grids) ──────────────────────
+
+interface SummaryCol {
+  key: string;
+  label: string;
+  align?: 'left' | 'right';
+  format?: 'number' | 'rand';
+}
+
+function SummaryGrid({
+  title,
+  columns,
+  rows,
+  exportFileName,
+}: {
+  title: string;
+  columns: SummaryCol[];
+  rows: Array<Record<string, string | number>>;
+  exportFileName: string;
+}) {
+  const [sortKey, setSortKey] = useState<string>(columns[0]?.key ?? '');
+  const [sortAsc, setSortAsc] = useState(true);
+  const [widths, setWidths] = useState<Record<number, number>>({});
+  const resizing = useRef<{ idx: number; startX: number; startW: number } | null>(null);
+
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      if (!resizing.current) return;
+      const diff = e.clientX - resizing.current.startX;
+      setWidths(prev => ({ ...prev, [resizing.current!.idx]: Math.max(60, resizing.current!.startW + diff) }));
+    }
+    function onUp() { resizing.current = null; document.body.style.cursor = ''; document.body.style.userSelect = ''; }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  }, []);
+
+  function toggleSort(key: string) {
+    if (sortKey === key) setSortAsc(a => !a);
+    else { setSortKey(key); setSortAsc(true); }
+  }
+
+  const sorted = useMemo(() => {
+    const arr = [...rows];
+    arr.sort((a, b) => {
+      const va = a[sortKey] ?? '';
+      const vb = b[sortKey] ?? '';
+      if (typeof va === 'number' && typeof vb === 'number') return sortAsc ? va - vb : vb - va;
+      return sortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+    });
+    return arr;
+  }, [rows, sortKey, sortAsc]);
+
+  const totals = useMemo(() => {
+    const t: Record<string, number> = {};
+    for (const col of columns) {
+      if (col.format === 'number' || col.format === 'rand') {
+        t[col.key] = rows.reduce((sum, r) => sum + (Number(r[col.key]) || 0), 0);
+      }
+    }
+    return t;
+  }, [rows, columns]);
+
+  function doExport() {
+    if (sorted.length === 0) return;
+    const xlRows = sorted.map(r => {
+      const out: Record<string, string | number> = {};
+      for (const c of columns) out[c.label] = r[c.key] ?? '';
+      return out;
+    });
+    const totRow: Record<string, string | number> = {};
+    for (const c of columns) totRow[c.label] = totals[c.key] != null ? totals[c.key] : (c === columns[0] ? 'TOTAL' : '');
+    xlRows.push(totRow);
+    const ws = XLSX.utils.json_to_sheet(xlRows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Summary');
+    XLSX.writeFile(wb, exportFileName);
+  }
+
+  function startRes(idx: number, e: React.MouseEvent) {
+    e.preventDefault();
+    const th = (e.target as HTMLElement).closest('th');
+    if (!th) return;
+    resizing.current = { idx, startX: e.clientX, startW: th.getBoundingClientRect().width };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">{title}</h2>
+        <button
+          onClick={doExport}
+          disabled={sorted.length === 0}
+          className="px-3 py-1.5 text-xs font-medium border border-gray-200 hover:bg-gray-50 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          Export
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm" style={Object.keys(widths).length > 0 ? { tableLayout: 'fixed', minWidth: columns.length * 100 } : undefined}>
+          <thead>
+            <tr className="bg-gray-50 text-left">
+              {columns.map((col, ci) => (
+                <th key={col.key}
+                  style={widths[ci] ? { width: widths[ci] } : undefined}
+                  className={`px-3 py-2 font-semibold text-gray-600 text-xs uppercase relative cursor-pointer select-none hover:bg-gray-100 whitespace-normal ${col.align === 'right' ? 'text-right' : ''}`}
+                  onClick={() => toggleSort(col.key)}
+                >
+                  {col.label}
+                  {sortKey === col.key
+                    ? <span className="text-[var(--color-primary)] ml-1">{sortAsc ? '▲' : '▼'}</span>
+                    : <span className="text-gray-300 ml-1">&#8597;</span>}
+                  <div onMouseDown={e => startRes(ci, e)} className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-[var(--color-primary)]/30 z-10" />
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((r, ri) => (
+              <tr key={ri} className="border-t border-gray-100 hover:bg-gray-50">
+                {columns.map(col => (
+                  <td key={col.key} className={`px-3 py-2 ${col.align === 'right' ? 'text-right' : ''} ${(col.format === 'number' || col.format === 'rand') && (Number(r[col.key]) || 0) > 0 ? 'font-medium' : 'text-gray-400'}`}>
+                    {col.format === 'rand' ? fmtRand(Number(r[col.key]) || 0) : col.format === 'number' ? fmtNum(Number(r[col.key]) || 0) : r[col.key]}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {sorted.length === 0 && (
+              <tr><td colSpan={columns.length} className="px-3 py-6 text-center text-gray-400">No data</td></tr>
+            )}
+          </tbody>
+          {sorted.length > 0 && (
+            <tfoot>
+              <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold">
+                {columns.map((col, ci) => (
+                  <td key={col.key} className={`px-3 py-2 ${col.align === 'right' ? 'text-right' : ''}`}>
+                    {totals[col.key] != null
+                      ? (col.format === 'rand' ? fmtRand(totals[col.key]) : fmtNum(totals[col.key]))
+                      : ci === 0 ? 'Total' : ''}
+                  </td>
+                ))}
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
     </div>
   );
 }
@@ -465,6 +620,180 @@ export default function DashboardPage() {
     return t;
   }, [gridRows]);
 
+  // ── Unreturned stock summary grids ────────────────────────────────────
+
+  const unreturnedCategories = ['display', 'store-refused', 'not-found', 'damaged', 'collected'] as const;
+  type UrCat = typeof unreturnedCategories[number];
+
+  // Only rows that are unreturned categories (for the 4 summary grids)
+  const urFiltered = useMemo(() => {
+    const catSet = new Set<string>(unreturnedCategories);
+    let subset = baseFiltered.filter(r => catSet.has(r.category));
+    if (selectedWarehouse) {
+      // Don't filter unreturned rows by warehouse cross-select (they inherit from the slip)
+    }
+    if (selectedClient) {
+      subset = subset.filter(r => r.clientId === selectedClient);
+    }
+    return subset;
+  }, [baseFiltered, selectedClient]);
+
+  function sumCat(rows: DashboardRow[], cat: UrCat): number {
+    return rows.filter(r => r.category === cat).reduce((s, r) => s + r.qty, 0);
+  }
+  function sumCatVal(rows: DashboardRow[], cat: UrCat): number {
+    return rows.filter(r => r.category === cat).reduce((s, r) => s + r.val, 0);
+  }
+
+  const urCols: SummaryCol[] = [
+    { key: 'label', label: 'Name', align: 'left' },
+    { key: 'agedQty', label: 'Total Aged', align: 'right', format: 'number' },
+    { key: 'agedVal', label: 'Aged Value', align: 'right', format: 'rand' },
+    { key: 'collected', label: 'Collected', align: 'right', format: 'number' },
+    { key: 'collectedVal', label: 'Collected Value', align: 'right', format: 'rand' },
+    { key: 'display', label: 'Display', align: 'right', format: 'number' },
+    { key: 'displayVal', label: 'Display Value', align: 'right', format: 'rand' },
+    { key: 'storeRefused', label: 'Store Refused', align: 'right', format: 'number' },
+    { key: 'storeRefusedVal', label: 'Refused Value', align: 'right', format: 'rand' },
+    { key: 'notFound', label: 'Not Found', align: 'right', format: 'number' },
+    { key: 'notFoundVal', label: 'Not Found Value', align: 'right', format: 'rand' },
+    { key: 'damaged', label: 'Damaged', align: 'right', format: 'number' },
+    { key: 'damagedVal', label: 'Damaged Value', align: 'right', format: 'rand' },
+  ];
+
+  // Also include aged stock in the unreturned grids (for the "Total Aged" column)
+  const agedFiltered = useMemo(() => {
+    let subset = baseFiltered.filter(r => r.category === 'aged');
+    if (selectedClient) subset = subset.filter(r => r.clientId === selectedClient);
+    return subset;
+  }, [baseFiltered, selectedClient]);
+
+  // Grid 1: By Vendor (Client)
+  const urByVendor = useMemo(() => {
+    const map = new Map<string, { label: string; vendorNum: string; aged: DashboardRow[]; ur: DashboardRow[] }>();
+    for (const r of [...agedFiltered, ...urFiltered]) {
+      if (!map.has(r.clientId)) map.set(r.clientId, { label: r.clientName, vendorNum: r.vendorNumbers.join(', '), aged: [], ur: [] });
+      const g = map.get(r.clientId)!;
+      if (r.category === 'aged') g.aged.push(r); else g.ur.push(r);
+    }
+    return [...map.values()].map(g => ({
+      label: g.label,
+      vendorNum: g.vendorNum,
+      agedQty: g.aged.reduce((s, r) => s + r.qty, 0),
+      agedVal: g.aged.reduce((s, r) => s + r.val, 0),
+      collected: sumCat(g.ur, 'collected'),
+      collectedVal: sumCatVal(g.ur, 'collected'),
+      display: sumCat(g.ur, 'display'),
+      displayVal: sumCatVal(g.ur, 'display'),
+      storeRefused: sumCat(g.ur, 'store-refused'),
+      storeRefusedVal: sumCatVal(g.ur, 'store-refused'),
+      notFound: sumCat(g.ur, 'not-found'),
+      notFoundVal: sumCatVal(g.ur, 'not-found'),
+      damaged: sumCat(g.ur, 'damaged'),
+      damagedVal: sumCatVal(g.ur, 'damaged'),
+    }));
+  }, [agedFiltered, urFiltered]);
+
+  const urByVendorCols: SummaryCol[] = [
+    { key: 'label', label: 'Client', align: 'left' },
+    { key: 'vendorNum', label: 'Vendor #', align: 'left' },
+    ...urCols.slice(1),
+  ];
+
+  // Grid 2: By Store
+  const urByStore = useMemo(() => {
+    const map = new Map<string, { aged: DashboardRow[]; ur: DashboardRow[] }>();
+    for (const r of [...agedFiltered, ...urFiltered]) {
+      const key = r.storeName || '(unknown)';
+      if (!map.has(key)) map.set(key, { aged: [], ur: [] });
+      const g = map.get(key)!;
+      if (r.category === 'aged') g.aged.push(r); else g.ur.push(r);
+    }
+    return [...map.entries()].map(([store, g]) => ({
+      label: store,
+      agedQty: g.aged.reduce((s, r) => s + r.qty, 0),
+      agedVal: g.aged.reduce((s, r) => s + r.val, 0),
+      collected: sumCat(g.ur, 'collected'),
+      collectedVal: sumCatVal(g.ur, 'collected'),
+      display: sumCat(g.ur, 'display'),
+      displayVal: sumCatVal(g.ur, 'display'),
+      storeRefused: sumCat(g.ur, 'store-refused'),
+      storeRefusedVal: sumCatVal(g.ur, 'store-refused'),
+      notFound: sumCat(g.ur, 'not-found'),
+      notFoundVal: sumCatVal(g.ur, 'not-found'),
+      damaged: sumCat(g.ur, 'damaged'),
+      damagedVal: sumCatVal(g.ur, 'damaged'),
+    }));
+  }, [agedFiltered, urFiltered]);
+
+  // Grid 3: By Product
+  const urByProduct = useMemo(() => {
+    const map = new Map<string, { desc: string; code: string; aged: DashboardRow[]; ur: DashboardRow[] }>();
+    for (const r of [...agedFiltered, ...urFiltered]) {
+      const key = r.product || '(unknown)';
+      if (!map.has(key)) map.set(key, { desc: r.product, code: r.articleCode, aged: [], ur: [] });
+      const g = map.get(key)!;
+      if (r.category === 'aged') g.aged.push(r); else g.ur.push(r);
+    }
+    return [...map.values()].map(g => ({
+      label: g.desc,
+      articleCode: g.code,
+      agedQty: g.aged.reduce((s, r) => s + r.qty, 0),
+      agedVal: g.aged.reduce((s, r) => s + r.val, 0),
+      collected: sumCat(g.ur, 'collected'),
+      collectedVal: sumCatVal(g.ur, 'collected'),
+      display: sumCat(g.ur, 'display'),
+      displayVal: sumCatVal(g.ur, 'display'),
+      storeRefused: sumCat(g.ur, 'store-refused'),
+      storeRefusedVal: sumCatVal(g.ur, 'store-refused'),
+      notFound: sumCat(g.ur, 'not-found'),
+      notFoundVal: sumCatVal(g.ur, 'not-found'),
+      damaged: sumCat(g.ur, 'damaged'),
+      damagedVal: sumCatVal(g.ur, 'damaged'),
+    }));
+  }, [agedFiltered, urFiltered]);
+
+  const urByProductCols: SummaryCol[] = [
+    { key: 'label', label: 'Product', align: 'left' },
+    { key: 'articleCode', label: 'Article Code', align: 'left' },
+    ...urCols.slice(1),
+  ];
+
+  // Grid 4: Detail (Product x Store)
+  const urDetail = useMemo(() => {
+    const map = new Map<string, { desc: string; code: string; store: string; aged: DashboardRow[]; ur: DashboardRow[] }>();
+    for (const r of [...agedFiltered, ...urFiltered]) {
+      const key = `${r.product}|${r.storeName}`;
+      if (!map.has(key)) map.set(key, { desc: r.product, code: r.articleCode, store: r.storeName, aged: [], ur: [] });
+      const g = map.get(key)!;
+      if (r.category === 'aged') g.aged.push(r); else g.ur.push(r);
+    }
+    return [...map.values()].map(g => ({
+      label: g.desc,
+      articleCode: g.code,
+      store: g.store,
+      agedQty: g.aged.reduce((s, r) => s + r.qty, 0),
+      agedVal: g.aged.reduce((s, r) => s + r.val, 0),
+      collected: sumCat(g.ur, 'collected'),
+      collectedVal: sumCatVal(g.ur, 'collected'),
+      display: sumCat(g.ur, 'display'),
+      displayVal: sumCatVal(g.ur, 'display'),
+      storeRefused: sumCat(g.ur, 'store-refused'),
+      storeRefusedVal: sumCatVal(g.ur, 'store-refused'),
+      notFound: sumCat(g.ur, 'not-found'),
+      notFoundVal: sumCatVal(g.ur, 'not-found'),
+      damaged: sumCat(g.ur, 'damaged'),
+      damagedVal: sumCatVal(g.ur, 'damaged'),
+    }));
+  }, [agedFiltered, urFiltered]);
+
+  const urDetailCols: SummaryCol[] = [
+    { key: 'label', label: 'Product', align: 'left' },
+    { key: 'articleCode', label: 'Article Code', align: 'left' },
+    { key: 'store', label: 'Store', align: 'left' },
+    ...urCols.slice(1),
+  ];
+
   // ── Helpers ─────────────────────────────────────────────────────────────
 
   const hasAnyFilter = clientFilter.size > 0 || repFilter.size > 0 || storeFilter.size > 0 ||
@@ -701,8 +1030,8 @@ export default function DashboardPage() {
                 </div>
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total Aged Stock</div>
-                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtNum(cardTotals.aged.qty)}</div>
-                  <div className="text-sm text-gray-500 mt-0.5">{fmtRand(cardTotals.aged.val)}</div>
+                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtRand(cardTotals.aged.val)}</div>
+                  <div className="text-sm text-gray-500 mt-0.5">{fmtNum(cardTotals.aged.qty)} units</div>
                 </div>
               </div>
             </div>
@@ -717,8 +1046,8 @@ export default function DashboardPage() {
                 </div>
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Warehouse Stock</div>
-                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtNum(cardTotals.warehouse.qty)}</div>
-                  <div className="text-sm text-gray-500 mt-0.5">{fmtRand(cardTotals.warehouse.val)}</div>
+                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtRand(cardTotals.warehouse.val)}</div>
+                  <div className="text-sm text-gray-500 mt-0.5">{fmtNum(cardTotals.warehouse.qty)} units</div>
                 </div>
               </div>
             </div>
@@ -735,8 +1064,8 @@ export default function DashboardPage() {
                 </div>
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">In Transit</div>
-                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtNum(cardTotals.transit.qty)}</div>
-                  <div className="text-sm text-gray-500 mt-0.5">{fmtRand(cardTotals.transit.val)}</div>
+                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtRand(cardTotals.transit.val)}</div>
+                  <div className="text-sm text-gray-500 mt-0.5">{fmtNum(cardTotals.transit.qty)} units</div>
                 </div>
               </div>
             </div>
@@ -958,6 +1287,36 @@ export default function DashboardPage() {
               </table>
             </div>
           </div>
+        )}
+
+        {/* ── Unreturned Stock Summary Grids ──────────────────────────────── */}
+        {hasAgedStock && (
+          <>
+            <SummaryGrid
+              title="Unreturned Stock — By Vendor"
+              columns={urByVendorCols}
+              rows={urByVendor}
+              exportFileName={`iRamFlow Unreturned By Vendor - ${new Date().toISOString().slice(0, 10)}.xlsx`}
+            />
+            <SummaryGrid
+              title="Unreturned Stock — By Store"
+              columns={[{ key: 'label', label: 'Store', align: 'left' }, ...urCols.slice(1)]}
+              rows={urByStore}
+              exportFileName={`iRamFlow Unreturned By Store - ${new Date().toISOString().slice(0, 10)}.xlsx`}
+            />
+            <SummaryGrid
+              title="Unreturned Stock — By Product"
+              columns={urByProductCols}
+              rows={urByProduct}
+              exportFileName={`iRamFlow Unreturned By Product - ${new Date().toISOString().slice(0, 10)}.xlsx`}
+            />
+            <SummaryGrid
+              title="Unreturned Stock — Detail (Product x Store)"
+              columns={urDetailCols}
+              rows={urDetail}
+              exportFileName={`iRamFlow Unreturned Detail - ${new Date().toISOString().slice(0, 10)}.xlsx`}
+            />
+          </>
         )}
 
         {/* Quick Actions */}

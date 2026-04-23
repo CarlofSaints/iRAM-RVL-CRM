@@ -27,7 +27,7 @@ export interface DashboardRow {
   qty: number;
   val: number;
   date: string;
-  category: 'aged' | 'warehouse' | 'transit';
+  category: 'aged' | 'warehouse' | 'transit' | 'display' | 'store-refused' | 'not-found' | 'damaged' | 'collected';
 }
 
 /**
@@ -158,6 +158,34 @@ export async function GET(req: NextRequest) {
           date: slip.generatedAt,
           category,
         });
+      }
+
+      // 3. Unreturned stock breakdown rows (from captured data)
+      if (slip.unreturnedStock && !slip.unreturnedSkipped) {
+        for (const ur of slip.unreturnedStock) {
+          const unitCost = ur.pickSlipQty > 0
+            ? (slip.rows.find(r => r.articleCode === ur.articleCode)?.val ?? 0) / ur.pickSlipQty
+            : 0;
+          const base = {
+            clientId: client.id,
+            clientName: client.name,
+            vendorNumbers: (client as ClientWithLinks).vendorNumbers ?? [],
+            storeName: slip.siteName,
+            storeCode: slip.siteCode,
+            warehouse: wh,
+            product: ur.description,
+            articleCode: ur.articleCode,
+            repName: slip.bookedRepName || '',
+            pickSlipRef: slip.id,
+            date: slip.generatedAt,
+          };
+          if (ur.display > 0) rows.push({ ...base, qty: ur.display, val: ur.display * unitCost, category: 'display' });
+          if (ur.storeRefused > 0) rows.push({ ...base, qty: ur.storeRefused, val: ur.storeRefused * unitCost, category: 'store-refused' });
+          if (ur.notFound > 0) rows.push({ ...base, qty: ur.notFound, val: ur.notFound * unitCost, category: 'not-found' });
+          if (ur.damaged > 0) rows.push({ ...base, qty: ur.damaged, val: ur.damaged * unitCost, category: 'damaged' });
+          const collectedQty = ur.pickSlipQty - (ur.display + ur.storeRefused + ur.notFound + ur.damaged);
+          if (collectedQty > 0) rows.push({ ...base, qty: collectedQty, val: collectedQty * unitCost, category: 'collected' });
+        }
       }
     }
   }

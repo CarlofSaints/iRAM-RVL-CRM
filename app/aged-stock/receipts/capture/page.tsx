@@ -35,6 +35,22 @@ interface SlipDto {
   releaseBoxes?: ReceiptBox[];
   releasedAt?: string;
   releasedByName?: string;
+  generatedAt?: string;
+  bookedAt?: string;
+  rows?: Array<{ articleCode: string; description: string; qty: number; val: number }>;
+  unreturnedStock?: UnreturnedRow[];
+  unreturnedCapturedAt?: string;
+  unreturnedSkipped?: boolean;
+}
+
+interface UnreturnedRow {
+  articleCode: string;
+  description: string;
+  pickSlipQty: number;
+  display: number;
+  storeRefused: number;
+  notFound: number;
+  damaged: number;
 }
 
 interface ReceiptBox {
@@ -168,6 +184,14 @@ export default function ReceiptCapturePage() {
   const [showReleaseCountModal, setShowReleaseCountModal] = useState(false);
   const [managerOverrideCode, setManagerOverrideCode] = useState('');
   const [managerOverrideRepId, setManagerOverrideRepId] = useState('');
+
+  // ── Unreturned stock capture state ──
+  const [showUnreturnedCapture, setShowUnreturnedCapture] = useState(false);
+  const [unreturnedRows, setUnreturnedRows] = useState<UnreturnedRow[]>([]);
+  const [savingUnreturned, setSavingUnreturned] = useState(false);
+  const [showSkipModal, setShowSkipModal] = useState(false);
+  const [skipRepId, setSkipRepId] = useState('');
+  const [skipRepName, setSkipRepName] = useState('');
 
   const mode: PageMode = slip ? resolveMode(slip.status) : 'receipt';
   const isReadOnly = mode === 'view';
@@ -390,8 +414,19 @@ export default function ReceiptCapturePage() {
       });
       const data = await res.json();
       if (res.ok) {
-        notify('Receipt completed successfully');
-        router.push('/aged-stock/receipts');
+        notify('Receipt completed — now capture unreturned stock details');
+        // Initialize unreturned rows from pick slip products
+        const productRows: UnreturnedRow[] = (slip.rows ?? []).map(r => ({
+          articleCode: r.articleCode,
+          description: r.description,
+          pickSlipQty: r.qty,
+          display: 0,
+          storeRefused: 0,
+          notFound: 0,
+          damaged: 0,
+        }));
+        setUnreturnedRows(productRows);
+        setShowUnreturnedCapture(true);
       } else {
         notify(data.error || 'Failed to complete', 'error');
       }
@@ -400,6 +435,92 @@ export default function ReceiptCapturePage() {
     } finally {
       setCompleting(false);
     }
+  }
+
+  // ── Unreturned stock capture functions ──
+  function updateUnreturnedField(idx: number, field: 'display' | 'storeRefused' | 'notFound' | 'damaged', value: number) {
+    setUnreturnedRows(prev => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], [field]: Math.max(0, value) };
+      return next;
+    });
+  }
+
+  function collectedQty(row: UnreturnedRow): number {
+    return row.pickSlipQty - (row.display + row.storeRefused + row.notFound + row.damaged);
+  }
+
+  async function handleSaveUnreturned() {
+    if (!slip) return;
+    // Validate no negative collected
+    for (const row of unreturnedRows) {
+      if (collectedQty(row) < 0) {
+        notify(`Reason totals exceed pick slip qty for "${row.description}"`, 'error');
+        return;
+      }
+    }
+    setSavingUnreturned(true);
+    try {
+      const res = await authFetch('/api/receipts/unreturned', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slipId: slip.id,
+          clientId: slip.clientId,
+          loadId: slip.loadId,
+          rows: unreturnedRows,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        notify('Unreturned stock capture saved');
+        router.push('/aged-stock/receipts');
+      } else {
+        notify(data.error || 'Save failed', 'error');
+      }
+    } catch {
+      notify('Network error saving unreturned stock', 'error');
+    } finally {
+      setSavingUnreturned(false);
+    }
+  }
+
+  async function handleSkipUnreturned() {
+    if (!slip || !skipRepId) return;
+    setSavingUnreturned(true);
+    try {
+      const res = await authFetch('/api/receipts/unreturned', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slipId: slip.id,
+          clientId: slip.clientId,
+          loadId: slip.loadId,
+          skip: true,
+          skipRepId,
+          skipRepName,
+          skipReason: 'Rep did not return paperwork',
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        notify('Capture skipped — managers notified');
+        router.push('/aged-stock/receipts');
+      } else {
+        notify(data.error || 'Skip failed', 'error');
+      }
+    } catch {
+      notify('Network error skipping capture', 'error');
+    } finally {
+      setSavingUnreturned(false);
+      setShowSkipModal(false);
+    }
+  }
+
+  function onSkipRepChange(repId: string) {
+    setSkipRepId(repId);
+    const rep = reps.find(r => r.id === repId);
+    setSkipRepName(rep ? `${rep.name} ${rep.surname}` : '');
   }
 
   // Handle Enter key in receipt scan input
@@ -549,10 +670,12 @@ export default function ReceiptCapturePage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">
-            {mode === 'release' ? 'Release Stock' : mode === 'view' ? 'View Pick Slip' : 'Receive Stock'}
+            {showUnreturnedCapture ? 'Unreturned Stock Capture' : mode === 'release' ? 'Release Stock' : mode === 'view' ? 'View Pick Slip' : 'Receive Stock'}
           </h1>
           <p className="text-sm text-gray-600 mt-1">
-            {mode === 'release' && slip.status === 'failed-release'
+            {showUnreturnedCapture
+              ? 'Record what happened to each product — display, refused, not found, damaged'
+              : mode === 'release' && slip.status === 'failed-release'
               ? 'Previous release attempt failed — retry with the correct release code'
               : mode === 'release'
               ? 'Release stock from warehouse for transit back to the vendor'
@@ -630,7 +753,7 @@ export default function ReceiptCapturePage() {
       {/* ════════════════════════════════════════════════════════════════════ */}
       {/* RECEIPT MODE                                                       */}
       {/* ════════════════════════════════════════════════════════════════════ */}
-      {mode === 'receipt' && (
+      {mode === 'receipt' && !showUnreturnedCapture && (
         <>
           {/* Receipt details form */}
           <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
@@ -817,6 +940,100 @@ export default function ReceiptCapturePage() {
               className="px-5 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
             >
               Cancel
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* UNRETURNED STOCK CAPTURE (shown after receipt completes)           */}
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {showUnreturnedCapture && (
+        <>
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 flex items-start gap-3">
+            <svg className="w-5 h-5 text-amber-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <p className="text-sm font-medium text-amber-800">Unreturned Stock Capture</p>
+              <p className="text-xs text-amber-600 mt-0.5">
+                Record what happened to each product at the store. Enter quantities for each reason — collected is auto-calculated.
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
+            <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Product Breakdown</h2>
+
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs font-semibold text-gray-600 uppercase tracking-wide border-b border-gray-200">
+                    <th className="pb-2 pr-3">Product</th>
+                    <th className="pb-2 pr-3">Article Code</th>
+                    <th className="pb-2 pr-3 text-center">Pick Slip Qty</th>
+                    <th className="pb-2 pr-3 text-center">Display</th>
+                    <th className="pb-2 pr-3 text-center">Store Refused</th>
+                    <th className="pb-2 pr-3 text-center">Not Found</th>
+                    <th className="pb-2 pr-3 text-center">Damaged</th>
+                    <th className="pb-2 text-center">Collected</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unreturnedRows.map((row, idx) => {
+                    const collected = collectedQty(row);
+                    const isNeg = collected < 0;
+                    return (
+                      <tr key={idx} className="border-t border-gray-100">
+                        <td className="py-2 pr-3 font-medium max-w-[200px] truncate" title={row.description}>{row.description}</td>
+                        <td className="py-2 pr-3 font-mono text-gray-600 text-xs">{row.articleCode}</td>
+                        <td className="py-2 pr-3 text-center font-medium">{row.pickSlipQty}</td>
+                        <td className="py-2 pr-3">
+                          <input type="number" min={0} max={row.pickSlipQty} value={row.display || ''}
+                            onChange={e => updateUnreturnedField(idx, 'display', parseInt(e.target.value) || 0)}
+                            className="w-16 mx-auto block px-1.5 py-1 border border-gray-300 rounded text-sm text-center" />
+                        </td>
+                        <td className="py-2 pr-3">
+                          <input type="number" min={0} max={row.pickSlipQty} value={row.storeRefused || ''}
+                            onChange={e => updateUnreturnedField(idx, 'storeRefused', parseInt(e.target.value) || 0)}
+                            className="w-16 mx-auto block px-1.5 py-1 border border-gray-300 rounded text-sm text-center" />
+                        </td>
+                        <td className="py-2 pr-3">
+                          <input type="number" min={0} max={row.pickSlipQty} value={row.notFound || ''}
+                            onChange={e => updateUnreturnedField(idx, 'notFound', parseInt(e.target.value) || 0)}
+                            className="w-16 mx-auto block px-1.5 py-1 border border-gray-300 rounded text-sm text-center" />
+                        </td>
+                        <td className="py-2 pr-3">
+                          <input type="number" min={0} max={row.pickSlipQty} value={row.damaged || ''}
+                            onChange={e => updateUnreturnedField(idx, 'damaged', parseInt(e.target.value) || 0)}
+                            className="w-16 mx-auto block px-1.5 py-1 border border-gray-300 rounded text-sm text-center" />
+                        </td>
+                        <td className={`py-2 text-center font-bold ${isNeg ? 'text-red-600' : 'text-green-700'}`}>
+                          {collected}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Unreturned action buttons */}
+          <div className="flex gap-3">
+            <button
+              onClick={handleSaveUnreturned}
+              disabled={savingUnreturned || unreturnedRows.some(r => collectedQty(r) < 0)}
+              className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {savingUnreturned && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+              Save Capture
+            </button>
+            <button
+              onClick={() => setShowSkipModal(true)}
+              className="px-5 py-2.5 border border-amber-300 bg-amber-50 text-amber-700 rounded-lg text-sm font-medium hover:bg-amber-100"
+            >
+              Skip
             </button>
           </div>
         </>
@@ -1134,6 +1351,55 @@ export default function ReceiptCapturePage() {
                 className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
               >
                 Go Back
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Skip Unreturned Stock Modal ────────────────────────────────────── */}
+      {showSkipModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Skip Unreturned Stock Capture</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              An email will be sent to all RVL Managers notifying them that this capture was skipped.
+            </p>
+            <div className="flex flex-col gap-3 mb-4">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Rep who did not return paperwork <span className="text-red-500">*</span></label>
+                <select
+                  value={skipRepId}
+                  onChange={e => onSkipRepChange(e.target.value)}
+                  className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm"
+                >
+                  <option value="">Select rep...</option>
+                  {reps.map(r => (
+                    <option key={r.id} value={r.id}>{r.name} {r.surname}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Reason</label>
+                <select disabled className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm bg-gray-50 text-gray-500">
+                  <option>Rep did not return paperwork</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={handleSkipUnreturned}
+                disabled={savingUnreturned || !skipRepId}
+                className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50 flex items-center gap-2"
+              >
+                {savingUnreturned && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Confirm Skip
+              </button>
+              <button
+                onClick={() => setShowSkipModal(false)}
+                className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
               </button>
             </div>
           </div>

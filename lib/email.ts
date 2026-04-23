@@ -130,6 +130,53 @@ export async function sendPickSlipEmail(opts: {
   });
 }
 
+export async function sendUnreturnedSkipEmail(opts: {
+  toAdmins: string[];
+  skippedByName: string;
+  repName: string;
+  storeName: string;
+  clientName: string;
+  pickSlipRef: string;
+  boxBarcodes: string[];
+  generatedAt?: string;
+  bookedAt?: string;
+  receiptedAt?: string;
+}) {
+  if (opts.toAdmins.length === 0) return;
+  const appUrl = getAppUrl();
+  const fmtDt = (iso?: string) => {
+    if (!iso) return '—';
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' +
+        d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    } catch { return iso; }
+  };
+  const body = `
+    <p style="margin:0 0 14px;color:#c00;font-weight:bold;">Unreturned Stock Capture Skipped</p>
+    <p style="margin:0 0 14px;font-size:14px;">The warehouse user skipped the unreturned stock capture because the rep did not return the paperwork.</p>
+    <table style="background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:14px 16px;width:100%;margin-bottom:20px;">
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Skipped By</td><td style="font-size:13px;"><strong>${opts.skippedByName}</strong></td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Rep (no paperwork)</td><td style="font-size:13px;"><strong>${opts.repName}</strong></td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Store</td><td style="font-size:13px;">${opts.storeName}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Vendor / Client</td><td style="font-size:13px;">${opts.clientName}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Pick Slip Ref</td><td style="font-size:13px;font-family:monospace;">${opts.pickSlipRef}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Box Barcodes</td><td style="font-size:13px;font-family:monospace;">${opts.boxBarcodes.length > 0 ? opts.boxBarcodes.join(', ') : '—'}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Pick Slip Generated</td><td style="font-size:13px;">${fmtDt(opts.generatedAt)}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Stock Booked</td><td style="font-size:13px;">${fmtDt(opts.bookedAt)}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Receipt Completed</td><td style="font-size:13px;">${fmtDt(opts.receiptedAt)}</td></tr>
+    </table>
+    <a href="${appUrl}/aged-stock/receipts" style="background:${PRIMARY};color:#fff;text-decoration:none;padding:12px 24px;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">View Receipts</a>
+  `;
+
+  return getResend().emails.send({
+    from: FROM,
+    to: opts.toAdmins,
+    subject: `iRamFlow — Unreturned stock capture skipped: ${opts.pickSlipRef}`,
+    html: emailShell(body),
+  });
+}
+
 export async function sendPasswordResetEmail(to: string, name: string, password: string) {
   const appUrl = getAppUrl();
   const body = `
