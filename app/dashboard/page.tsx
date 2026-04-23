@@ -383,22 +383,22 @@ export default function DashboardPage() {
                 <thead>
                   <tr className="bg-gray-50 text-left">
                     {(() => { const i = colIdx(); return (
-                      <th key="client" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase relative whitespace-nowrap">
+                      <th key="client" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase relative">
                         Client<ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
                     {(() => { const i = colIdx(); return (
-                      <th key="vendor" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase relative whitespace-nowrap">
+                      <th key="vendor" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase relative">
                         Vendor Numbers<ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
                     {(() => { const i = colIdx(); return (
-                      <th key="agedQty" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative whitespace-nowrap">
+                      <th key="agedQty" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative">
                         Aged Qty<ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
                     {(() => { const i = colIdx(); return (
-                      <th key="agedVal" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative whitespace-nowrap">
+                      <th key="agedVal" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative">
                         Aged Value<ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
@@ -406,21 +406,21 @@ export default function DashboardPage() {
                       const qi = colIdx();
                       const vi = colIdx();
                       return [
-                        <th key={`${w.code}-qty`} style={colWidths[qi] ? { width: colWidths[qi] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative whitespace-nowrap">
+                        <th key={`${w.code}-qty`} style={colWidths[qi] ? { width: colWidths[qi] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative">
                           {w.code} Qty<ResizeHandle colIdx={qi} />
                         </th>,
-                        <th key={`${w.code}-val`} style={colWidths[vi] ? { width: colWidths[vi] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative whitespace-nowrap">
+                        <th key={`${w.code}-val`} style={colWidths[vi] ? { width: colWidths[vi] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative">
                           {w.code} Val<ResizeHandle colIdx={vi} />
                         </th>,
                       ];
                     })}
                     {(() => { const i = colIdx(); return (
-                      <th key="transitQty" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative whitespace-nowrap">
+                      <th key="transitQty" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative">
                         Transit Qty<ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
                     {(() => { const i = colIdx(); return (
-                      <th key="transitVal" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative whitespace-nowrap">
+                      <th key="transitVal" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative">
                         Transit Val<ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
