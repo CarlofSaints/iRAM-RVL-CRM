@@ -93,7 +93,9 @@ export default function ChannelsPage() {
         body: JSON.stringify({ id: editItem.id, name }),
       });
       if (!res.ok) { notify('Failed to update channel', 'error'); return; }
-      notify('Channel updated');
+      const result = await res.json();
+      const storeMsg = result.storesUpdated > 0 ? ` — ${result.storesUpdated} store${result.storesUpdated === 1 ? '' : 's'} updated` : '';
+      notify(`Channel updated${storeMsg}`);
       setEditItem(null);
       fetchAll();
     } finally { setEditLoading(false); }

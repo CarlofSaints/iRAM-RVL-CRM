@@ -93,9 +93,51 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ty
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
+  // Channel rename cascade — update all stores that reference the old name
+  let storesUpdated = 0;
+  if (type === 'channels' && updates.name) {
+    const oldName = String(items[idx].name ?? '');
+    const newName = String(updates.name);
+    if (oldName && oldName.toLowerCase() !== newName.toLowerCase()) {
+      const stores = await loadControl<Record<string, unknown>>('stores');
+      for (const store of stores) {
+        if (String(store.channel ?? '').toLowerCase() === oldName.toLowerCase()) {
+          store.channel = newName;
+          storesUpdated++;
+        }
+      }
+      if (storesUpdated > 0) await saveControl('stores', stores);
+    }
+  }
+
   items[idx] = { ...items[idx], ...updates };
   await saveControl(type, items);
-  return NextResponse.json(items[idx]);
+  return NextResponse.json({ ...items[idx], storesUpdated });
+}
+
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ type: string }> }) {
+  const { type } = await params;
+  if (!isValidType(type)) {
+    return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
+  }
+
+  const guard = await requirePermission(req, permForType(type));
+  if (guard instanceof NextResponse) return guard;
+
+  const body = await req.json();
+  if (!Array.isArray(body)) {
+    return NextResponse.json({ error: 'Body must be an array' }, { status: 400 });
+  }
+
+  const now = new Date().toISOString();
+  const items = body.map((record: Record<string, unknown>) => ({
+    ...record,
+    id: record.id || randomUUID(),
+    createdAt: record.createdAt || now,
+  }));
+
+  await saveControl(type, items);
+  return NextResponse.json({ ok: true, total: items.length });
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ type: string }> }) {

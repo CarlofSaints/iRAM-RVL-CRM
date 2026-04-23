@@ -98,6 +98,13 @@ export default function StoresPage() {
   const [editWarehouse, setEditWarehouse] = useState('');
   const [editLoading, setEditLoading] = useState(false);
 
+  // Import modal
+  type ImportMode = 'append' | 'update' | 'overwrite';
+  const [importRecords, setImportRecords] = useState<ReturnType<typeof rowToStore>[]>([]);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importStats, setImportStats] = useState({ newCount: 0, existingCount: 0, totalFile: 0, totalCurrent: 0 });
+
   // Channels manager
   const [channelsOpen, setChannelsOpen] = useState(false);
   const [newChannel, setNewChannel] = useState('');
@@ -203,6 +210,7 @@ export default function StoresPage() {
     return 0;
   }
 
+  /** Step A: Parse the file and open the import mode modal. */
   async function handleExcelUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -215,27 +223,115 @@ export default function StoresPage() {
       const records = rows.map(rowToStore).filter(r => r.name);
       if (!records.length) { notify('No valid rows found', 'error'); return; }
 
-      // Auto-create any new channel values found in the upload
-      const newChannelsAdded = await ensureChannelsExist(records.map(r => r.channel));
-
-      const res = await authFetch('/api/control/stores', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(records),
-      });
-      const result = await res.json();
-      if (res.ok) {
-        const extra = newChannelsAdded ? ` (+${newChannelsAdded} new channel${newChannelsAdded === 1 ? '' : 's'})` : '';
-        notify(`Imported ${result.added} stores${extra}`);
-      } else {
-        notify('Import failed', 'error');
+      // Diff against current items by siteCode (case-insensitive)
+      const existingCodes = new Set(items.map(s => s.siteCode.toLowerCase()).filter(Boolean));
+      let newCount = 0;
+      let existingCount = 0;
+      for (const r of records) {
+        if (r.siteCode && existingCodes.has(r.siteCode.toLowerCase())) existingCount++;
+        else newCount++;
       }
-      fetchAll();
+
+      setImportRecords(records);
+      setImportStats({ newCount, existingCount, totalFile: records.length, totalCurrent: items.length });
+      setImportModalOpen(true);
     } catch (err) {
       console.error('[stores import]', err);
       notify('Failed to parse file', 'error');
     }
     if (fileRef.current) fileRef.current.value = '';
+  }
+
+  /** Step B: Execute the chosen import mode. */
+  async function executeImport(mode: ImportMode) {
+    setImportLoading(true);
+    try {
+      const records = importRecords;
+
+      // Auto-create any new channel values
+      const newChannelsAdded = await ensureChannelsExist(records.map(r => r.channel));
+      const channelExtra = newChannelsAdded ? ` (+${newChannelsAdded} new channel${newChannelsAdded === 1 ? '' : 's'})` : '';
+
+      if (mode === 'append') {
+        // POST only records whose siteCode doesn't exist yet
+        const existingCodes = new Set(items.map(s => s.siteCode.toLowerCase()).filter(Boolean));
+        const toAdd = records.filter(r => !r.siteCode || !existingCodes.has(r.siteCode.toLowerCase()));
+        if (toAdd.length === 0) {
+          notify('No new stores to add — all site codes already exist');
+          setImportModalOpen(false);
+          return;
+        }
+        const res = await authFetch('/api/control/stores', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(toAdd),
+        });
+        if (res.ok) {
+          const result = await res.json();
+          notify(`Appended ${result.added} new stores (${importStats.existingCount} duplicates skipped)${channelExtra}`);
+        } else {
+          notify('Import failed', 'error');
+        }
+      } else if (mode === 'update') {
+        // Merge: for matched siteCode, spread file data over existing (keep id + createdAt); add unmatched as new
+        const codeMap = new Map<string, Store>();
+        for (const s of items) {
+          if (s.siteCode) codeMap.set(s.siteCode.toLowerCase(), s);
+        }
+        const merged: (Store | Record<string, unknown>)[] = [...items]; // start with all existing
+        const updatedIds = new Set<string>();
+        let addedCount = 0;
+        for (const r of records) {
+          const key = r.siteCode?.toLowerCase();
+          const existing = key ? codeMap.get(key) : undefined;
+          if (existing) {
+            // Update in place
+            const idx = merged.findIndex((m) => (m as Store).id === existing.id);
+            if (idx !== -1) {
+              merged[idx] = { ...existing, ...r, id: existing.id, createdAt: existing.createdAt };
+              updatedIds.add(existing.id);
+            }
+          } else {
+            // New record
+            merged.push({ ...r, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
+            addedCount++;
+          }
+        }
+        const res = await authFetch('/api/control/stores', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(merged),
+        });
+        if (res.ok) {
+          notify(`Updated ${updatedIds.size} stores, added ${addedCount} new${channelExtra}`);
+        } else {
+          notify('Import failed', 'error');
+        }
+      } else {
+        // Overwrite — replace everything with file contents
+        const now = new Date().toISOString();
+        const fresh = records.map(r => ({ ...r, id: crypto.randomUUID(), createdAt: now }));
+        const res = await authFetch('/api/control/stores', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fresh),
+        });
+        if (res.ok) {
+          notify(`Replaced all stores with ${fresh.length} from file${channelExtra}`);
+        } else {
+          notify('Import failed', 'error');
+        }
+      }
+
+      setImportModalOpen(false);
+      setImportRecords([]);
+      fetchAll();
+    } catch (err) {
+      console.error('[stores import]', err);
+      notify('Import failed', 'error');
+    } finally {
+      setImportLoading(false);
+    }
   }
 
   function handleDownloadTemplate() {
@@ -283,9 +379,11 @@ export default function StoresPage() {
       body: JSON.stringify({ id: channelEditingId, name }),
     });
     if (!res.ok) { notify('Failed to update channel', 'error'); return; }
+    const result = await res.json();
     setChannelEditingId(null);
     setChannelEditValue('');
-    notify('Channel updated');
+    const storeMsg = result.storesUpdated > 0 ? ` — ${result.storesUpdated} store${result.storesUpdated === 1 ? '' : 's'} updated` : '';
+    notify(`Channel updated${storeMsg}`);
     fetchAll();
   }
 
@@ -572,6 +670,74 @@ export default function StoresPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Import Mode Modal */}
+      {importModalOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-base font-bold text-gray-900 mb-1">Import Stores</h2>
+            <p className="text-sm text-gray-500 mb-5">
+              {importStats.totalFile} rows parsed from file — {importStats.existingCount} match existing site codes, {importStats.newCount} are new.
+            </p>
+
+            <div className="flex flex-col gap-3">
+              {/* Append */}
+              <button
+                disabled={importLoading}
+                onClick={() => executeImport('append')}
+                className="text-left border border-gray-200 rounded-lg p-4 hover:border-[var(--color-primary)] hover:bg-green-50/30 transition-colors disabled:opacity-50">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-bold text-gray-900">Append</span>
+                  <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Safe</span>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Add only new stores, skip existing. <strong>{importStats.newCount} new</strong> will be added, {importStats.existingCount} duplicates skipped.
+                </p>
+              </button>
+
+              {/* Update */}
+              <button
+                disabled={importLoading}
+                onClick={() => executeImport('update')}
+                className="text-left border border-gray-200 rounded-lg p-4 hover:border-[var(--color-primary)] hover:bg-blue-50/30 transition-colors disabled:opacity-50">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-bold text-gray-900">Update</span>
+                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">Merge</span>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Update existing stores + add new ones. <strong>{importStats.existingCount} updated</strong>, {importStats.newCount} new added.
+                </p>
+              </button>
+
+              {/* Overwrite */}
+              <button
+                disabled={importLoading}
+                onClick={() => executeImport('overwrite')}
+                className="text-left border border-red-200 rounded-lg p-4 hover:border-red-400 hover:bg-red-50/30 transition-colors disabled:opacity-50">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-bold text-gray-900">Overwrite</span>
+                  <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">Destructive</span>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Replace ALL {importStats.totalCurrent} current stores with {importStats.totalFile} from file. Existing data will be lost.
+                </p>
+              </button>
+            </div>
+
+            <div className="flex justify-end mt-5">
+              <button
+                onClick={() => { setImportModalOpen(false); setImportRecords([]); }}
+                disabled={importLoading}
+                className="text-sm text-gray-600 hover:text-gray-900 px-4 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-50">
+                Cancel
+              </button>
+            </div>
+            {importLoading && (
+              <p className="text-xs text-gray-400 mt-3 text-center">Importing...</p>
+            )}
           </div>
         </div>
       )}
