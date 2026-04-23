@@ -22,8 +22,11 @@ import { put, get } from '@vercel/blob';
 export interface Sticker {
   id: string;
   barcodeValue: string;
+  /** @deprecated Use linkedPickSlipIds — kept for backward compat reading old data */
   linkedPickSlipId?: string;
   linkedAt?: string;
+  /** Multi-slip link array — canonical field for linked pick slips */
+  linkedPickSlipIds?: string[];
 }
 
 export interface StickerBatch {
@@ -152,10 +155,24 @@ export async function saveBatch(batch: StickerBatch): Promise<void> {
 }
 
 /**
+ * Get the canonical linked slip IDs array for a sticker, merging legacy
+ * `linkedPickSlipId` with the new `linkedPickSlipIds` field.
+ */
+function getLinkedIds(sticker: Sticker): string[] {
+  const ids = [...(sticker.linkedPickSlipIds ?? [])];
+  if (sticker.linkedPickSlipId && !ids.includes(sticker.linkedPickSlipId)) {
+    ids.unshift(sticker.linkedPickSlipId);
+  }
+  return ids;
+}
+
+/**
  * Find a sticker by barcode across all batches and link it to a pick slip.
  * Returns the found sticker (with link fields set) or null if not found.
- * If the sticker is already linked to a different pick slip, returns it
- * unchanged (caller should check `linkedPickSlipId`).
+ *
+ * Multi-slip: if the sticker is already linked to OTHER slips, the new
+ * slipId is ADDED to the array (not rejected). Only rejects if the same
+ * slipId is already present (duplicate = no-op).
  */
 export async function findAndLinkSticker(
   barcodeValue: string,
@@ -167,16 +184,18 @@ export async function findAndLinkSticker(
     if (!batch) continue;
     const sticker = batch.stickers.find(s => s.barcodeValue === barcodeValue);
     if (sticker) {
+      const ids = getLinkedIds(sticker);
       // Already linked to this slip — no-op
-      if (sticker.linkedPickSlipId === pickSlipId) {
+      if (ids.includes(pickSlipId)) {
+        // Ensure canonical fields are up to date
+        sticker.linkedPickSlipIds = ids;
+        sticker.linkedPickSlipId = ids[0];
         return { ...sticker, batchId: batch.id };
       }
-      // Already linked to a different slip — return as-is for caller to handle
-      if (sticker.linkedPickSlipId) {
-        return { ...sticker, batchId: batch.id };
-      }
-      // Link it
-      sticker.linkedPickSlipId = pickSlipId;
+      // Add this slip to the multi-link array
+      ids.push(pickSlipId);
+      sticker.linkedPickSlipIds = ids;
+      sticker.linkedPickSlipId = ids[0]; // keep legacy field in sync
       sticker.linkedAt = new Date().toISOString();
       await saveBatch(batch);
       return { ...sticker, batchId: batch.id };
@@ -186,8 +205,8 @@ export async function findAndLinkSticker(
 }
 
 /**
- * Unlink a sticker from its pick slip by barcode. Clears `linkedPickSlipId`
- * and `linkedAt`. Returns true if found and unlinked.
+ * Unlink a sticker from ALL its pick slips by barcode. Clears both legacy
+ * and multi-link fields. Returns true if found and unlinked.
  */
 export async function unlinkSticker(barcodeValue: string): Promise<boolean> {
   const index = await listBatches();
@@ -195,8 +214,9 @@ export async function unlinkSticker(barcodeValue: string): Promise<boolean> {
     const batch = await getBatch(meta.id);
     if (!batch) continue;
     const sticker = batch.stickers.find(s => s.barcodeValue === barcodeValue);
-    if (sticker && sticker.linkedPickSlipId) {
+    if (sticker && (sticker.linkedPickSlipId || (sticker.linkedPickSlipIds?.length ?? 0) > 0)) {
       sticker.linkedPickSlipId = undefined;
+      sticker.linkedPickSlipIds = undefined;
       sticker.linkedAt = undefined;
       await saveBatch(batch);
       return true;
@@ -206,12 +226,46 @@ export async function unlinkSticker(barcodeValue: string): Promise<boolean> {
 }
 
 /**
+ * Remove ONE pick slip from a sticker's linked list. If the sticker
+ * has no remaining links, both fields are cleared entirely.
+ * Returns true if found and modified.
+ */
+export async function unlinkStickerFromSlip(
+  barcodeValue: string,
+  pickSlipId: string,
+): Promise<boolean> {
+  const index = await listBatches();
+  for (const meta of index) {
+    const batch = await getBatch(meta.id);
+    if (!batch) continue;
+    const sticker = batch.stickers.find(s => s.barcodeValue === barcodeValue);
+    if (sticker) {
+      const ids = getLinkedIds(sticker);
+      const idx = ids.indexOf(pickSlipId);
+      if (idx === -1) return false;
+      ids.splice(idx, 1);
+      if (ids.length === 0) {
+        sticker.linkedPickSlipId = undefined;
+        sticker.linkedPickSlipIds = undefined;
+        sticker.linkedAt = undefined;
+      } else {
+        sticker.linkedPickSlipIds = ids;
+        sticker.linkedPickSlipId = ids[0];
+      }
+      await saveBatch(batch);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Look up a sticker by barcode. Returns sticker info + batch context,
- * or null if not found.
+ * or null if not found. Includes `linkedPickSlipIds` (merged from legacy).
  */
 export async function findStickerByBarcode(
   barcodeValue: string,
-): Promise<(Sticker & { batchId: string; warehouseCode: string; warehouseName: string }) | null> {
+): Promise<(Sticker & { batchId: string; warehouseCode: string; warehouseName: string; linkedPickSlipIds: string[] }) | null> {
   const index = await listBatches();
   for (const meta of index) {
     const batch = await getBatch(meta.id);
@@ -220,6 +274,7 @@ export async function findStickerByBarcode(
     if (sticker) {
       return {
         ...sticker,
+        linkedPickSlipIds: getLinkedIds(sticker),
         batchId: batch.id,
         warehouseCode: batch.warehouseCode,
         warehouseName: batch.warehouseName,

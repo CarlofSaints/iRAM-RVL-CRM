@@ -16,7 +16,7 @@ interface PdfRow {
   val: number;
 }
 
-type SlipStatus = 'generated' | 'sent' | 'picked' | 'booked' | 'receipted' | 'in-transit' | 'returned-to-vendor';
+type SlipStatus = 'generated' | 'sent' | 'picked' | 'booked' | 'receipted' | 'in-transit' | 'returned-to-vendor' | 'delivered';
 
 interface SlipDto {
   id: string;
@@ -78,6 +78,7 @@ const STATUS_LABELS: Record<SlipStatus, string> = {
   'receipted': 'Receipted',
   'in-transit': 'In Transit',
   'returned-to-vendor': 'Returned to Vendor',
+  'delivered': 'Delivered',
 };
 
 const STATUS_COLORS: Record<SlipStatus, string> = {
@@ -88,6 +89,7 @@ const STATUS_COLORS: Record<SlipStatus, string> = {
   'receipted': 'bg-green-100 text-green-700',
   'in-transit': 'bg-purple-100 text-purple-700',
   'returned-to-vendor': 'bg-red-100 text-red-700',
+  'delivered': 'bg-emerald-100 text-emerald-700',
 };
 
 type SortCol = 'id' | 'clientName' | 'vendorNumber' | 'store' | 'products' | 'totalQty' | 'totalVal' | 'generatedAt' | 'status';

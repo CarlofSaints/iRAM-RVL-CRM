@@ -16,16 +16,18 @@ interface ClientRecord {
 
 /**
  * GET /api/scan/lookup-slip?slipId=PS-XXXX
+ *     or multi-slip: ?slipId=PS-001&slipId=PS-002
  *
- * Validate a pick slip barcode for the scan screen.
- * Returns slip summary if valid and in a bookable status.
+ * Validate pick slip barcode(s) for the scan screen.
+ * Returns slip summary array if valid and all are in a bookable status.
  */
 export async function GET(req: NextRequest) {
   const guard = await requirePermission(req, 'scan_stock');
   if (guard instanceof NextResponse) return guard;
 
-  const slipId = req.nextUrl.searchParams.get('slipId')?.trim();
-  if (!slipId) {
+  // Support single and multiple slipId params
+  const slipIds = req.nextUrl.searchParams.getAll('slipId').map(s => s.trim()).filter(Boolean);
+  if (slipIds.length === 0) {
     return NextResponse.json({ error: 'slipId query param is required' }, { status: 400 });
   }
 
@@ -51,21 +53,16 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Build warehouse resolver: raw value → canonical code
-  // linkedWarehouse on stores is free-text, so it could be a code, name, or
-  // partial match. Try: exact code → exact name → code-that-starts-with → name-that-starts-with.
+  // Build warehouse resolver
   const warehouses = await loadControl<{ code: string; name: string }>('warehouses');
   const whCodeSet = new Set(warehouses.map(w => w.code.toUpperCase().trim()));
   const whNameToCode = new Map(warehouses.map(w => [w.name.toUpperCase().trim(), w.code.toUpperCase().trim()]));
   function resolveWarehouseCode(raw: string): string {
     const upper = raw.toUpperCase().trim();
     if (!upper) return '';
-    // Exact code match
     if (whCodeSet.has(upper)) return upper;
-    // Exact name match
     const byName = whNameToCode.get(upper);
     if (byName) return byName;
-    // Fuzzy: find a warehouse whose name starts with the raw value, or vice versa
     for (const w of warehouses) {
       const wCode = w.code.toUpperCase().trim();
       const wName = w.name.toUpperCase().trim();
@@ -77,50 +74,64 @@ export async function GET(req: NextRequest) {
 
   const runs = await listAllPickSlipRuns(scopedIds, listLoads);
 
-  // Search all runs for the slip
-  for (const run of runs) {
-    const slip = run.slips.find(s => s.id === slipId);
-    if (slip) {
-      // Only allow booking for pre-booked/receipted statuses
-      const bookableStatuses = ['generated', 'sent', 'picked'];
-      if (!bookableStatuses.includes(slip.status)) {
-        return NextResponse.json(
-          {
-            found: true,
-            bookable: false,
-            error: `Pick slip is already "${slip.status}" — cannot book`,
-            status: slip.status,
-          },
-          { headers: { 'Cache-Control': 'no-store' } },
-        );
-      }
+  const bookableStatuses = ['generated', 'sent', 'picked'];
+  const foundSlips: Array<{
+    id: string; loadId: string; clientId: string; clientName: string;
+    vendorNumber: string; siteCode: string; siteName: string;
+    warehouse: string; warehouseCode: string;
+    totalQty: number; totalVal: number; status: string;
+  }> = [];
 
+  for (const slipId of slipIds) {
+    let matched = false;
+    for (const run of runs) {
+      const slip = run.slips.find(s => s.id === slipId);
+      if (slip) {
+        matched = true;
+        if (!bookableStatuses.includes(slip.status)) {
+          return NextResponse.json(
+            {
+              found: true,
+              bookable: false,
+              error: `Pick slip ${slipId} is already "${slip.status}" — cannot book`,
+              status: slip.status,
+            },
+            { headers: { 'Cache-Control': 'no-store' } },
+          );
+        }
+        foundSlips.push({
+          id: slip.id,
+          loadId: slip.loadId,
+          clientId: slip.clientId,
+          clientName: slip.clientName,
+          vendorNumber: slip.vendorNumber,
+          siteCode: slip.siteCode,
+          siteName: slip.siteName,
+          warehouse: slip.warehouse,
+          warehouseCode: slip.warehouseCode || resolveWarehouseCode(slip.warehouse || ''),
+          totalQty: slip.totalQty,
+          totalVal: slip.totalVal,
+          status: slip.status,
+        });
+        break;
+      }
+    }
+    if (!matched) {
       return NextResponse.json(
-        {
-          found: true,
-          bookable: true,
-          slip: {
-            id: slip.id,
-            loadId: slip.loadId,
-            clientId: slip.clientId,
-            clientName: slip.clientName,
-            vendorNumber: slip.vendorNumber,
-            siteCode: slip.siteCode,
-            siteName: slip.siteName,
-            warehouse: slip.warehouse,
-            warehouseCode: slip.warehouseCode || resolveWarehouseCode(slip.warehouse || ''),
-            totalQty: slip.totalQty,
-            totalVal: slip.totalVal,
-            status: slip.status,
-          },
-        },
+        { found: false, error: `Pick slip ${slipId} not found` },
         { headers: { 'Cache-Control': 'no-store' } },
       );
     }
   }
 
+  // Single-slip backward compat: also return `slip` for callers expecting it
   return NextResponse.json(
-    { found: false, error: 'Pick slip not found' },
+    {
+      found: true,
+      bookable: true,
+      slips: foundSlips,
+      slip: foundSlips[0], // backward compat
+    },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 }

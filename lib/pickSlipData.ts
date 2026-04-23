@@ -42,7 +42,8 @@ export type PickSlipStatus =
   | 'in-transit'
   | 'returned-to-vendor'
   | 'failed-release'
-  | 'partial-release';
+  | 'partial-release'
+  | 'delivered';
 
 export interface PickSlipRecord {
   /** Unique pick slip ID, e.g. PS-9448-20260309-001 */
@@ -121,6 +122,22 @@ export interface PickSlipRecord {
   unreturnedSkipReason?: string;
   unreturnedSkipRepId?: string;
   unreturnedSkipRepName?: string;
+  /** Unique delivery token (UUID) — used in QR code URL */
+  deliveryToken?: string;
+  /** SP web URL of the delivery note PDF */
+  deliveryNoteSpWebUrl?: string;
+  /** ISO timestamp when delivery note was generated */
+  deliveryNoteGeneratedAt?: string;
+  /** Vendor signature — base64 PNG from canvas pad */
+  deliverySignature?: string;
+  /** Name of vendor rep who signed */
+  deliverySignedByName?: string;
+  /** ISO timestamp of delivery confirmation */
+  deliveredAt?: string;
+  /** ID of the rep who submitted the delivery confirmation */
+  deliveredByRepId?: string;
+  /** Name of the rep who submitted */
+  deliveredByRepName?: string;
 }
 
 export interface PickSlipRunIndex {
@@ -348,4 +365,34 @@ export async function bulkRemoveSlips(
     await savePickSlipRun(run);
   }
   return deleted;
+}
+
+/**
+ * Find a pick slip by its delivery token. Iterates all runs for all clients.
+ * Called infrequently — only on QR scan.
+ */
+export async function findSlipByDeliveryToken(
+  token: string,
+  clientIds: string[],
+  listLoadsFn: (clientId: string) => Promise<Array<{ id: string }>>
+): Promise<{ slip: PickSlipRecord; clientId: string; loadId: string } | null> {
+  for (const clientId of clientIds) {
+    // Load-based runs
+    const loads = await listLoadsFn(clientId);
+    for (const load of loads) {
+      const run = await getPickSlipRun(clientId, load.id);
+      if (!run) continue;
+      const slip = run.slips.find(s => s.deliveryToken === token);
+      if (slip) return { slip, clientId, loadId: load.id };
+    }
+    // Manual runs
+    const manualIds = await getManualIndex(clientId);
+    for (const manualLoadId of manualIds) {
+      const run = await getPickSlipRun(clientId, manualLoadId);
+      if (!run) continue;
+      const slip = run.slips.find(s => s.deliveryToken === token);
+      if (slip) return { slip, clientId, loadId: manualLoadId };
+    }
+  }
+  return null;
 }

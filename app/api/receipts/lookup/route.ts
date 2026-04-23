@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
  * GET /api/receipts/lookup?barcode=STK-GAU-0001
  *
  * Validate a scanned barcode — returns sticker info + whether it's
- * already linked to another pick slip.
+ * already linked to pick slip(s).
  *
  * Gated by `receipt_stock` OR `scan_stock` — the scan screen also
  * needs to validate barcodes before booking.
@@ -42,7 +42,8 @@ export async function GET(req: NextRequest) {
       batchId: sticker.batchId,
       warehouseCode: sticker.warehouseCode,
       warehouseName: sticker.warehouseName,
-      linkedPickSlipId: sticker.linkedPickSlipId ?? null,
+      linkedPickSlipId: sticker.linkedPickSlipIds[0] ?? null, // backward compat
+      linkedPickSlipIds: sticker.linkedPickSlipIds,            // new: full array
       linkedAt: sticker.linkedAt ?? null,
     },
     { headers: { 'Cache-Control': 'no-store' } },

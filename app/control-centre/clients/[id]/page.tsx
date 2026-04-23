@@ -18,6 +18,7 @@ interface SpLink {
   lastRefreshError?: string;
   lastWriteAt?: string;
   pickSlipFolderUrl?: string;
+  deliveryNoteFolderUrl?: string;
 }
 
 interface Client {
@@ -27,6 +28,15 @@ interface Client {
   type: 'ASL' | 'NSL';
   createdAt: string;
   sharepointLinks?: SpLink[];
+}
+
+interface ClientContact {
+  id: string;
+  name: string;
+  surname: string;
+  email: string;
+  role: string;
+  receiveDeliveryNotes: boolean;
 }
 
 interface Channel { id: string; name: string }
@@ -56,6 +66,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   const [addFolderUrl, setAddFolderUrl] = useState('');
   const [addFileName, setAddFileName] = useState('');
   const [addPickSlipFolder, setAddPickSlipFolder] = useState('');
+  const [addDeliveryNoteFolder, setAddDeliveryNoteFolder] = useState('');
   const [addLoading, setAddLoading] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
 
@@ -66,10 +77,20 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   const [editFolderUrl, setEditFolderUrl] = useState('');
   const [editFileName, setEditFileName] = useState('');
   const [editPickSlipFolder, setEditPickSlipFolder] = useState('');
+  const [editDeliveryNoteFolder, setEditDeliveryNoteFolder] = useState('');
   const [editLoading, setEditLoading] = useState(false);
 
   // Per-row refreshing state
   const [refreshing, setRefreshing] = useState<Record<string, boolean>>({});
+
+  // Contacts
+  const [contacts, setContacts] = useState<ClientContact[]>([]);
+  const [addContactName, setAddContactName] = useState('');
+  const [addContactSurname, setAddContactSurname] = useState('');
+  const [addContactEmail, setAddContactEmail] = useState('');
+  const [addContactRole, setAddContactRole] = useState('');
+  const [addContactDN, setAddContactDN] = useState(true);
+  const [addContactLoading, setAddContactLoading] = useState(false);
 
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
 
@@ -81,10 +102,11 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   async function fetchAll() {
     setLoadingPage(true);
     try {
-      const [clientsRes, channelsRes, linksRes] = await Promise.all([
+      const [clientsRes, channelsRes, linksRes, contactsRes] = await Promise.all([
         authFetch('/api/control/clients', { cache: 'no-store' }),
         authFetch('/api/control/channels', { cache: 'no-store' }),
         authFetch(`/api/clients/${id}/sp-links`, { cache: 'no-store' }),
+        authFetch(`/api/clients/${id}/contacts`, { cache: 'no-store' }),
       ]);
       if (clientsRes.ok) {
         const all: Client[] = await clientsRes.json();
@@ -92,6 +114,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       }
       if (channelsRes.ok) setChannels(await channelsRes.json());
       if (linksRes.ok) setLinks(await linksRes.json());
+      if (contactsRes.ok) setContacts(await contactsRes.json());
     } finally {
       setLoadingPage(false);
     }
@@ -149,12 +172,13 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           channel, vendorNumber: addVendor.trim(),
           folderUrl: addFolderUrl.trim(), fileName: addFileName.trim(),
           pickSlipFolderUrl: addPickSlipFolder.trim() || undefined,
+          deliveryNoteFolderUrl: addDeliveryNoteFolder.trim() || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) { notify(data.error ?? 'Failed to add link', 'error'); return; }
       notify('SP link added');
-      setAddChannelOther(''); setAddFolderUrl(''); setAddFileName(''); setAddPickSlipFolder('');
+      setAddChannelOther(''); setAddFolderUrl(''); setAddFileName(''); setAddPickSlipFolder(''); setAddDeliveryNoteFolder('');
       await fetchAll();
     } finally {
       setAddLoading(false);
@@ -188,6 +212,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     setEditFolderUrl(link.folderUrl);
     setEditFileName(link.fileName);
     setEditPickSlipFolder(link.pickSlipFolderUrl ?? '');
+    setEditDeliveryNoteFolder(link.deliveryNoteFolderUrl ?? '');
   }
 
   async function handleEdit(e: React.FormEvent) {
@@ -204,6 +229,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           folderUrl: editFolderUrl.trim(),
           fileName: editFileName.trim(),
           pickSlipFolderUrl: editPickSlipFolder.trim() || undefined,
+          deliveryNoteFolderUrl: editDeliveryNoteFolder.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -221,6 +247,59 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     const res = await authFetch(`/api/clients/${id}/sp-links/${link.id}`, { method: 'DELETE' });
     if (res.ok) { notify('Link deleted'); await fetchAll(); }
     else notify('Failed to delete', 'error');
+  }
+
+  async function handleAddContact(e: React.FormEvent) {
+    e.preventDefault();
+    if (!addContactName.trim() || !addContactEmail.trim()) {
+      notify('Name and email are required', 'error');
+      return;
+    }
+    setAddContactLoading(true);
+    try {
+      const res = await authFetch(`/api/clients/${id}/contacts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: addContactName.trim(),
+          surname: addContactSurname.trim(),
+          email: addContactEmail.trim(),
+          role: addContactRole.trim(),
+          receiveDeliveryNotes: addContactDN,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { notify(data.error ?? 'Failed to add contact', 'error'); return; }
+      notify('Contact added');
+      setAddContactName(''); setAddContactSurname(''); setAddContactEmail(''); setAddContactRole(''); setAddContactDN(true);
+      await fetchAll();
+    } finally {
+      setAddContactLoading(false);
+    }
+  }
+
+  async function handleToggleContactDN(contact: ClientContact) {
+    const res = await authFetch(`/api/clients/${id}/contacts`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactId: contact.id, receiveDeliveryNotes: !contact.receiveDeliveryNotes }),
+    });
+    if (res.ok) {
+      setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, receiveDeliveryNotes: !c.receiveDeliveryNotes } : c));
+    } else notify('Failed to update', 'error');
+  }
+
+  async function handleDeleteContact(contactId: string) {
+    if (!confirm('Delete this contact?')) return;
+    const res = await authFetch(`/api/clients/${id}/contacts`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactId }),
+    });
+    if (res.ok) {
+      notify('Contact deleted');
+      setContacts(prev => prev.filter(c => c.id !== contactId));
+    } else notify('Failed to delete', 'error');
   }
 
   if (loadingPage) return <p className="text-sm text-gray-500">Loading client…</p>;
@@ -302,6 +381,13 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
             <p className="text-xs text-gray-400">SP folder where pick slip PDFs will be uploaded. Leave blank if not needed.</p>
           </div>
+          <div className="flex flex-col gap-1 md:col-span-2">
+            <label className="text-xs text-gray-500 font-medium">Delivery Note Folder URL <span className="text-gray-400">(optional)</span></label>
+            <input value={addDeliveryNoteFolder} onChange={e => setAddDeliveryNoteFolder(e.target.value)}
+              placeholder="https://iramsa.sharepoint.com/sites/.../Delivery Notes/..."
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
+            <p className="text-xs text-gray-400">SP folder where delivery note PDFs will be uploaded on release. Leave blank if not needed.</p>
+          </div>
           <div className="md:col-span-2 flex gap-3">
             <button type="button" onClick={handleTestConnection} disabled={testLoading || addLoading}
               className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50">
@@ -341,6 +427,9 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                     {l.pickSlipFolderUrl && (
                       <div className="text-gray-400 truncate mt-0.5" title={l.pickSlipFolderUrl}>Pick slips: configured</div>
                     )}
+                    {l.deliveryNoteFolderUrl && (
+                      <div className="text-gray-400 truncate mt-0.5" title={l.deliveryNoteFolderUrl}>Delivery notes: configured</div>
+                    )}
                   </td>
                   <td className="px-6 py-3 text-gray-600 text-xs">
                     <div>{fmtDate(l.lastRefreshedAt)}</div>
@@ -370,6 +459,91 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             </tbody>
           </table>
         </div>
+      </section>
+
+      {/* Contacts section */}
+      <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-4">Customer Contacts</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Contacts marked &ldquo;Receive Delivery Notes&rdquo; will be emailed when a delivery is confirmed via QR code.
+        </p>
+
+        {/* Add contact form */}
+        <form onSubmit={handleAddContact} className="grid grid-cols-1 md:grid-cols-6 gap-3 mb-4">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-gray-500 font-medium">Name</label>
+            <input value={addContactName} onChange={e => setAddContactName(e.target.value)} required
+              placeholder="First name"
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-gray-500 font-medium">Surname</label>
+            <input value={addContactSurname} onChange={e => setAddContactSurname(e.target.value)}
+              placeholder="Surname"
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-gray-500 font-medium">Email</label>
+            <input type="email" value={addContactEmail} onChange={e => setAddContactEmail(e.target.value)} required
+              placeholder="email@example.com"
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-gray-500 font-medium">Role</label>
+            <input value={addContactRole} onChange={e => setAddContactRole(e.target.value)}
+              placeholder="e.g. Buyer, Manager"
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
+          </div>
+          <div className="flex flex-col gap-1 justify-end">
+            <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer py-2">
+              <input type="checkbox" checked={addContactDN} onChange={e => setAddContactDN(e.target.checked)}
+                className="rounded border-gray-300 text-[var(--color-primary)]" />
+              Receive Delivery Notes
+            </label>
+          </div>
+          <div className="flex items-end">
+            <button type="submit" disabled={addContactLoading}
+              className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-lg w-full">
+              {addContactLoading ? 'Adding…' : 'Add'}
+            </button>
+          </div>
+        </form>
+
+        {/* Contacts table */}
+        {contacts.length > 0 ? (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
+                <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
+                <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Role</th>
+                <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Delivery Notes</th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {contacts.map(c => (
+                <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                  <td className="px-3 py-2 font-medium text-gray-900">{c.name} {c.surname}</td>
+                  <td className="px-3 py-2 text-gray-600 text-xs">{c.email}</td>
+                  <td className="px-3 py-2 text-gray-600 text-xs">{c.role || '—'}</td>
+                  <td className="px-3 py-2 text-center">
+                    <button onClick={() => handleToggleContactDN(c)}
+                      className={`px-2 py-0.5 rounded-full text-xs font-medium ${c.receiveDeliveryNotes ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                      {c.receiveDeliveryNotes ? 'Yes' : 'No'}
+                    </button>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <button onClick={() => handleDeleteContact(c.id)}
+                      className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="text-center text-gray-400 text-sm py-4">No contacts yet — add one above.</p>
+        )}
       </section>
 
       {/* Edit modal */}
@@ -402,6 +576,12 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                 <label className="text-xs text-gray-500 font-medium">Pick Slip Folder URL <span className="text-gray-400">(optional)</span></label>
                 <input value={editPickSlipFolder} onChange={e => setEditPickSlipFolder(e.target.value)}
                   placeholder="https://iramsa.sharepoint.com/sites/.../Pick Slips/..."
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
+              </div>
+              <div className="flex flex-col gap-1 col-span-2">
+                <label className="text-xs text-gray-500 font-medium">Delivery Note Folder URL <span className="text-gray-400">(optional)</span></label>
+                <input value={editDeliveryNoteFolder} onChange={e => setEditDeliveryNoteFolder(e.target.value)}
+                  placeholder="https://iramsa.sharepoint.com/sites/.../Delivery Notes/..."
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
               </div>
               <div className="col-span-2 flex gap-3 pt-2">

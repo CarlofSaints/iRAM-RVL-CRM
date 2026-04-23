@@ -42,6 +42,7 @@ const STATUS_LABELS: Record<string, string> = {
   'returned-to-vendor': 'Returned to Vendor',
   'failed-release': 'Failed Release',
   'partial-release': 'Partial Release',
+  'delivered': 'Delivered',
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -54,6 +55,7 @@ const STATUS_COLORS: Record<string, string> = {
   'returned-to-vendor': 'bg-red-100 text-red-700',
   'failed-release': 'bg-red-100 text-red-700',
   'partial-release': 'bg-red-100 text-red-700',
+  'delivered': 'bg-emerald-100 text-emerald-700',
 };
 
 export default function ReceiptsListPage() {
@@ -219,14 +221,14 @@ export default function ReceiptsListPage() {
                           ? 'text-purple-600 border-purple-200 bg-purple-50 hover:bg-purple-100'
                           : s.status === 'failed-release'
                           ? 'text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100'
-                          : (s.status === 'in-transit' || s.status === 'partial-release')
+                          : (s.status === 'in-transit' || s.status === 'partial-release' || s.status === 'delivered')
                           ? 'text-green-600 border-green-200 bg-green-50'
                           : s.status === 'booked'
                           ? 'text-teal-600 border-teal-200 bg-teal-50 hover:bg-teal-100'
                           : 'text-[var(--color-primary)] border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)]/5'
                       }`}
                     >
-                      {s.status === 'receipted' ? 'Release' : s.status === 'failed-release' ? 'Retry Release' : (s.status === 'in-transit' || s.status === 'partial-release') ? 'View' : s.status === 'booked' ? 'Complete Receipt' : 'Capture'}
+                      {s.status === 'receipted' ? 'Release' : s.status === 'failed-release' ? 'Retry Release' : (s.status === 'in-transit' || s.status === 'partial-release' || s.status === 'delivered') ? 'View' : s.status === 'booked' ? 'Complete Receipt' : 'Capture'}
                     </button>
                   </td>
                 </tr>

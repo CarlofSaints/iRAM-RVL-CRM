@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { loadControl } from '@/lib/controlData';
 import { updateSlipInRun, getPickSlipRun, type ReceiptBox } from '@/lib/pickSlipData';
+import { listSpLinks } from '@/lib/spLinkData';
 import { logAudit } from '@/lib/auditLog';
+import { generateDeliveryNotePdf } from '@/lib/deliveryNotePdf';
+import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +16,7 @@ export const dynamic = 'force-dynamic';
  *
  * Release stock from warehouse for transit back to client/vendor.
  * Validates the rep's release code — match → in-transit, mismatch → failed-release.
+ * On successful release, generates a delivery note PDF with QR code and uploads to SP.
  */
 export async function POST(req: NextRequest) {
   const guard = await requirePermission(req, 'receipt_stock');
@@ -86,7 +91,6 @@ export async function POST(req: NextRequest) {
   if (codeMatch) {
     // Check if this is a manager-authorized partial release
     const isPartial = !!managerOverrideCode;
-    let managerValid = true;
 
     if (isPartial && managerOverrideRepId) {
       // Validate manager's release code
@@ -97,7 +101,7 @@ export async function POST(req: NextRequest) {
           { status: 400, headers: { 'Cache-Control': 'no-store' } },
         );
       }
-      managerValid = managerOverrideCode.toUpperCase().trim() === manager.releaseCode.toUpperCase().trim();
+      const managerValid = managerOverrideCode.toUpperCase().trim() === manager.releaseCode.toUpperCase().trim();
       if (!managerValid) {
         return NextResponse.json(
           { ok: false, error: 'Manager release code does not match' },
@@ -107,15 +111,20 @@ export async function POST(req: NextRequest) {
     }
 
     const finalStatus = isPartial ? 'partial-release' : 'in-transit';
+    const now = new Date().toISOString();
+
+    // Generate delivery token
+    const deliveryToken = randomUUID();
 
     const updated = await updateSlipInRun(clientId, loadId, slipId, {
       status: finalStatus,
       releaseRepId,
       releaseRepName,
       releaseBoxes: releaseBoxes ?? [],
-      releasedAt: new Date().toISOString(),
+      releasedAt: now,
       releasedBy: guard.userId,
       releasedByName: userName,
+      deliveryToken,
     });
 
     await logAudit({
@@ -128,6 +137,61 @@ export async function POST(req: NextRequest) {
         ? `Partial release of ${(releaseBoxes ?? []).length} boxes (manager override by ${managerOverrideRepId})`
         : `Stock released — ${(releaseBoxes ?? []).length} boxes in transit. Rep: ${releaseRepName}`,
     });
+
+    // ── Generate & upload delivery note PDF (non-blocking on failure) ──
+    try {
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://iram-rvl-crm.vercel.app';
+      const qrUrl = `${siteUrl}/delivery/${deliveryToken}`;
+
+      const pdfBuffer = await generateDeliveryNotePdf({
+        pickSlipId: slipId,
+        clientName: slip.clientName,
+        vendorNumber: slip.vendorNumber,
+        siteName: slip.siteName,
+        siteCode: slip.siteCode,
+        warehouse: slip.warehouse,
+        releaseRepName,
+        releasedAt: now,
+        storeRefs: slip.receiptStoreRefs ?? [],
+        manual: slip.manual,
+        rows: (slip.rows ?? []).map(r => ({
+          articleCode: r.articleCode,
+          description: r.description,
+          qty: r.qty,
+          val: r.val,
+        })),
+        boxCount: (releaseBoxes ?? []).length,
+        stickerBarcodes: (releaseBoxes ?? []).map(b => b.stickerBarcode),
+        qrUrl,
+      });
+
+      // Upload to SP — find link with deliveryNoteFolderUrl
+      const spLinks = await listSpLinks(clientId);
+      const dnLink = spLinks.find(l => l.deliveryNoteFolderUrl);
+
+      if (dnLink?.deliveryNoteFolderUrl) {
+        const dateStr = now.slice(0, 10).replace(/-/g, '');
+        const resolved = await resolveSharedItem(dnLink.deliveryNoteFolderUrl);
+        const folder = await createFolder(resolved.driveId, resolved.folderId, dateStr);
+        const pdfFileName = `${slip.siteName} ${slip.siteCode} - DN-${slipId}.pdf`;
+        const uploaded = await uploadNewFile(resolved.driveId, folder.id, pdfFileName, pdfBuffer, 'application/pdf');
+
+        // Save delivery note SP URL on slip
+        await updateSlipInRun(clientId, loadId, slipId, {
+          deliveryNoteSpWebUrl: uploaded.webUrl,
+          deliveryNoteGeneratedAt: new Date().toISOString(),
+        });
+      } else {
+        console.warn('[release] No SP link with deliveryNoteFolderUrl for client', clientId, '— delivery note not uploaded');
+        // Still save the generation timestamp (PDF was generated, just not uploaded)
+        await updateSlipInRun(clientId, loadId, slipId, {
+          deliveryNoteGeneratedAt: new Date().toISOString(),
+        });
+      }
+    } catch (err) {
+      // Delivery note generation is non-blocking — log warning but don't fail the release
+      console.error('[release] Delivery note generation/upload failed:', err instanceof Error ? err.message : err);
+    }
 
     return NextResponse.json(
       { ok: true, status: finalStatus, slip: updated },

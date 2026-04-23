@@ -28,6 +28,17 @@ export interface SpLink {
   lastWriteAt?: string;
   /** SP folder URL where pick slip PDFs should be uploaded. */
   pickSlipFolderUrl?: string;
+  /** SP folder URL where delivery note PDFs should be uploaded. */
+  deliveryNoteFolderUrl?: string;
+}
+
+export interface ClientContact {
+  id: string;
+  name: string;
+  surname: string;
+  email: string;
+  role: string;
+  receiveDeliveryNotes: boolean;
 }
 
 export interface ClientWithLinks {
@@ -37,6 +48,7 @@ export interface ClientWithLinks {
   type: 'ASL' | 'NSL';
   createdAt: string;
   sharepointLinks?: SpLink[];
+  contacts?: ClientContact[];
 }
 
 // ── Client record helpers ────────────────────────────────────────────────────

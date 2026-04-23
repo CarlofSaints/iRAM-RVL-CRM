@@ -15,28 +15,45 @@ interface RepRecord {
   releaseCode?: string;
 }
 
+interface SlipRef {
+  slipId: string;
+  clientId: string;
+  loadId: string;
+}
+
 /**
  * POST /api/scan/book
  *
  * Book stock into a warehouse via the scan screen.
- * Links sticker barcodes to the pick slip and sets status to 'booked'.
+ * Links sticker barcodes to pick slip(s) and sets status to 'booked'.
+ *
+ * Accepts either:
+ *   - Legacy single-slip: { slipId, clientId, loadId, repId, securityCode, boxes }
+ *   - Multi-slip: { slips: [{ slipId, clientId, loadId }], repId, securityCode, boxes }
  */
 export async function POST(req: NextRequest) {
   const guard = await requirePermission(req, 'scan_stock');
   if (guard instanceof NextResponse) return guard;
 
   const body = await req.json();
-  const { slipId, clientId, loadId, repId, securityCode, boxes } = body as {
-    slipId: string;
-    clientId: string;
-    loadId: string;
+  const { repId, securityCode, boxes } = body as {
     repId: string;
     securityCode: string;
     boxes: ReceiptBox[];
   };
 
-  if (!slipId || !clientId || !loadId) {
-    return NextResponse.json({ error: 'slipId, clientId, and loadId are required' }, { status: 400 });
+  // Normalize to slips array — backward compat with single-slip format
+  let slips: SlipRef[];
+  if (body.slips && Array.isArray(body.slips)) {
+    slips = body.slips;
+  } else if (body.slipId && body.clientId && body.loadId) {
+    slips = [{ slipId: body.slipId, clientId: body.clientId, loadId: body.loadId }];
+  } else {
+    return NextResponse.json({ error: 'slips array or slipId/clientId/loadId are required' }, { status: 400 });
+  }
+
+  if (slips.length === 0) {
+    return NextResponse.json({ error: 'At least one slip is required' }, { status: 400 });
   }
   if (!repId) {
     return NextResponse.json({ error: 'repId is required' }, { status: 400 });
@@ -48,22 +65,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'At least one box is required' }, { status: 400 });
   }
 
-  // Validate slip exists and is in a bookable status
-  const run = await getPickSlipRun(clientId, loadId);
-  if (!run) {
-    return NextResponse.json({ error: 'Pick slip run not found' }, { status: 404 });
-  }
-  const slip = run.slips.find(s => s.id === slipId);
-  if (!slip) {
-    return NextResponse.json({ error: 'Pick slip not found' }, { status: 404 });
-  }
-
+  // Validate all slips exist and are bookable BEFORE making changes
   const bookableStatuses = ['generated', 'sent', 'picked'];
-  if (!bookableStatuses.includes(slip.status)) {
-    return NextResponse.json(
-      { error: `Pick slip is already "${slip.status}" — cannot book` },
-      { status: 409 },
-    );
+  for (const ref of slips) {
+    const run = await getPickSlipRun(ref.clientId, ref.loadId);
+    if (!run) {
+      return NextResponse.json({ error: `Pick slip run not found for ${ref.slipId}` }, { status: 404 });
+    }
+    const slip = run.slips.find(s => s.id === ref.slipId);
+    if (!slip) {
+      return NextResponse.json({ error: `Pick slip ${ref.slipId} not found` }, { status: 404 });
+    }
+    if (!bookableStatuses.includes(slip.status)) {
+      return NextResponse.json(
+        { error: `Pick slip ${ref.slipId} is already "${slip.status}" — cannot book` },
+        { status: 409 },
+      );
+    }
   }
 
   // Validate rep/user exists and has a release code
@@ -87,50 +105,69 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Security code does not match' }, { status: 403 });
   }
 
-  // Link stickers to the pick slip
+  // Link stickers to ALL pick slips (multi-link)
+  const allSlipIds = slips.map(s => s.slipId);
   const linkErrors: string[] = [];
   for (const box of boxes) {
-    const result = await findAndLinkSticker(box.stickerBarcode, slipId);
-    if (!result) {
-      linkErrors.push(`Barcode ${box.stickerBarcode} not found`);
-    } else if (result.linkedPickSlipId && result.linkedPickSlipId !== slipId) {
-      linkErrors.push(`Barcode ${box.stickerBarcode} already linked to ${result.linkedPickSlipId}`);
+    for (const slipId of allSlipIds) {
+      const result = await findAndLinkSticker(box.stickerBarcode, slipId);
+      if (!result) {
+        // Only report "not found" once per barcode, not per slip
+        if (!linkErrors.some(e => e.includes(box.stickerBarcode))) {
+          linkErrors.push(`Barcode ${box.stickerBarcode} not found`);
+        }
+      }
     }
   }
 
-  // Get the booking user's info
+  // Get booking user info
   const bookingUser = users.find(u => u.id === guard.userId);
   const bookingUserName = bookingUser ? `${bookingUser.name} ${bookingUser.surname}`.trim() : guard.userId;
   const repName = match ? `${match.name} ${match.surname}`.trim() : repId;
 
-  // Update slip with booking data
-  const updated = await updateSlipInRun(clientId, loadId, slipId, {
-    status: 'booked',
-    bookedAt: new Date().toISOString(),
-    bookedBy: guard.userId,
-    bookedByName: bookingUserName,
-    bookedRepId: repId,
-    bookedRepName: repName,
-    receiptBoxes: boxes,
-    receiptTotalBoxes: boxes.length,
-  });
+  const isMulti = slips.length > 1;
+  const slipIdsList = allSlipIds.join(', ');
+  const updatedSlips = [];
 
-  if (!updated) {
-    return NextResponse.json({ error: 'Failed to update pick slip' }, { status: 500 });
+  // Update each slip with booking data
+  for (const ref of slips) {
+    const updated = await updateSlipInRun(ref.clientId, ref.loadId, ref.slipId, {
+      status: 'booked',
+      bookedAt: new Date().toISOString(),
+      bookedBy: guard.userId,
+      bookedByName: bookingUserName,
+      bookedRepId: repId,
+      bookedRepName: repName,
+      receiptBoxes: boxes,
+      receiptTotalBoxes: boxes.length,
+    });
+
+    if (!updated) {
+      return NextResponse.json({ error: `Failed to update pick slip ${ref.slipId}` }, { status: 500 });
+    }
+
+    updatedSlips.push(updated);
+
+    // Audit log per slip
+    await logAudit({
+      action: 'scan_book',
+      userId: guard.userId,
+      userName: bookingUserName,
+      slipId: ref.slipId,
+      clientId: ref.clientId,
+      detail: isMulti
+        ? `Multi-slip booking — ${boxes.length} box${boxes.length !== 1 ? 'es' : ''} scanned for ${ref.slipId} (booked with: ${slipIdsList}). Rep: ${repName}`
+        : `Stock booked — ${boxes.length} box${boxes.length !== 1 ? 'es' : ''} scanned for ${ref.slipId}. Rep: ${repName}`,
+    });
   }
 
-  // Audit log
-  await logAudit({
-    action: 'scan_book',
-    userId: guard.userId,
-    userName: bookingUserName,
-    slipId,
-    clientId,
-    detail: `Stock booked — ${boxes.length} box${boxes.length !== 1 ? 'es' : ''} scanned for ${slipId}. Rep: ${repName}`,
-  });
-
   return NextResponse.json(
-    { ok: true, slip: updated, linkErrors },
+    {
+      ok: true,
+      slip: updatedSlips[0],  // backward compat
+      slips: updatedSlips,
+      linkErrors,
+    },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 }

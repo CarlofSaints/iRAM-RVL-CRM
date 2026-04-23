@@ -43,6 +43,11 @@ interface SlipDto {
   unreturnedCapturedAt?: string;
   unreturnedSkipped?: boolean;
   manual?: boolean;
+  deliveredAt?: string;
+  deliverySignedByName?: string;
+  deliverySignature?: string;
+  deliveredByRepName?: string;
+  deliveryNoteSpWebUrl?: string;
 }
 
 interface UnreturnedRow {
@@ -100,7 +105,7 @@ function uuid(): string {
 
 function resolveMode(status: string): PageMode {
   if (status === 'receipted' || status === 'failed-release') return 'release';
-  if (status === 'in-transit' || status === 'returned-to-vendor' || status === 'partial-release') return 'view';
+  if (status === 'in-transit' || status === 'returned-to-vendor' || status === 'partial-release' || status === 'delivered') return 'view';
   return 'receipt'; // generated, sent, picked, booked
 }
 
@@ -114,6 +119,7 @@ const STATUS_BADGE: Record<string, string> = {
   'returned-to-vendor': 'bg-red-100 text-red-700',
   'failed-release': 'bg-red-100 text-red-700',
   'partial-release': 'bg-red-100 text-red-700',
+  'delivered': 'bg-emerald-100 text-emerald-700',
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -126,6 +132,7 @@ const STATUS_LABEL: Record<string, string> = {
   'returned-to-vendor': 'Returned to Vendor',
   'failed-release': 'Failed Release',
   'partial-release': 'Partial Release',
+  'delivered': 'Delivered',
 };
 
 export default function ReceiptCapturePage() {
@@ -200,8 +207,11 @@ export default function ReceiptCapturePage() {
   const [skipRepId, setSkipRepId] = useState('');
   const [skipRepName, setSkipRepName] = useState('');
 
+  // ── GRN auto-suggest state ──
+  const [grnAutoFilled, setGrnAutoFilled] = useState(false);
+  const [grnRelatedSlipId, setGrnRelatedSlipId] = useState('');
+
   const mode: PageMode = slip ? resolveMode(slip.status) : 'receipt';
-  const isReadOnly = mode === 'view';
 
   // ── Load slip + reps ──
   const loadData = useCallback(async () => {
@@ -259,6 +269,30 @@ export default function ReceiptCapturePage() {
   }, [session, slipId]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // ── GRN auto-suggest: check related slips for existing store refs ──
+  useEffect(() => {
+    if (!slip || !slipId || mode !== 'receipt') return;
+    // Only auto-fill if store refs are currently empty
+    const hasRefs = storeRefs.some(r => r.trim());
+    if (hasRefs) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await authFetch(`/api/receipts/related-grn?slipId=${encodeURIComponent(slipId)}`, { cache: 'no-store' });
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.storeRefs && data.storeRefs.length > 0) {
+          setStoreRefs(data.storeRefs);
+          setGrnAutoFilled(true);
+          setGrnRelatedSlipId(data.relatedSlipId || '');
+        }
+      } catch { /* silent — GRN auto-fill is optional */ }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slip?.id, mode]);
 
   // ── Rep dropdown change (receipt) ──
   function onRepChange(repId: string) {
@@ -825,6 +859,30 @@ export default function ReceiptCapturePage() {
       {/* ════════════════════════════════════════════════════════════════════ */}
       {mode === 'receipt' && !showUnreturnedCapture && !showManualCapture && (
         <>
+          {/* GRN auto-fill banner */}
+          {grnAutoFilled && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-4 flex items-start gap-3">
+              <svg className="w-5 h-5 text-blue-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-blue-800">GRN Auto-Filled</p>
+                <p className="text-xs text-blue-600 mt-0.5">
+                  Store reference(s) have been pre-filled from related pick slip <strong className="font-mono">{grnRelatedSlipId}</strong> (shared boxes). You can edit or override them.
+                </p>
+              </div>
+              <button
+                onClick={() => setGrnAutoFilled(false)}
+                className="text-blue-400 hover:text-blue-600 shrink-0 mt-0.5"
+                title="Dismiss"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+
           {/* Receipt details form */}
           <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
             <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Receipt Details</h2>
@@ -866,7 +924,7 @@ export default function ReceiptCapturePage() {
               {storeRefs.map((ref, i) => (
                 <div key={i} className="flex items-end gap-1.5">
                   <div className="flex-1">
-                    <label className="block text-xs text-gray-600 mb-1">Store Reference (GRV) {i + 1}</label>
+                    <label className="block text-xs text-gray-600 mb-1">Store Reference (GRV/GRN) {i + 1}</label>
                     <input
                       type="text"
                       value={ref}
@@ -902,7 +960,7 @@ export default function ReceiptCapturePage() {
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                     </svg>
-                    Add Store Reference (GRV)
+                    Add Store Reference (GRV/GRN)
                   </button>
                 </div>
               )}
@@ -1358,7 +1416,7 @@ export default function ReceiptCapturePage() {
             {/* Store refs */}
             {storeRefs.filter(r => r.trim()).length > 0 && (
               <div className="mt-3 pt-3 border-t border-gray-100">
-                <span className="text-gray-500 text-xs block mb-1">Store References (GRV)</span>
+                <span className="text-gray-500 text-xs block mb-1">Store References (GRV/GRN)</span>
                 <div className="flex flex-wrap gap-2">
                   {storeRefs.filter(r => r.trim()).map((ref, i) => (
                     <span key={i} className="px-2 py-0.5 bg-gray-100 rounded text-xs font-mono">{ref}</span>
@@ -1436,6 +1494,42 @@ export default function ReceiptCapturePage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Delivery confirmation details (read-only, only for delivered slips) */}
+          {slip.deliveredAt && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-5 mb-4">
+              <h2 className="text-sm font-bold text-emerald-800 uppercase tracking-wide mb-3">Delivery Confirmation</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+                <div>
+                  <span className="text-emerald-600 text-xs block">Received By</span>
+                  <span className="font-medium">{slip.deliverySignedByName || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-emerald-600 text-xs block">Delivered At</span>
+                  <span className="font-medium">{fmtDateTime(slip.deliveredAt)}</span>
+                </div>
+                <div>
+                  <span className="text-emerald-600 text-xs block">Confirmed By Rep</span>
+                  <span className="font-medium">{slip.deliveredByRepName || '—'}</span>
+                </div>
+                {slip.deliveryNoteSpWebUrl && (
+                  <div>
+                    <span className="text-emerald-600 text-xs block">Delivery Note</span>
+                    <a href={slip.deliveryNoteSpWebUrl} target="_blank" rel="noopener noreferrer" className="text-emerald-700 font-medium hover:underline text-xs">
+                      View PDF
+                    </a>
+                  </div>
+                )}
+              </div>
+              {slip.deliverySignature && (
+                <div className="mt-4 pt-3 border-t border-emerald-200">
+                  <span className="text-emerald-600 text-xs block mb-2">Signature</span>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={slip.deliverySignature} alt="Delivery signature" className="max-w-[300px] h-auto border border-emerald-200 rounded bg-white p-1" />
+                </div>
+              )}
             </div>
           )}
         </>

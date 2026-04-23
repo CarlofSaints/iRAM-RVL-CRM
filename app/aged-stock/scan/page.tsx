@@ -63,10 +63,10 @@ export default function ScanPage() {
   const notify = (message: string, type: 'success' | 'error' = 'success') =>
     setToast({ message, type });
 
-  // Step 1: Pick slip lookup
+  // Step 1: Pick slip lookup — multi-slip
   const [slipQuery, setSlipQuery] = useState('');
   const [slipLoading, setSlipLoading] = useState(false);
-  const [slip, setSlip] = useState<SlipSummary | null>(null);
+  const [slips, setSlips] = useState<SlipSummary[]>([]);
   const [slipError, setSlipError] = useState('');
   const slipInputRef = useRef<HTMLInputElement>(null);
 
@@ -108,18 +108,20 @@ export default function ScanPage() {
     if (session) loadRepsAndUsers();
   }, [session, loadRepsAndUsers]);
 
-  // ── Lookup pick slip ──
-  async function lookupSlip() {
+  // ── Lookup and add a pick slip ──
+  async function addSlip() {
     const query = slipQuery.trim();
     if (!query) return;
 
+    // Check if already added
+    if (slips.some(s => s.id === query)) {
+      setSlipError(`Pick slip ${query} is already added`);
+      setSlipQuery('');
+      return;
+    }
+
     setSlipLoading(true);
     setSlipError('');
-    setSlip(null);
-    setBoxes([]);
-    setSelectedRepId('');
-    setSecurityCode('');
-    setBoxCount('');
 
     try {
       const res = await authFetch(`/api/scan/lookup-slip?slipId=${encodeURIComponent(query)}`, { cache: 'no-store' });
@@ -130,7 +132,12 @@ export default function ScanPage() {
       } else if (!data.bookable) {
         setSlipError(data.error || `Pick slip status "${data.status}" is not bookable`);
       } else {
-        setSlip(data.slip);
+        const newSlip = data.slip as SlipSummary;
+        setSlips(prev => [...prev, newSlip]);
+        setSlipQuery('');
+        setSlipError('');
+        // Focus back on input for next scan
+        setTimeout(() => slipInputRef.current?.focus(), 50);
       }
     } catch {
       setSlipError('Network error — please try again');
@@ -139,17 +146,31 @@ export default function ScanPage() {
     }
   }
 
+  function removeSlip(slipId: string) {
+    setSlips(prev => prev.filter(s => s.id !== slipId));
+  }
+
+  function clearAll() {
+    setSlips([]);
+    setSlipQuery('');
+    setSlipError('');
+    setBoxes([]);
+    setSelectedRepId('');
+    setSecurityCode('');
+    setBoxCount('');
+  }
+
   function onSlipKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter') {
       e.preventDefault();
-      lookupSlip();
+      addSlip();
     }
   }
 
   // ── Box scanning ──
   async function handleBoxScan() {
     const barcode = boxScanBarcode.trim().toUpperCase();
-    if (!barcode || !slip) return;
+    if (!barcode || slips.length === 0) return;
 
     // Client-side duplicate check
     if (boxes.some(b => b.stickerBarcode === barcode && b.valid)) {
@@ -174,36 +195,50 @@ export default function ScanPage() {
         };
         setBoxes(prev => [...prev, box]);
         notify(`Barcode "${barcode}" not found`, 'error');
-      } else if (data.linkedPickSlipId && data.linkedPickSlipId !== slip.id) {
-        const box: ScannedBox = {
-          id: uuid(),
-          stickerBarcode: barcode,
-          scannedAt: new Date().toISOString(),
-          valid: false,
-          error: `Already linked to ${data.linkedPickSlipId}`,
-        };
-        setBoxes(prev => [...prev, box]);
-        notify(`Barcode already linked to ${data.linkedPickSlipId}`, 'error');
       } else {
-        // Check warehouse match (compare codes, not raw names)
-        const stickerWh = (data.warehouseCode || '').toUpperCase().trim();
-        const slipWh = (slip.warehouseCode || '').toUpperCase().trim();
-        const warehouseWarning = stickerWh && slipWh && stickerWh !== slipWh
-          ? `Warehouse mismatch: sticker=${data.warehouseCode}, slip=${slip.warehouse}`
-          : undefined;
+        // Check if linked to a slip that's NOT one of our currently selected slips
+        const currentSlipIds = new Set(slips.map(s => s.id));
+        const linkedIds: string[] = data.linkedPickSlipIds ?? (data.linkedPickSlipId ? [data.linkedPickSlipId] : []);
+        const foreignLinks = linkedIds.filter(id => !currentSlipIds.has(id));
 
-        const box: ScannedBox = {
-          id: uuid(),
-          stickerBarcode: barcode,
-          scannedAt: new Date().toISOString(),
-          valid: true,
-          error: warehouseWarning,
-        };
-        setBoxes(prev => [...prev, box]);
-        if (warehouseWarning) {
-          notify(`Box ${barcode} added (warehouse mismatch warning)`, 'error');
+        if (foreignLinks.length > 0) {
+          const box: ScannedBox = {
+            id: uuid(),
+            stickerBarcode: barcode,
+            scannedAt: new Date().toISOString(),
+            valid: false,
+            error: `Already linked to ${foreignLinks.join(', ')}`,
+          };
+          setBoxes(prev => [...prev, box]);
+          notify(`Barcode already linked to ${foreignLinks.join(', ')}`, 'error');
         } else {
-          notify(`Box ${barcode} added`);
+          // Check warehouse match against ALL slips
+          const stickerWh = (data.warehouseCode || '').toUpperCase().trim();
+          const warehouseWarnings: string[] = [];
+          for (const slip of slips) {
+            const slipWh = (slip.warehouseCode || '').toUpperCase().trim();
+            if (stickerWh && slipWh && stickerWh !== slipWh) {
+              warehouseWarnings.push(`${slip.id}: sticker=${data.warehouseCode}, slip=${slip.warehouse}`);
+            }
+          }
+
+          const warehouseWarning = warehouseWarnings.length > 0
+            ? `Warehouse mismatch: ${warehouseWarnings.join('; ')}`
+            : undefined;
+
+          const box: ScannedBox = {
+            id: uuid(),
+            stickerBarcode: barcode,
+            scannedAt: new Date().toISOString(),
+            valid: true,
+            error: warehouseWarning,
+          };
+          setBoxes(prev => [...prev, box]);
+          if (warehouseWarning) {
+            notify(`Box ${barcode} added (warehouse mismatch warning)`, 'error');
+          } else {
+            notify(`Box ${barcode} added`);
+          }
         }
       }
     } catch {
@@ -228,7 +263,7 @@ export default function ScanPage() {
 
   // ── Book stock ──
   async function handleBook() {
-    if (!slip) return;
+    if (slips.length === 0) return;
 
     const validBoxes = boxes.filter(b => b.valid);
     if (validBoxes.length === 0) {
@@ -258,9 +293,11 @@ export default function ScanPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          slipId: slip.id,
-          clientId: slip.clientId,
-          loadId: slip.loadId,
+          slips: slips.map(s => ({
+            slipId: s.id,
+            clientId: s.clientId,
+            loadId: s.loadId,
+          })),
           repId: selectedRepId,
           securityCode: securityCode.trim(),
           boxes: validBoxes.map(b => ({
@@ -272,15 +309,9 @@ export default function ScanPage() {
       });
       const data = await res.json();
       if (res.ok && data.ok) {
-        notify('Stock booked successfully');
-        // Reset the form for next scan
-        setSlip(null);
-        setSlipQuery('');
-        setSlipError('');
-        setBoxes([]);
-        setSelectedRepId('');
-        setSecurityCode('');
-        setBoxCount('');
+        const slipCount = slips.length;
+        notify(slipCount === 1 ? 'Stock booked successfully' : `${slipCount} pick slips booked successfully`);
+        clearAll();
         setTimeout(() => slipInputRef.current?.focus(), 100);
       } else {
         notify(data.error || 'Booking failed', 'error');
@@ -305,7 +336,11 @@ export default function ScanPage() {
   ];
 
   const validBoxCount = boxes.filter(b => b.valid).length;
-  const canBook = slip && selectedRepId && securityCode.trim().length === 4 && validBoxCount > 0;
+  const canBook = slips.length > 0 && selectedRepId && securityCode.trim().length === 4 && validBoxCount > 0;
+
+  // Totals across all slips
+  const totalQty = slips.reduce((sum, s) => sum + s.totalQty, 0);
+  const totalVal = slips.reduce((sum, s) => sum + s.totalVal, 0);
 
   if (!session) return null;
 
@@ -317,14 +352,14 @@ export default function ScanPage() {
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-900">Scan to Receive/Release</h1>
         <p className="text-sm text-gray-600 mt-1">
-          Scan a picking slip barcode, link sticker boxes, and book stock into the warehouse
+          Scan picking slip barcodes, link sticker boxes, and book stock into the warehouse
         </p>
       </div>
 
-      {/* Step 1: Scan Picking Slip */}
+      {/* Step 1: Scan Picking Slips */}
       <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
-        <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-1">Step 1: Scan the Picking Slip</h2>
-        <p className="text-xs text-gray-500 mb-3">This is your Uplift Instructions Form</p>
+        <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-1">Step 1: Scan Picking Slips</h2>
+        <p className="text-xs text-gray-500 mb-3">Scan one or more Uplift Instructions Forms</p>
 
         <div className="flex gap-3 items-end">
           <div className="flex-1">
@@ -338,32 +373,22 @@ export default function ScanPage() {
               placeholder="PS-1234-20260101-001"
               className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm font-mono"
               autoFocus
-              disabled={!!slip}
             />
           </div>
-          {!slip ? (
+          <button
+            onClick={addSlip}
+            disabled={slipLoading || !slipQuery.trim()}
+            className="px-4 py-1.5 bg-[var(--color-primary)] text-white rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
+          >
+            {slipLoading && <div className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            Add Slip
+          </button>
+          {slips.length > 0 && (
             <button
-              onClick={lookupSlip}
-              disabled={slipLoading || !slipQuery.trim()}
-              className="px-4 py-1.5 bg-[var(--color-primary)] text-white rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
-            >
-              {slipLoading && <div className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-              Lookup
-            </button>
-          ) : (
-            <button
-              onClick={() => {
-                setSlip(null);
-                setSlipQuery('');
-                setSlipError('');
-                setBoxes([]);
-                setSelectedRepId('');
-                setSecurityCode('');
-                setBoxCount('');
-              }}
+              onClick={clearAll}
               className="px-4 py-1.5 border border-gray-300 text-gray-600 rounded-md text-sm font-medium hover:bg-gray-50"
             >
-              Clear
+              Clear All
             </button>
           )}
         </div>
@@ -373,49 +398,116 @@ export default function ScanPage() {
             {slipError}
           </div>
         )}
+
+        {/* List of added slips */}
+        {slips.length > 0 && (
+          <div className="mt-4">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              {slips.length} Pick Slip{slips.length !== 1 ? 's' : ''} Added
+            </div>
+            <div className="space-y-2">
+              {slips.map(s => (
+                <div key={s.id} className="flex items-center gap-3 px-3 py-2 bg-green-50 border border-green-200 rounded-md">
+                  <div className="flex-1 min-w-0">
+                    <span className="font-mono font-medium text-sm">{s.id}</span>
+                    <span className="text-xs text-gray-500 ml-2">{s.clientName} &middot; {s.siteName}</span>
+                  </div>
+                  <span className="text-xs text-gray-500 shrink-0">{s.totalQty.toLocaleString()} units</span>
+                  <button
+                    onClick={() => removeSlip(s.id)}
+                    title="Remove slip"
+                    className="text-red-400 hover:text-red-600 shrink-0"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Slip details (read-only) */}
-      {slip && (
+      {/* Slip details summary (shown when slips added) */}
+      {slips.length > 0 && (
         <>
           <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
-            <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Pick Slip Details</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div>
-                <span className="text-gray-500 text-xs block">Principal</span>
-                <span className="font-medium">{slip.clientName}</span>
+            <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">
+              {slips.length === 1 ? 'Pick Slip Details' : 'Combined Pick Slip Details'}
+            </h2>
+            {slips.length === 1 ? (
+              // Single slip — show full detail
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                  <span className="text-gray-500 text-xs block">Principal</span>
+                  <span className="font-medium">{slips[0].clientName}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs block">Vendor Number</span>
+                  <span className="font-medium">{slips[0].vendorNumber}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs block">Document No</span>
+                  <span className="font-mono font-medium">{slips[0].id}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs block">Store</span>
+                  <span className="font-medium">{slips[0].siteName} - {slips[0].siteCode}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs block">Warehouse</span>
+                  <span className="font-medium">{slips[0].warehouse}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs block">Total Qty</span>
+                  <span className="font-medium">{slips[0].totalQty.toLocaleString()}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs block">Total Value</span>
+                  <span className="font-medium">{fmtCurrency(slips[0].totalVal)}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs block">Status</span>
+                  <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                    {slips[0].status.charAt(0).toUpperCase() + slips[0].status.slice(1)}
+                  </span>
+                </div>
               </div>
-              <div>
-                <span className="text-gray-500 text-xs block">Vendor Number</span>
-                <span className="font-medium">{slip.vendorNumber}</span>
+            ) : (
+              // Multi-slip — show summary table
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs font-semibold text-gray-600 uppercase tracking-wide border-b border-gray-200">
+                      <th className="pb-2 pr-3">Slip ID</th>
+                      <th className="pb-2 pr-3">Principal</th>
+                      <th className="pb-2 pr-3">Store</th>
+                      <th className="pb-2 pr-3">Warehouse</th>
+                      <th className="pb-2 pr-3 text-right">Qty</th>
+                      <th className="pb-2 text-right">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {slips.map(s => (
+                      <tr key={s.id} className="border-t border-gray-100">
+                        <td className="py-1.5 pr-3 font-mono font-medium">{s.id}</td>
+                        <td className="py-1.5 pr-3">{s.clientName}</td>
+                        <td className="py-1.5 pr-3">{s.siteName}</td>
+                        <td className="py-1.5 pr-3">{s.warehouse}</td>
+                        <td className="py-1.5 pr-3 text-right">{s.totalQty.toLocaleString()}</td>
+                        <td className="py-1.5 text-right">{fmtCurrency(s.totalVal)}</td>
+                      </tr>
+                    ))}
+                    <tr className="border-t-2 border-gray-300 font-bold">
+                      <td className="py-1.5 pr-3" colSpan={4}>Totals</td>
+                      <td className="py-1.5 pr-3 text-right">{totalQty.toLocaleString()}</td>
+                      <td className="py-1.5 text-right">{fmtCurrency(totalVal)}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
-              <div>
-                <span className="text-gray-500 text-xs block">Document No</span>
-                <span className="font-mono font-medium">{slip.id}</span>
-              </div>
-              <div>
-                <span className="text-gray-500 text-xs block">Store</span>
-                <span className="font-medium">{slip.siteName} - {slip.siteCode}</span>
-              </div>
-              <div>
-                <span className="text-gray-500 text-xs block">Warehouse</span>
-                <span className="font-medium">{slip.warehouse}</span>
-              </div>
-              <div>
-                <span className="text-gray-500 text-xs block">Total Qty</span>
-                <span className="font-medium">{slip.totalQty.toLocaleString()}</span>
-              </div>
-              <div>
-                <span className="text-gray-500 text-xs block">Total Value</span>
-                <span className="font-medium">{fmtCurrency(slip.totalVal)}</span>
-              </div>
-              <div>
-                <span className="text-gray-500 text-xs block">Status</span>
-                <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
-                  {slip.status.charAt(0).toUpperCase() + slip.status.slice(1)}
-                </span>
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Step 2: Rep, Security Code, Box Count */}
@@ -567,18 +659,10 @@ export default function ScanPage() {
               className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {booking && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-              Book Stock
+              Book Stock{slips.length > 1 ? ` (${slips.length} Slips)` : ''}
             </button>
             <button
-              onClick={() => {
-                setSlip(null);
-                setSlipQuery('');
-                setSlipError('');
-                setBoxes([]);
-                setSelectedRepId('');
-                setSecurityCode('');
-                setBoxCount('');
-              }}
+              onClick={clearAll}
               className="px-5 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
             >
               Cancel

@@ -24,6 +24,9 @@ export async function PATCH(
   const pickSlipFolderUrl = body.pickSlipFolderUrl !== undefined
     ? (String(body.pickSlipFolderUrl).trim() || undefined)
     : undefined;
+  const deliveryNoteFolderUrl = body.deliveryNoteFolderUrl !== undefined
+    ? (String(body.deliveryNoteFolderUrl).trim() || undefined)
+    : undefined;
 
   // If folderUrl or fileName changed, re-resolve and refresh cached driveId/fileId.
   let driveId = link.driveId;
@@ -56,6 +59,7 @@ export async function PATCH(
     ...(folderUrl !== undefined ? { folderUrl } : {}),
     ...(fileName !== undefined ? { fileName } : {}),
     ...(pickSlipFolderUrl !== undefined ? { pickSlipFolderUrl } : {}),
+    ...(deliveryNoteFolderUrl !== undefined ? { deliveryNoteFolderUrl } : {}),
     driveId,
     fileId,
   });
