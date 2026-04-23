@@ -80,14 +80,21 @@ export async function GET(req: NextRequest) {
   const scopedClientIds = filterClientIdsByScope(scope, clients.map(c => c.id));
   const clientsById = new Map(clients.map(c => [c.id, c]));
 
-  // Warehouse code resolver
+  // Warehouse code resolver (fuzzy — linkedWarehouse is free-text)
   const whCodeSet = new Set(warehouses.map(w => w.code.toUpperCase().trim()));
   const whNameToCode = new Map(warehouses.map(w => [w.name.toUpperCase().trim(), w.code.toUpperCase().trim()]));
   function resolveWarehouseCode(raw: string): string {
     const upper = raw.toUpperCase().trim();
+    if (!upper) return '';
     if (whCodeSet.has(upper)) return upper;
     const byName = whNameToCode.get(upper);
     if (byName) return byName;
+    for (const w of warehouses) {
+      const wCode = w.code.toUpperCase().trim();
+      const wName = w.name.toUpperCase().trim();
+      if (wName.startsWith(upper) || upper.startsWith(wName)) return wCode;
+      if (wCode.startsWith(upper) || upper.startsWith(wCode)) return wCode;
+    }
     return upper;
   }
 
