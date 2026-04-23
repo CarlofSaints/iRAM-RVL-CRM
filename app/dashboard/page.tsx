@@ -3,8 +3,30 @@
 import { useAuth, authFetch } from '@/lib/useAuth';
 import Sidebar from '@/components/Sidebar';
 import Link from 'next/link';
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import * as XLSX from 'xlsx';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+} from 'recharts';
+
+// ── Types ───────────────────────────────────────────────────────────────────
+
+interface DashboardRow {
+  clientId: string;
+  clientName: string;
+  vendorNumbers: string[];
+  storeName: string;
+  storeCode: string;
+  warehouse: string;
+  product: string;
+  articleCode: string;
+  repName: string;
+  pickSlipRef: string;
+  qty: number;
+  val: number;
+  date: string;
+  category: 'aged' | 'warehouse' | 'transit';
+}
 
 interface DashboardStats {
   controlCounts: {
@@ -15,29 +37,7 @@ interface DashboardStats {
     warehouses: number;
   };
   warehouses: Array<{ code: string; name: string }>;
-  agedStock: {
-    totalQty: number;
-    totalVal: number;
-    byClient: Array<{
-      clientId: string;
-      clientName: string;
-      vendorNumbers: string[];
-      totalQty: number;
-      totalVal: number;
-      warehouseQty: Record<string, number>;
-      warehouseVal: Record<string, number>;
-      inTransitQty: number;
-      inTransitVal: number;
-    }>;
-  };
-  warehouseStock: {
-    totalQty: number;
-    totalVal: number;
-  };
-  inTransitStock: {
-    totalQty: number;
-    totalVal: number;
-  };
+  rows: DashboardRow[];
 }
 
 interface StatCard {
@@ -53,6 +53,8 @@ interface Client {
   name: string;
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
 function fmtNum(n: number): string {
   return n.toLocaleString('en-ZA');
 }
@@ -61,55 +63,134 @@ function fmtRand(n: number): string {
   return `R ${n.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-export default function DashboardPage() {
-  const { session, loading, logout } = useAuth();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [clientName, setClientName] = useState<string | null>(null);
-  const [selectedClientIds, setSelectedClientIds] = useState<Set<string>>(new Set());
-  const [filterOpen, setFilterOpen] = useState(false);
+// ── Multi-filter dropdown component ─────────────────────────────────────────
 
-  const perms = session?.permissions ?? [];
-  const has = (k: string) => perms.includes(k);
-  const isScoped = session && !has('view_dashboard') && has('view_dashboard_scoped');
+function MultiFilter({
+  label,
+  options,
+  selected,
+  onChange,
+}: {
+  label: string;
+  options: string[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!session) return;
-
-    // Look up client name for scoped (Customer) users
-    if (session.linkedClientId) {
-      authFetch('/api/control/clients', { cache: 'no-store' }).then(async res => {
-        if (!res.ok) return;
-        const data: Client[] = await res.json();
-        const c = data.find(c => c.id === session.linkedClientId);
-        if (c) setClientName(c.name);
-      }).catch(() => {/* ignore */});
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
 
-    // Only load stats for users with full dashboard access
-    if (!perms.includes('view_dashboard')) return;
+  const count = selected.size;
+  const isAll = count === 0; // empty set = no filter = all
 
-    authFetch('/api/dashboard/stats', { cache: 'no-store' }).then(async res => {
-      if (!res.ok) return;
-      const data: DashboardStats = await res.json();
-      setStats(data);
-      // Default: all clients selected
-      setSelectedClientIds(new Set(data.agedStock.byClient.map(c => c.clientId)));
-    }).catch(() => {/* ignore */});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]);
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+          !isAll
+            ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5 text-[var(--color-primary)]'
+            : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+        }`}
+      >
+        <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+        </svg>
+        {label}{!isAll ? ` (${count})` : ''}
+      </button>
 
-  // Filtered aged stock data based on client selection
-  const filteredClients = useMemo(() => {
-    if (!stats) return [];
-    return stats.agedStock.byClient.filter(c => selectedClientIds.has(c.clientId));
-  }, [stats, selectedClientIds]);
+      {open && (
+        <div className="absolute left-0 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg z-30 max-h-60 overflow-y-auto">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 sticky top-0 bg-white">
+            <button onClick={() => onChange(new Set())} className="text-xs text-[var(--color-primary)] hover:underline font-medium">All</button>
+            <span className="text-gray-300">|</span>
+            <button onClick={() => onChange(new Set(['__none__']))} className="text-xs text-gray-500 hover:underline font-medium">None</button>
+          </div>
+          {options.map(opt => (
+            <label key={opt} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-xs">
+              <input
+                type="checkbox"
+                checked={selected.has(opt)}
+                onChange={() => {
+                  const next = new Set(selected);
+                  next.delete('__none__');
+                  if (next.has(opt)) next.delete(opt);
+                  else next.add(opt);
+                  // If everything unchecked, means "all"
+                  if (next.size === 0) onChange(new Set());
+                  else onChange(next);
+                }}
+                className="rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
+              />
+              <span className="truncate">{opt}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
-  const filteredTotalQty = useMemo(() => filteredClients.reduce((sum, c) => sum + c.totalQty, 0), [filteredClients]);
-  const filteredTotalVal = useMemo(() => filteredClients.reduce((sum, c) => sum + c.totalVal, 0), [filteredClients]);
+// ── Grid column definition ──────────────────────────────────────────────────
 
-  // ── Column resize (hooks must be before early return) ─────────────────
+interface GridRow {
+  clientId: string;
+  clientName: string;
+  vendorNumbers: string[];
+  agedQty: number;
+  agedVal: number;
+  warehouseQty: Record<string, number>;
+  warehouseVal: Record<string, number>;
+  transitQty: number;
+  transitVal: number;
+}
+
+// ── Main component ──────────────────────────────────────────────────────────
+
+export default function DashboardPage() {
+  const { session, loading, logout } = useAuth();
+
+  // Data
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [clientName, setClientName] = useState<string | null>(null);
+
+  // Multi-select filters (empty Set = all / no filter)
+  const [clientFilter, setClientFilter] = useState<Set<string>>(new Set());
+  const [repFilter, setRepFilter] = useState<Set<string>>(new Set());
+  const [storeFilter, setStoreFilter] = useState<Set<string>>(new Set());
+  const [pickSlipFilter, setPickSlipFilter] = useState<Set<string>>(new Set());
+  const [warehouseFilter, setWarehouseFilter] = useState<Set<string>>(new Set());
+  const [productFilter, setProductFilter] = useState<Set<string>>(new Set());
+
+  // Date range
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
+  // Cross-filter selections
+  const [selectedWarehouse, setSelectedWarehouse] = useState<string | null>(null);
+  const [selectedClient, setSelectedClient] = useState<string | null>(null);
+
+  // Grid sorting
+  const [sortCol, setSortCol] = useState<string>('clientName');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  // Filters bar collapsed state
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  // Column resize
   const [colWidths, setColWidths] = useState<Record<number, number>>({});
   const resizingCol = useRef<{ idx: number; startX: number; startW: number } | null>(null);
+
+  const perms = session?.permissions ?? [];
+  const has = useCallback((k: string) => perms.includes(k), [perms]);
+  const isScoped = session && !has('view_dashboard') && has('view_dashboard_scoped');
 
   useEffect(() => {
     function onMouseMove(e: MouseEvent) {
@@ -131,38 +212,285 @@ export default function DashboardPage() {
     };
   }, []);
 
-  if (loading || !session) return null;
+  useEffect(() => {
+    if (!session) return;
 
-  const counts = stats?.controlCounts ?? { clients: 0, stores: 0, products: 0, reps: 0, warehouses: 0 };
+    if (session.linkedClientId) {
+      authFetch('/api/control/clients', { cache: 'no-store' }).then(async res => {
+        if (!res.ok) return;
+        const data: Client[] = await res.json();
+        const c = data.find(c => c.id === session.linkedClientId);
+        if (c) setClientName(c.name);
+      }).catch(() => {/* ignore */});
+    }
 
-  const allStats: StatCard[] = [
-    { label: 'Clients / Suppliers', count: counts.clients, href: '/control-centre/clients', color: 'bg-green-500', perm: 'manage_clients' },
-    { label: 'Stores', count: counts.stores, href: '/control-centre/stores', color: 'bg-blue-500', perm: 'manage_stores' },
-    { label: 'Products', count: counts.products, href: '/control-centre/products', color: 'bg-purple-500', perm: 'manage_products' },
-    { label: 'Reps', count: counts.reps, href: '/control-centre/reps', color: 'bg-orange-500', perm: 'manage_reps' },
-    { label: 'Warehouses', count: counts.warehouses, href: '/control-centre/warehouses', color: 'bg-teal-500', perm: 'manage_warehouses' },
-  ];
-  const visibleStats = allStats.filter(s => has(s.perm));
+    if (!perms.includes('view_dashboard')) return;
 
+    authFetch('/api/dashboard/stats', { cache: 'no-store' }).then(async res => {
+      if (!res.ok) return;
+      const data: DashboardStats = await res.json();
+      setStats(data);
+    }).catch(() => {/* ignore */});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+
+  // ── Derive filter options from ALL rows (not narrowed by other filters) ──
+  const allRows = stats?.rows ?? [];
   const warehouses = stats?.warehouses ?? [];
-  const hasAgedStock = has('view_aged_stock') && stats;
 
-  function toggleClient(clientId: string) {
-    setSelectedClientIds(prev => {
-      const next = new Set(prev);
-      if (next.has(clientId)) next.delete(clientId);
-      else next.add(clientId);
-      return next;
+  const filterOptions = useMemo(() => {
+    const clients = new Set<string>();
+    const reps = new Set<string>();
+    const storeNames = new Set<string>();
+    const pickSlipRefs = new Set<string>();
+    const warehouseCodes = new Set<string>();
+    const products = new Set<string>();
+
+    for (const r of allRows) {
+      clients.add(`${r.clientName}${r.vendorNumbers.length ? ` - ${r.vendorNumbers.join(', ')}` : ''}`);
+      if (r.repName) reps.add(r.repName);
+      if (r.storeName) storeNames.add(r.storeName);
+      if (r.pickSlipRef) pickSlipRefs.add(r.pickSlipRef);
+      if (r.warehouse) warehouseCodes.add(r.warehouse);
+      if (r.product) products.add(r.product);
+    }
+
+    return {
+      clients: [...clients].sort(),
+      reps: [...reps].sort(),
+      stores: [...storeNames].sort(),
+      pickSlips: [...pickSlipRefs].sort(),
+      warehouses: [...warehouseCodes].sort(),
+      products: [...products].sort(),
+    };
+  }, [allRows]);
+
+  // Client display label → clientId lookup
+  const clientLabelToIds = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const r of allRows) {
+      const lbl = `${r.clientName}${r.vendorNumbers.length ? ` - ${r.vendorNumbers.join(', ')}` : ''}`;
+      if (!map.has(lbl)) map.set(lbl, new Set());
+      map.get(lbl)!.add(r.clientId);
+    }
+    return map;
+  }, [allRows]);
+
+  // ── Filtering pipeline ──────────────────────────────────────────────────
+
+  function matchesSet(value: string, filter: Set<string>): boolean {
+    if (filter.size === 0) return true; // empty = all
+    if (filter.has('__none__')) return false;
+    return filter.has(value);
+  }
+
+  function matchesClientFilter(r: DashboardRow): boolean {
+    if (clientFilter.size === 0) return true;
+    if (clientFilter.has('__none__')) return false;
+    const lbl = `${r.clientName}${r.vendorNumbers.length ? ` - ${r.vendorNumbers.join(', ')}` : ''}`;
+    return clientFilter.has(lbl);
+  }
+
+  // 1. baseFiltered = rows filtered by 6 multi-select filters + date range
+  const baseFiltered = useMemo(() => {
+    return allRows.filter(r => {
+      if (!matchesClientFilter(r)) return false;
+      if (!matchesSet(r.repName || '', repFilter) && repFilter.size > 0 && !r.repName) return false;
+      if (repFilter.size > 0 && !repFilter.has('__none__') && r.repName && !repFilter.has(r.repName)) return false;
+      if (storeFilter.size > 0 && !storeFilter.has('__none__') && !storeFilter.has(r.storeName)) return false;
+      if (storeFilter.has('__none__')) return false;
+      if (pickSlipFilter.size > 0 && !pickSlipFilter.has('__none__') && r.pickSlipRef && !pickSlipFilter.has(r.pickSlipRef)) return false;
+      if (pickSlipFilter.size > 0 && !pickSlipFilter.has('__none__') && !r.pickSlipRef) return false;
+      if (pickSlipFilter.has('__none__')) return false;
+      if (warehouseFilter.size > 0 && !warehouseFilter.has('__none__') && r.warehouse && !warehouseFilter.has(r.warehouse)) return false;
+      if (warehouseFilter.size > 0 && !warehouseFilter.has('__none__') && !r.warehouse) return false;
+      if (warehouseFilter.has('__none__')) return false;
+      if (productFilter.size > 0 && !productFilter.has('__none__') && !productFilter.has(r.product)) return false;
+      if (productFilter.has('__none__')) return false;
+
+      // Date range
+      if (dateFrom || dateTo) {
+        const d = r.date.slice(0, 10); // YYYY-MM-DD
+        if (dateFrom && d < dateFrom) return false;
+        if (dateTo && d > dateTo) return false;
+      }
+
+      return true;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allRows, clientFilter, repFilter, storeFilter, pickSlipFilter, warehouseFilter, productFilter, dateFrom, dateTo]);
+
+  // 2. cardTotals = baseFiltered filtered by BOTH cross-selects
+  const cardTotals = useMemo(() => {
+    let subset = baseFiltered;
+    if (selectedWarehouse) {
+      subset = subset.filter(r =>
+        (r.category === 'warehouse' && r.warehouse === selectedWarehouse) ||
+        (r.category === 'transit' && selectedWarehouse === '__transit__') ||
+        (r.category === 'aged' && selectedWarehouse === '__aged__')
+      );
+    }
+    if (selectedClient) {
+      subset = subset.filter(r => r.clientId === selectedClient);
+    }
+    const aged = { qty: 0, val: 0 };
+    const warehouse = { qty: 0, val: 0 };
+    const transit = { qty: 0, val: 0 };
+    for (const r of subset) {
+      if (r.category === 'aged') { aged.qty += r.qty; aged.val += r.val; }
+      else if (r.category === 'warehouse') { warehouse.qty += r.qty; warehouse.val += r.val; }
+      else if (r.category === 'transit') { transit.qty += r.qty; transit.val += r.val; }
+    }
+    return { aged, warehouse, transit };
+  }, [baseFiltered, selectedWarehouse, selectedClient]);
+
+  // 3. chartData = baseFiltered filtered by selectedClient, aggregated by warehouse
+  const chartData = useMemo(() => {
+    let subset = baseFiltered;
+    if (selectedClient) {
+      subset = subset.filter(r => r.clientId === selectedClient);
+    }
+    const byWh: Record<string, { qty: number; val: number }> = {};
+    let transitQty = 0;
+    let transitVal = 0;
+    for (const r of subset) {
+      if (r.category === 'warehouse' && r.warehouse) {
+        if (!byWh[r.warehouse]) byWh[r.warehouse] = { qty: 0, val: 0 };
+        byWh[r.warehouse].qty += r.qty;
+        byWh[r.warehouse].val += r.val;
+      } else if (r.category === 'transit') {
+        transitQty += r.qty;
+        transitVal += r.val;
+      }
+    }
+    const bars: Array<{ name: string; key: string; qty: number; val: number }> = [];
+    // Warehouse bars in control-centre order
+    for (const w of warehouses) {
+      const k = w.code.toUpperCase().trim();
+      const d = byWh[k];
+      if (d && d.qty > 0) {
+        bars.push({ name: w.code, key: k, qty: d.qty, val: d.val });
+      }
+    }
+    // Also include warehouses from data not in the control list
+    for (const [k, d] of Object.entries(byWh)) {
+      if (!bars.some(b => b.key === k) && d.qty > 0) {
+        bars.push({ name: k, key: k, qty: d.qty, val: d.val });
+      }
+    }
+    if (transitQty > 0) {
+      bars.push({ name: 'In Transit', key: '__transit__', qty: transitQty, val: transitVal });
+    }
+    return bars;
+  }, [baseFiltered, selectedClient, warehouses]);
+
+  // 4. gridData = baseFiltered filtered by selectedWarehouse, aggregated by client
+  const gridRows = useMemo(() => {
+    let subset = baseFiltered;
+    if (selectedWarehouse) {
+      subset = subset.filter(r =>
+        (r.category === 'warehouse' && r.warehouse === selectedWarehouse) ||
+        (r.category === 'transit' && selectedWarehouse === '__transit__') ||
+        (r.category === 'aged' && selectedWarehouse === '__aged__')
+      );
+    }
+    const map = new Map<string, GridRow>();
+    for (const r of subset) {
+      if (!map.has(r.clientId)) {
+        map.set(r.clientId, {
+          clientId: r.clientId,
+          clientName: r.clientName,
+          vendorNumbers: r.vendorNumbers,
+          agedQty: 0, agedVal: 0,
+          warehouseQty: {}, warehouseVal: {},
+          transitQty: 0, transitVal: 0,
+        });
+      }
+      const g = map.get(r.clientId)!;
+      if (r.category === 'aged') {
+        g.agedQty += r.qty;
+        g.agedVal += r.val;
+      } else if (r.category === 'warehouse' && r.warehouse) {
+        g.warehouseQty[r.warehouse] = (g.warehouseQty[r.warehouse] ?? 0) + r.qty;
+        g.warehouseVal[r.warehouse] = (g.warehouseVal[r.warehouse] ?? 0) + r.val;
+      } else if (r.category === 'transit') {
+        g.transitQty += r.qty;
+        g.transitVal += r.val;
+      }
+    }
+    return [...map.values()];
+  }, [baseFiltered, selectedWarehouse]);
+
+  // Sorted grid
+  const sortedGrid = useMemo(() => {
+    const arr = [...gridRows];
+    arr.sort((a, b) => {
+      let va: string | number = 0;
+      let vb: string | number = 0;
+      if (sortCol === 'clientName') { va = a.clientName.toLowerCase(); vb = b.clientName.toLowerCase(); }
+      else if (sortCol === 'vendorNumbers') { va = a.vendorNumbers.join(', ').toLowerCase(); vb = b.vendorNumbers.join(', ').toLowerCase(); }
+      else if (sortCol === 'agedQty') { va = a.agedQty; vb = b.agedQty; }
+      else if (sortCol === 'agedVal') { va = a.agedVal; vb = b.agedVal; }
+      else if (sortCol === 'transitQty') { va = a.transitQty; vb = b.transitQty; }
+      else if (sortCol === 'transitVal') { va = a.transitVal; vb = b.transitVal; }
+      else if (sortCol.startsWith('wh-qty-')) {
+        const k = sortCol.replace('wh-qty-', '');
+        va = a.warehouseQty[k] ?? 0; vb = b.warehouseQty[k] ?? 0;
+      } else if (sortCol.startsWith('wh-val-')) {
+        const k = sortCol.replace('wh-val-', '');
+        va = a.warehouseVal[k] ?? 0; vb = b.warehouseVal[k] ?? 0;
+      }
+      if (va < vb) return sortDir === 'asc' ? -1 : 1;
+      if (va > vb) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return arr;
+  }, [gridRows, sortCol, sortDir]);
+
+  // Grid totals
+  const gridTotals = useMemo(() => {
+    const t = { agedQty: 0, agedVal: 0, transitQty: 0, transitVal: 0, warehouseQty: {} as Record<string, number>, warehouseVal: {} as Record<string, number> };
+    for (const g of gridRows) {
+      t.agedQty += g.agedQty;
+      t.agedVal += g.agedVal;
+      t.transitQty += g.transitQty;
+      t.transitVal += g.transitVal;
+      for (const [k, v] of Object.entries(g.warehouseQty)) {
+        t.warehouseQty[k] = (t.warehouseQty[k] ?? 0) + v;
+      }
+      for (const [k, v] of Object.entries(g.warehouseVal)) {
+        t.warehouseVal[k] = (t.warehouseVal[k] ?? 0) + v;
+      }
+    }
+    return t;
+  }, [gridRows]);
+
+  // ── Helpers ─────────────────────────────────────────────────────────────
+
+  const hasAnyFilter = clientFilter.size > 0 || repFilter.size > 0 || storeFilter.size > 0 ||
+    pickSlipFilter.size > 0 || warehouseFilter.size > 0 || productFilter.size > 0 || dateFrom || dateTo;
+
+  function clearAllFilters() {
+    setClientFilter(new Set());
+    setRepFilter(new Set());
+    setStoreFilter(new Set());
+    setPickSlipFilter(new Set());
+    setWarehouseFilter(new Set());
+    setProductFilter(new Set());
+    setDateFrom('');
+    setDateTo('');
+    setSelectedWarehouse(null);
+    setSelectedClient(null);
   }
 
-  function selectAll() {
-    if (!stats) return;
-    setSelectedClientIds(new Set(stats.agedStock.byClient.map(c => c.clientId)));
+  function handleSort(col: string) {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('asc'); }
   }
 
-  function selectNone() {
-    setSelectedClientIds(new Set());
+  function SortArrow({ col }: { col: string }) {
+    if (sortCol !== col) return <span className="text-gray-300 ml-1">&#8597;</span>;
+    return <span className="text-[var(--color-primary)] ml-1">{sortDir === 'asc' ? '▲' : '▼'}</span>;
   }
 
   function startResize(colIdx: number, e: React.MouseEvent) {
@@ -183,39 +511,39 @@ export default function DashboardPage() {
     );
   }
 
-  // ── Export summary grid to Excel ───────────────────────────────────────
-  function exportSummaryToExcel() {
-    if (filteredClients.length === 0) return;
-    const rows = filteredClients.map(c => {
+  // ── Excel export ──────────────────────────────────────────────────────────
+  function exportToExcel() {
+    if (sortedGrid.length === 0) return;
+    const rows = sortedGrid.map(c => {
       const row: Record<string, string | number> = {
         'Client': c.clientName,
         'Vendor Numbers': c.vendorNumbers.join(', '),
-        'Aged Stock Qty': c.totalQty,
-        'Aged Stock Value': c.totalVal,
+        'Aged Stock Qty': c.agedQty,
+        'Aged Stock Value': c.agedVal,
       };
       for (const w of warehouses) {
         const whKey = w.code.toUpperCase().trim();
-        row[`${w.code} Qty`] = c.warehouseQty?.[whKey] ?? 0;
-        row[`${w.code} Value`] = c.warehouseVal?.[whKey] ?? 0;
+        row[`${w.code} Qty`] = c.warehouseQty[whKey] ?? 0;
+        row[`${w.code} Value`] = c.warehouseVal[whKey] ?? 0;
       }
-      row['Transit Qty'] = c.inTransitQty ?? 0;
-      row['Transit Value'] = c.inTransitVal ?? 0;
+      row['Transit Qty'] = c.transitQty;
+      row['Transit Value'] = c.transitVal;
       return row;
     });
     // Totals row
     const totals: Record<string, string | number> = {
       'Client': 'TOTAL',
       'Vendor Numbers': '',
-      'Aged Stock Qty': filteredTotalQty,
-      'Aged Stock Value': filteredTotalVal,
+      'Aged Stock Qty': gridTotals.agedQty,
+      'Aged Stock Value': gridTotals.agedVal,
     };
     for (const w of warehouses) {
       const whKey = w.code.toUpperCase().trim();
-      totals[`${w.code} Qty`] = filteredClients.reduce((sum, c) => sum + (c.warehouseQty?.[whKey] ?? 0), 0);
-      totals[`${w.code} Value`] = filteredClients.reduce((sum, c) => sum + (c.warehouseVal?.[whKey] ?? 0), 0);
+      totals[`${w.code} Qty`] = gridTotals.warehouseQty[whKey] ?? 0;
+      totals[`${w.code} Value`] = gridTotals.warehouseVal[whKey] ?? 0;
     }
-    totals['Transit Qty'] = filteredClients.reduce((sum, c) => sum + (c.inTransitQty ?? 0), 0);
-    totals['Transit Value'] = filteredClients.reduce((sum, c) => sum + (c.inTransitVal ?? 0), 0);
+    totals['Transit Qty'] = gridTotals.transitQty;
+    totals['Transit Value'] = gridTotals.transitVal;
     rows.push(totals);
 
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -225,11 +553,39 @@ export default function DashboardPage() {
     XLSX.writeFile(wb, `iRamFlow Dashboard Summary - ${date}.xlsx`);
   }
 
+  // ── Early return AFTER all hooks ──────────────────────────────────────────
+
+  if (loading || !session) return null;
+
+  const counts = stats?.controlCounts ?? { clients: 0, stores: 0, products: 0, reps: 0, warehouses: 0 };
+
+  const allStatCards: StatCard[] = [
+    { label: 'Clients / Suppliers', count: counts.clients, href: '/control-centre/clients', color: 'bg-green-500', perm: 'manage_clients' },
+    { label: 'Stores', count: counts.stores, href: '/control-centre/stores', color: 'bg-blue-500', perm: 'manage_stores' },
+    { label: 'Products', count: counts.products, href: '/control-centre/products', color: 'bg-purple-500', perm: 'manage_products' },
+    { label: 'Reps', count: counts.reps, href: '/control-centre/reps', color: 'bg-orange-500', perm: 'manage_reps' },
+    { label: 'Warehouses', count: counts.warehouses, href: '/control-centre/warehouses', color: 'bg-teal-500', perm: 'manage_warehouses' },
+  ];
+  const visibleStats = allStatCards.filter(s => has(s.perm));
+
+  const hasAgedStock = has('view_aged_stock') && stats;
+
+  // Column index counter for resize handles
+  let ci = 0;
+  const colIdx = () => ci++;
+  const totalCols = 4 + warehouses.length * 2 + 2;
+
+  // Chart bar click handler
+  function handleBarClick(data: { key: string }) {
+    if (!data) return;
+    setSelectedWarehouse(prev => prev === data.key ? null : data.key);
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Sidebar session={session} onLogout={logout} />
 
-      <main className="ml-64 px-8 py-8 flex flex-col gap-8">
+      <main className="ml-64 px-8 py-8 flex flex-col gap-6">
         {/* Welcome */}
         <div className="bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] px-6 py-5">
           <h1 className="text-xl font-bold text-gray-900">
@@ -266,181 +622,289 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Aged Stock + Warehouse Stock + In Transit KPI cards */}
+        {/* ── Filter Bar ──────────────────────────────────────────────────── */}
         {hasAgedStock && (
-          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-amber-500" />
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Aged Stock Volume</span>
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+            <button
+              onClick={() => setFiltersOpen(o => !o)}
+              className="w-full flex items-center justify-between px-6 py-3"
+            >
+              <div className="flex items-center gap-2">
+                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                </svg>
+                <span className="text-sm font-bold text-gray-700 uppercase tracking-wide">Filters</span>
+                {hasAnyFilter && (
+                  <span className="ml-1 px-2 py-0.5 text-[10px] font-bold bg-[var(--color-primary)] text-white rounded-full">Active</span>
+                )}
               </div>
-              <div className="text-3xl font-bold text-gray-900 mt-2">{fmtNum(filteredTotalQty)}</div>
-              <div className="text-xs text-gray-400 mt-1">Total units across {filteredClients.length} client{filteredClients.length !== 1 ? 's' : ''}</div>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-red-500" />
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Aged Stock Value</span>
+              <svg className={`w-4 h-4 text-gray-400 transition-transform ${filtersOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {filtersOpen && (
+              <div className="px-6 pb-4 border-t border-gray-100 pt-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <MultiFilter label="Client" options={filterOptions.clients} selected={clientFilter} onChange={setClientFilter} />
+                  <MultiFilter label="Rep" options={filterOptions.reps} selected={repFilter} onChange={setRepFilter} />
+                  <MultiFilter label="Store" options={filterOptions.stores} selected={storeFilter} onChange={setStoreFilter} />
+                  <MultiFilter label="Pick Slip" options={filterOptions.pickSlips} selected={pickSlipFilter} onChange={setPickSlipFilter} />
+                  <MultiFilter label="Warehouse" options={filterOptions.warehouses} selected={warehouseFilter} onChange={setWarehouseFilter} />
+                  <MultiFilter label="Product" options={filterOptions.products} selected={productFilter} onChange={setProductFilter} />
+
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-xs text-gray-500 font-medium">From</label>
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={e => setDateFrom(e.target.value)}
+                      className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-[var(--color-primary)] focus:border-[var(--color-primary)]"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-xs text-gray-500 font-medium">To</label>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      onChange={e => setDateTo(e.target.value)}
+                      className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:ring-1 focus:ring-[var(--color-primary)] focus:border-[var(--color-primary)]"
+                    />
+                  </div>
+
+                  {(hasAnyFilter || selectedWarehouse || selectedClient) && (
+                    <button
+                      onClick={clearAllFilters}
+                      className="px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+                    >
+                      Clear All
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="text-3xl font-bold text-gray-900 mt-2">{fmtRand(filteredTotalVal)}</div>
-              <div className="text-xs text-gray-400 mt-1">Total value across {filteredClients.length} client{filteredClients.length !== 1 ? 's' : ''}</div>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-teal-500" />
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Warehouse Stock Volume</span>
-              </div>
-              <div className="text-3xl font-bold text-gray-900 mt-2">{fmtNum(stats.warehouseStock?.totalQty ?? 0)}</div>
-              <div className="text-xs text-gray-400 mt-1">Total units across all warehouses</div>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-indigo-500" />
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Warehouse Stock Value</span>
-              </div>
-              <div className="text-3xl font-bold text-gray-900 mt-2">{fmtRand(stats.warehouseStock?.totalVal ?? 0)}</div>
-              <div className="text-xs text-gray-400 mt-1">Total value across all warehouses</div>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-cyan-500" />
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">In Transit Volume</span>
-              </div>
-              <div className="text-3xl font-bold text-gray-900 mt-2">{fmtNum(stats.inTransitStock?.totalQty ?? 0)}</div>
-              <div className="text-xs text-gray-400 mt-1">Units in transit to vendors</div>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-pink-500" />
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">In Transit Value</span>
-              </div>
-              <div className="text-3xl font-bold text-gray-900 mt-2">{fmtRand(stats.inTransitStock?.totalVal ?? 0)}</div>
-              <div className="text-xs text-gray-400 mt-1">Value in transit to vendors</div>
-            </div>
+            )}
           </div>
         )}
 
-        {/* Client filter + Aged Stock Summary Grid */}
-        {hasAgedStock && stats.agedStock.byClient.length > 0 && (() => {
-          // Column index counter for resize handles
-          let ci = 0;
-          const colIdx = () => ci++;
-          const totalCols = 4 + warehouses.length * 2 + 2;
-
-          return (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Aged Stock Summary</h2>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={exportSummaryToExcel}
-                  disabled={filteredClients.length === 0}
-                  className="px-3 py-1.5 text-xs font-medium border border-gray-200 hover:bg-gray-50 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        {/* ── 3 Grouped KPI Cards ─────────────────────────────────────────── */}
+        {hasAgedStock && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Aged Stock */}
+            <div className={`bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] p-5 transition-all ${
+              selectedWarehouse === '__aged__' ? 'ring-2 ring-[var(--color-primary)]' : ''
+            }`}>
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 w-10 h-10 rounded-lg bg-[var(--color-primary)]/10 flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  Export to Excel
-                </button>
-                <div className="relative">
-                  <button
-                    onClick={() => setFilterOpen(prev => !prev)}
-                    className="px-3 py-1.5 text-xs font-medium bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center gap-1.5"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                    </svg>
-                    Filter Clients ({selectedClientIds.size}/{stats.agedStock.byClient.length})
-                  </button>
-
-                  {filterOpen && (
-                    <div className="absolute right-0 mt-1 w-80 bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-72 overflow-y-auto">
-                      <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 sticky top-0 bg-white">
-                        <button onClick={selectAll} className="text-xs text-[var(--color-primary)] hover:underline font-medium">All</button>
-                        <span className="text-gray-300">|</span>
-                        <button onClick={selectNone} className="text-xs text-gray-500 hover:underline font-medium">None</button>
-                      </div>
-                      {stats.agedStock.byClient.map(c => (
-                        <label key={c.clientId} className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer text-sm">
-                          <input
-                            type="checkbox"
-                            checked={selectedClientIds.has(c.clientId)}
-                            onChange={() => toggleClient(c.clientId)}
-                            className="rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
-                          />
-                          <span className="truncate">{c.clientName} - {c.vendorNumbers.join(', ')}</span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total Aged Stock</div>
+                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtNum(cardTotals.aged.qty)}</div>
+                  <div className="text-sm text-gray-500 mt-0.5">{fmtRand(cardTotals.aged.val)}</div>
                 </div>
               </div>
             </div>
 
-            {/* Summary Grid */}
+            {/* Warehouse Stock */}
+            <div className="bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] p-5">
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 w-10 h-10 rounded-lg bg-[var(--color-primary)]/10 flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                  </svg>
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Warehouse Stock</div>
+                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtNum(cardTotals.warehouse.qty)}</div>
+                  <div className="text-sm text-gray-500 mt-0.5">{fmtRand(cardTotals.warehouse.val)}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* In Transit */}
+            <div className={`bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] p-5 transition-all ${
+              selectedWarehouse === '__transit__' ? 'ring-2 ring-[var(--color-primary)]' : ''
+            }`}>
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 w-10 h-10 rounded-lg bg-[var(--color-primary)]/10 flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+                  </svg>
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">In Transit</div>
+                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtNum(cardTotals.transit.qty)}</div>
+                  <div className="text-sm text-gray-500 mt-0.5">{fmtRand(cardTotals.transit.val)}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Bar Chart ───────────────────────────────────────────────────── */}
+        {hasAgedStock && chartData.length > 0 && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Stock by Warehouse</h2>
+              {selectedWarehouse && (
+                <button
+                  onClick={() => setSelectedWarehouse(null)}
+                  className="text-xs text-gray-500 hover:text-gray-700 underline"
+                >
+                  Clear warehouse selection
+                </button>
+              )}
+            </div>
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} />
+                <Tooltip
+                  formatter={(value, name) => {
+                    const v = Number(value) || 0;
+                    if (name === 'qty') return [fmtNum(v), 'Quantity'];
+                    return [fmtRand(v), 'Value'];
+                  }}
+                  contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }}
+                />
+                <Bar dataKey="qty" radius={[4, 4, 0, 0]} cursor="pointer"
+                  onClick={(_data, index) => {
+                    const entry = chartData[index];
+                    if (entry) handleBarClick(entry);
+                  }}
+                >
+                  {chartData.map((entry) => (
+                    <Cell
+                      key={entry.key}
+                      fill={entry.key === '__transit__' ? '#06b6d4' : '#7CC042'}
+                      opacity={selectedWarehouse && selectedWarehouse !== entry.key ? 0.3 : 1}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* ── Client Summary Grid ─────────────────────────────────────────── */}
+        {hasAgedStock && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">
+                Client Summary
+                {selectedClient && (
+                  <button
+                    onClick={() => setSelectedClient(null)}
+                    className="ml-3 text-xs text-gray-500 hover:text-gray-700 underline font-normal normal-case"
+                  >
+                    Clear client selection
+                  </button>
+                )}
+              </h2>
+              <button
+                onClick={exportToExcel}
+                disabled={sortedGrid.length === 0}
+                className="px-3 py-1.5 text-xs font-medium border border-gray-200 hover:bg-gray-50 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Export to Excel
+              </button>
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-sm" style={Object.keys(colWidths).length > 0 ? { tableLayout: 'fixed', minWidth: totalCols * 80 } : undefined}>
                 <thead>
                   <tr className="bg-gray-50 text-left">
                     {(() => { const i = colIdx(); return (
-                      <th key="client" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase relative">
-                        Client<ResizeHandle colIdx={i} />
+                      <th key="client" style={colWidths[i] ? { width: colWidths[i] } : undefined}
+                        className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase relative cursor-pointer select-none hover:bg-gray-100"
+                        onClick={() => handleSort('clientName')}>
+                        Client<SortArrow col="clientName" /><ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
                     {(() => { const i = colIdx(); return (
-                      <th key="vendor" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase relative">
-                        Vendor Numbers<ResizeHandle colIdx={i} />
+                      <th key="vendor" style={colWidths[i] ? { width: colWidths[i] } : undefined}
+                        className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase relative cursor-pointer select-none hover:bg-gray-100"
+                        onClick={() => handleSort('vendorNumbers')}>
+                        Vendor #<SortArrow col="vendorNumbers" /><ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
                     {(() => { const i = colIdx(); return (
-                      <th key="agedQty" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative">
-                        Aged Qty<ResizeHandle colIdx={i} />
+                      <th key="agedQty" style={colWidths[i] ? { width: colWidths[i] } : undefined}
+                        className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative cursor-pointer select-none hover:bg-gray-100"
+                        onClick={() => handleSort('agedQty')}>
+                        Aged Qty<SortArrow col="agedQty" /><ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
                     {(() => { const i = colIdx(); return (
-                      <th key="agedVal" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative">
-                        Aged Value<ResizeHandle colIdx={i} />
+                      <th key="agedVal" style={colWidths[i] ? { width: colWidths[i] } : undefined}
+                        className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative cursor-pointer select-none hover:bg-gray-100"
+                        onClick={() => handleSort('agedVal')}>
+                        Aged Value<SortArrow col="agedVal" /><ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
                     {warehouses.map(w => {
                       const qi = colIdx();
                       const vi = colIdx();
+                      const whKey = w.code.toUpperCase().trim();
                       return [
-                        <th key={`${w.code}-qty`} style={colWidths[qi] ? { width: colWidths[qi] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative">
-                          {w.code} Qty<ResizeHandle colIdx={qi} />
+                        <th key={`${w.code}-qty`} style={colWidths[qi] ? { width: colWidths[qi] } : undefined}
+                          className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative cursor-pointer select-none hover:bg-gray-100"
+                          onClick={() => handleSort(`wh-qty-${whKey}`)}>
+                          {w.code} Qty<SortArrow col={`wh-qty-${whKey}`} /><ResizeHandle colIdx={qi} />
                         </th>,
-                        <th key={`${w.code}-val`} style={colWidths[vi] ? { width: colWidths[vi] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative">
-                          {w.code} Val<ResizeHandle colIdx={vi} />
+                        <th key={`${w.code}-val`} style={colWidths[vi] ? { width: colWidths[vi] } : undefined}
+                          className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative cursor-pointer select-none hover:bg-gray-100"
+                          onClick={() => handleSort(`wh-val-${whKey}`)}>
+                          {w.code} Val<SortArrow col={`wh-val-${whKey}`} /><ResizeHandle colIdx={vi} />
                         </th>,
                       ];
                     })}
                     {(() => { const i = colIdx(); return (
-                      <th key="transitQty" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative">
-                        Transit Qty<ResizeHandle colIdx={i} />
+                      <th key="transitQty" style={colWidths[i] ? { width: colWidths[i] } : undefined}
+                        className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative cursor-pointer select-none hover:bg-gray-100"
+                        onClick={() => handleSort('transitQty')}>
+                        Transit Qty<SortArrow col="transitQty" /><ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
                     {(() => { const i = colIdx(); return (
-                      <th key="transitVal" style={colWidths[i] ? { width: colWidths[i] } : undefined} className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative">
-                        Transit Val<ResizeHandle colIdx={i} />
+                      <th key="transitVal" style={colWidths[i] ? { width: colWidths[i] } : undefined}
+                        className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase text-right relative cursor-pointer select-none hover:bg-gray-100"
+                        onClick={() => handleSort('transitVal')}>
+                        Transit Val<SortArrow col="transitVal" /><ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredClients.map(c => (
-                    <tr key={c.clientId} className="border-t border-gray-100 hover:bg-gray-50">
+                  {sortedGrid.map(c => (
+                    <tr
+                      key={c.clientId}
+                      className={`border-t border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
+                        selectedClient === c.clientId ? 'bg-green-50' : ''
+                      }`}
+                      onClick={() => setSelectedClient(prev => prev === c.clientId ? null : c.clientId)}
+                    >
                       <td className="px-3 py-2 font-medium">
-                        <Link href={`/aged-stock?client=${encodeURIComponent(c.clientId)}`} className="text-[var(--color-primary)] hover:underline">
+                        <Link
+                          href={`/aged-stock?client=${encodeURIComponent(c.clientId)}`}
+                          className="text-[var(--color-primary)] hover:underline"
+                          onClick={e => e.stopPropagation()}
+                        >
                           {c.clientName}
                         </Link>
                       </td>
                       <td className="px-3 py-2 text-gray-500">{c.vendorNumbers.join(', ')}</td>
-                      <td className="px-3 py-2 text-right font-medium">{fmtNum(c.totalQty)}</td>
-                      <td className="px-3 py-2 text-right font-medium">{fmtRand(c.totalVal)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{fmtNum(c.agedQty)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{fmtRand(c.agedVal)}</td>
                       {warehouses.map(w => {
                         const whKey = w.code.toUpperCase().trim();
-                        const whQty = c.warehouseQty?.[whKey] ?? 0;
-                        const whVal = c.warehouseVal?.[whKey] ?? 0;
+                        const whQty = c.warehouseQty[whKey] ?? 0;
+                        const whVal = c.warehouseVal[whKey] ?? 0;
                         return [
                           <td key={`${w.code}-qty`} className={`px-3 py-2 text-right ${whQty > 0 ? 'font-medium text-gray-900' : 'text-gray-400'}`}>
                             {fmtNum(whQty)}
@@ -450,29 +914,29 @@ export default function DashboardPage() {
                           </td>,
                         ];
                       })}
-                      <td className={`px-3 py-2 text-right ${(c.inTransitQty ?? 0) > 0 ? 'font-medium text-gray-900' : 'text-gray-400'}`}>
-                        {fmtNum(c.inTransitQty ?? 0)}
+                      <td className={`px-3 py-2 text-right ${c.transitQty > 0 ? 'font-medium text-gray-900' : 'text-gray-400'}`}>
+                        {fmtNum(c.transitQty)}
                       </td>
-                      <td className={`px-3 py-2 text-right ${(c.inTransitVal ?? 0) > 0 ? 'font-medium text-gray-900' : 'text-gray-400'}`}>
-                        {fmtRand(c.inTransitVal ?? 0)}
+                      <td className={`px-3 py-2 text-right ${c.transitVal > 0 ? 'font-medium text-gray-900' : 'text-gray-400'}`}>
+                        {fmtRand(c.transitVal)}
                       </td>
                     </tr>
                   ))}
-                  {filteredClients.length === 0 && (
-                    <tr><td colSpan={totalCols} className="px-3 py-6 text-center text-gray-400">No clients selected</td></tr>
+                  {sortedGrid.length === 0 && (
+                    <tr><td colSpan={totalCols} className="px-3 py-6 text-center text-gray-400">No data matches current filters</td></tr>
                   )}
                 </tbody>
-                {filteredClients.length > 0 && (
+                {sortedGrid.length > 0 && (
                   <tfoot>
                     <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold">
                       <td className="px-3 py-2 text-gray-900">Total</td>
                       <td className="px-3 py-2"></td>
-                      <td className="px-3 py-2 text-right">{fmtNum(filteredTotalQty)}</td>
-                      <td className="px-3 py-2 text-right">{fmtRand(filteredTotalVal)}</td>
+                      <td className="px-3 py-2 text-right">{fmtNum(gridTotals.agedQty)}</td>
+                      <td className="px-3 py-2 text-right">{fmtRand(gridTotals.agedVal)}</td>
                       {warehouses.map(w => {
                         const whKey = w.code.toUpperCase().trim();
-                        const whTotalQty = filteredClients.reduce((sum, c) => sum + (c.warehouseQty?.[whKey] ?? 0), 0);
-                        const whTotalVal = filteredClients.reduce((sum, c) => sum + (c.warehouseVal?.[whKey] ?? 0), 0);
+                        const whTotalQty = gridTotals.warehouseQty[whKey] ?? 0;
+                        const whTotalVal = gridTotals.warehouseVal[whKey] ?? 0;
                         return [
                           <td key={`${w.code}-qty`} className={`px-3 py-2 text-right ${whTotalQty > 0 ? 'text-gray-900' : 'text-gray-400'}`}>
                             {fmtNum(whTotalQty)}
@@ -482,22 +946,19 @@ export default function DashboardPage() {
                           </td>,
                         ];
                       })}
-                      {(() => {
-                        const tQty = filteredClients.reduce((sum, c) => sum + (c.inTransitQty ?? 0), 0);
-                        const tVal = filteredClients.reduce((sum, c) => sum + (c.inTransitVal ?? 0), 0);
-                        return <>
-                          <td className={`px-3 py-2 text-right ${tQty > 0 ? 'text-gray-900' : 'text-gray-400'}`}>{fmtNum(tQty)}</td>
-                          <td className={`px-3 py-2 text-right ${tVal > 0 ? 'text-gray-900' : 'text-gray-400'}`}>{fmtRand(tVal)}</td>
-                        </>;
-                      })()}
+                      <td className={`px-3 py-2 text-right ${gridTotals.transitQty > 0 ? 'text-gray-900' : 'text-gray-400'}`}>
+                        {fmtNum(gridTotals.transitQty)}
+                      </td>
+                      <td className={`px-3 py-2 text-right ${gridTotals.transitVal > 0 ? 'text-gray-900' : 'text-gray-400'}`}>
+                        {fmtRand(gridTotals.transitVal)}
+                      </td>
                     </tr>
                   </tfoot>
                 )}
               </table>
             </div>
           </div>
-          );
-        })()}
+        )}
 
         {/* Quick Actions */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
