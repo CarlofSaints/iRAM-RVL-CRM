@@ -729,10 +729,16 @@ export default function ReceiptCapturePage() {
       });
       const data = await res.json();
       if (data.status === 'in-transit') {
-        notify('Stock released — now in transit');
+        const spMsg = data.slip?.deliveryNoteSpWebUrl
+          ? 'Stock released — delivery note saved to SharePoint'
+          : 'Stock released — delivery note generated (no SP folder configured)';
+        notify(spMsg);
         router.push('/aged-stock/receipts');
       } else if (data.status === 'partial-release') {
-        notify('Partial release — box count mismatch overridden by manager');
+        const spMsg = data.slip?.deliveryNoteSpWebUrl
+          ? 'Partial release — delivery note saved to SharePoint'
+          : 'Partial release — box count mismatch overridden by manager';
+        notify(spMsg);
         router.push('/aged-stock/receipts');
       } else if (data.status === 'failed-release') {
         notify(data.error || 'Release code does not match — status set to Failed Release', 'error');
@@ -1179,9 +1185,9 @@ export default function ReceiptCapturePage() {
           <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
             <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Product Breakdown</h2>
 
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
               <table className="min-w-full text-sm">
-                <thead>
+                <thead className="sticky top-0 bg-white z-10">
                   <tr className="text-left text-xs font-semibold text-gray-600 uppercase tracking-wide border-b border-gray-200">
                     <th className="pb-2 pr-3">Product</th>
                     <th className="pb-2 pr-3">Article Code</th>
@@ -1298,7 +1304,7 @@ export default function ReceiptCapturePage() {
           <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Boxes Being Released</h2>
-              <span className="text-sm text-gray-500">{releaseBoxes.length} scanned</span>
+              <span className="text-sm text-gray-500">{releaseBoxes.length} / {boxes.length} scanned</span>
             </div>
 
             <div className="flex gap-3 mb-4 items-end">
@@ -1324,6 +1330,26 @@ export default function ReceiptCapturePage() {
                 Add
               </button>
             </div>
+
+            {/* Receipt barcodes reference */}
+            {boxes.length > 0 && (
+              <div className="mb-4">
+                <p className="text-xs text-gray-500 mb-1.5">Barcodes to match ({boxes.length}):</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {boxes.map(b => {
+                    const matched = releaseBoxes.some(rb => rb.stickerBarcode === b.stickerBarcode);
+                    return (
+                      <span
+                        key={b.id}
+                        className={`px-2 py-0.5 rounded text-xs font-mono ${matched ? 'bg-green-100 text-green-700 line-through' : 'bg-gray-100 text-gray-600'}`}
+                      >
+                        {b.stickerBarcode}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {releaseBoxes.length > 0 ? (
               <table className="min-w-full text-sm">

@@ -25,7 +25,7 @@ interface DashboardRow {
   qty: number;
   val: number;
   date: string;
-  category: 'aged' | 'warehouse' | 'transit' | 'display' | 'store-refused' | 'not-found' | 'damaged' | 'collected';
+  category: 'aged' | 'warehouse' | 'transit' | 'delivered' | 'display' | 'store-refused' | 'not-found' | 'damaged' | 'collected';
   manual?: boolean;
 }
 
@@ -326,6 +326,8 @@ interface GridRow {
   warehouseVal: Record<string, number>;
   transitQty: number;
   transitVal: number;
+  deliveredQty: number;
+  deliveredVal: number;
 }
 
 // ── Main component ──────────────────────────────────────────────────────────
@@ -510,7 +512,8 @@ export default function DashboardPage() {
       subset = subset.filter(r =>
         (r.category === 'warehouse' && r.warehouse === selectedWarehouse) ||
         (r.category === 'transit' && selectedWarehouse === '__transit__') ||
-        (r.category === 'aged' && selectedWarehouse === '__aged__')
+        (r.category === 'aged' && selectedWarehouse === '__aged__') ||
+        (r.category === 'delivered' && selectedWarehouse === '__delivered__')
       );
     }
     if (selectedClient) {
@@ -519,12 +522,14 @@ export default function DashboardPage() {
     const aged = { qty: 0, val: 0 };
     const warehouse = { qty: 0, val: 0 };
     const transit = { qty: 0, val: 0 };
+    const delivered = { qty: 0, val: 0 };
     for (const r of subset) {
       if (r.category === 'aged') { aged.qty += r.qty; aged.val += r.val; }
       else if (r.category === 'warehouse') { warehouse.qty += r.qty; warehouse.val += r.val; }
       else if (r.category === 'transit') { transit.qty += r.qty; transit.val += r.val; }
+      else if (r.category === 'delivered') { delivered.qty += r.qty; delivered.val += r.val; }
     }
-    return { aged, warehouse, transit };
+    return { aged, warehouse, transit, delivered };
   }, [baseFiltered, selectedWarehouse, selectedClient]);
 
   // 3. chartData = baseFiltered filtered by selectedClient, aggregated by warehouse
@@ -536,6 +541,8 @@ export default function DashboardPage() {
     const byWh: Record<string, { qty: number; val: number }> = {};
     let transitQty = 0;
     let transitVal = 0;
+    let deliveredQty = 0;
+    let deliveredVal = 0;
     for (const r of subset) {
       if (r.category === 'warehouse' && r.warehouse) {
         if (!byWh[r.warehouse]) byWh[r.warehouse] = { qty: 0, val: 0 };
@@ -544,6 +551,9 @@ export default function DashboardPage() {
       } else if (r.category === 'transit') {
         transitQty += r.qty;
         transitVal += r.val;
+      } else if (r.category === 'delivered') {
+        deliveredQty += r.qty;
+        deliveredVal += r.val;
       }
     }
     const bars: Array<{ name: string; key: string; qty: number; val: number }> = [];
@@ -564,6 +574,9 @@ export default function DashboardPage() {
     if (transitQty > 0) {
       bars.push({ name: 'In Transit', key: '__transit__', qty: transitQty, val: transitVal });
     }
+    if (deliveredQty > 0) {
+      bars.push({ name: 'Delivered', key: '__delivered__', qty: deliveredQty, val: deliveredVal });
+    }
     return bars;
   }, [baseFiltered, selectedClient, warehouses]);
 
@@ -574,7 +587,8 @@ export default function DashboardPage() {
       subset = subset.filter(r =>
         (r.category === 'warehouse' && r.warehouse === selectedWarehouse) ||
         (r.category === 'transit' && selectedWarehouse === '__transit__') ||
-        (r.category === 'aged' && selectedWarehouse === '__aged__')
+        (r.category === 'aged' && selectedWarehouse === '__aged__') ||
+        (r.category === 'delivered' && selectedWarehouse === '__delivered__')
       );
     }
     const map = new Map<string, GridRow>();
@@ -587,6 +601,7 @@ export default function DashboardPage() {
           agedQty: 0, agedVal: 0,
           warehouseQty: {}, warehouseVal: {},
           transitQty: 0, transitVal: 0,
+          deliveredQty: 0, deliveredVal: 0,
         });
       }
       const g = map.get(r.clientId)!;
@@ -599,6 +614,9 @@ export default function DashboardPage() {
       } else if (r.category === 'transit') {
         g.transitQty += r.qty;
         g.transitVal += r.val;
+      } else if (r.category === 'delivered') {
+        g.deliveredQty += r.qty;
+        g.deliveredVal += r.val;
       }
     }
     return [...map.values()];
@@ -616,6 +634,8 @@ export default function DashboardPage() {
       else if (sortCol === 'agedVal') { va = a.agedVal; vb = b.agedVal; }
       else if (sortCol === 'transitQty') { va = a.transitQty; vb = b.transitQty; }
       else if (sortCol === 'transitVal') { va = a.transitVal; vb = b.transitVal; }
+      else if (sortCol === 'deliveredQty') { va = a.deliveredQty; vb = b.deliveredQty; }
+      else if (sortCol === 'deliveredVal') { va = a.deliveredVal; vb = b.deliveredVal; }
       else if (sortCol.startsWith('wh-qty-')) {
         const k = sortCol.replace('wh-qty-', '');
         va = a.warehouseQty[k] ?? 0; vb = b.warehouseQty[k] ?? 0;
@@ -632,12 +652,14 @@ export default function DashboardPage() {
 
   // Grid totals
   const gridTotals = useMemo(() => {
-    const t = { agedQty: 0, agedVal: 0, transitQty: 0, transitVal: 0, warehouseQty: {} as Record<string, number>, warehouseVal: {} as Record<string, number> };
+    const t = { agedQty: 0, agedVal: 0, transitQty: 0, transitVal: 0, deliveredQty: 0, deliveredVal: 0, warehouseQty: {} as Record<string, number>, warehouseVal: {} as Record<string, number> };
     for (const g of gridRows) {
       t.agedQty += g.agedQty;
       t.agedVal += g.agedVal;
       t.transitQty += g.transitQty;
       t.transitVal += g.transitVal;
+      t.deliveredQty += g.deliveredQty;
+      t.deliveredVal += g.deliveredVal;
       for (const [k, v] of Object.entries(g.warehouseQty)) {
         t.warehouseQty[k] = (t.warehouseQty[k] ?? 0) + v;
       }
@@ -886,6 +908,8 @@ export default function DashboardPage() {
       }
       row['Transit Qty'] = c.transitQty;
       row['Transit Value'] = c.transitVal;
+      row['Delivered Qty'] = c.deliveredQty;
+      row['Delivered Value'] = c.deliveredVal;
       return row;
     });
     // Totals row
@@ -902,6 +926,8 @@ export default function DashboardPage() {
     }
     totals['Transit Qty'] = gridTotals.transitQty;
     totals['Transit Value'] = gridTotals.transitVal;
+    totals['Delivered Qty'] = gridTotals.deliveredQty;
+    totals['Delivered Value'] = gridTotals.deliveredVal;
     rows.push(totals);
 
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -931,7 +957,7 @@ export default function DashboardPage() {
   // Column index counter for resize handles
   let ci = 0;
   const colIdx = () => ci++;
-  const totalCols = 4 + warehouses.length * 2 + 2;
+  const totalCols = 4 + warehouses.length * 2 + 2 + 2; // +2 for delivered qty/val
 
   // Chart bar click handler
   function handleBarClick(data: { key: string }) {
@@ -1084,7 +1110,7 @@ export default function DashboardPage() {
 
         {/* ── 3 Grouped KPI Cards ─────────────────────────────────────────── */}
         {hasAgedStock && (
-          <div id="sec-kpi" className="grid grid-cols-1 md:grid-cols-3 gap-4 scroll-mt-28">
+          <div id="sec-kpi" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 scroll-mt-28">
             {/* Aged Stock */}
             <div className={`bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] p-5 transition-all ${
               selectedWarehouse === '__aged__' ? 'ring-2 ring-[var(--color-primary)]' : ''
@@ -1136,6 +1162,24 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
+
+            {/* Stock Delivered */}
+            <div className={`bg-white rounded-xl shadow-sm border-l-4 border-emerald-500 p-5 transition-all ${
+              selectedWarehouse === '__delivered__' ? 'ring-2 ring-emerald-500' : ''
+            }`}>
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Stock Delivered</div>
+                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtRand(cardTotals.delivered.val)}</div>
+                  <div className="text-sm text-gray-500 mt-0.5">{fmtNum(cardTotals.delivered.qty)} units</div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1174,7 +1218,7 @@ export default function DashboardPage() {
                   {chartData.map((entry) => (
                     <Cell
                       key={entry.key}
-                      fill={entry.key === '__transit__' ? '#06b6d4' : '#7CC042'}
+                      fill={entry.key === '__transit__' ? '#06b6d4' : entry.key === '__delivered__' ? '#10b981' : '#7CC042'}
                       opacity={selectedWarehouse && selectedWarehouse !== entry.key ? 0.3 : 1}
                     />
                   ))}
@@ -1274,6 +1318,20 @@ export default function DashboardPage() {
                         Transit Val<SortArrow col="transitVal" /><ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
+                    {(() => { const i = colIdx(); return (
+                      <th key="deliveredQty" style={colWidths[i] ? { width: colWidths[i] } : undefined}
+                        className="px-3 py-2 font-semibold text-emerald-700 text-xs uppercase text-right relative cursor-pointer select-none hover:bg-gray-100"
+                        onClick={() => handleSort('deliveredQty')}>
+                        Delivered Qty<SortArrow col="deliveredQty" /><ResizeHandle colIdx={i} />
+                      </th>
+                    ); })()}
+                    {(() => { const i = colIdx(); return (
+                      <th key="deliveredVal" style={colWidths[i] ? { width: colWidths[i] } : undefined}
+                        className="px-3 py-2 font-semibold text-emerald-700 text-xs uppercase text-right relative cursor-pointer select-none hover:bg-gray-100"
+                        onClick={() => handleSort('deliveredVal')}>
+                        Delivered Val<SortArrow col="deliveredVal" /><ResizeHandle colIdx={i} />
+                      </th>
+                    ); })()}
                   </tr>
                 </thead>
                 <tbody>
@@ -1316,6 +1374,12 @@ export default function DashboardPage() {
                       <td className={`px-3 py-2 text-right ${c.transitVal > 0 ? 'font-medium text-gray-900' : 'text-gray-400'}`}>
                         {fmtRand(c.transitVal)}
                       </td>
+                      <td className={`px-3 py-2 text-right ${c.deliveredQty > 0 ? 'font-medium text-emerald-700' : 'text-gray-400'}`}>
+                        {fmtNum(c.deliveredQty)}
+                      </td>
+                      <td className={`px-3 py-2 text-right ${c.deliveredVal > 0 ? 'font-medium text-emerald-700' : 'text-gray-400'}`}>
+                        {fmtRand(c.deliveredVal)}
+                      </td>
                     </tr>
                   ))}
                   {sortedGrid.length === 0 && (
@@ -1347,6 +1411,12 @@ export default function DashboardPage() {
                       </td>
                       <td className={`px-3 py-2 text-right ${gridTotals.transitVal > 0 ? 'text-gray-900' : 'text-gray-400'}`}>
                         {fmtRand(gridTotals.transitVal)}
+                      </td>
+                      <td className={`px-3 py-2 text-right ${gridTotals.deliveredQty > 0 ? 'text-emerald-700' : 'text-gray-400'}`}>
+                        {fmtNum(gridTotals.deliveredQty)}
+                      </td>
+                      <td className={`px-3 py-2 text-right ${gridTotals.deliveredVal > 0 ? 'text-emerald-700' : 'text-gray-400'}`}>
+                        {fmtRand(gridTotals.deliveredVal)}
                       </td>
                     </tr>
                   </tfoot>

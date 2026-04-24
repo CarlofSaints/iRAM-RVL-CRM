@@ -8,6 +8,7 @@ import { listSpLinks } from '@/lib/spLinkData';
 import { logAudit } from '@/lib/auditLog';
 import { generateDeliveryNotePdf } from '@/lib/deliveryNotePdf';
 import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
+import { sendDeliveryNoteEmail } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
 
@@ -187,6 +188,30 @@ export async function POST(req: NextRequest) {
         await updateSlipInRun(clientId, loadId, slipId, {
           deliveryNoteGeneratedAt: new Date().toISOString(),
         });
+      }
+      // ── Email delivery note PDF to the release rep (non-blocking) ──
+      try {
+        const repEmail = repUser?.email;
+        if (repEmail) {
+          const pdfFileName = `Delivery Note - ${slipId}.pdf`;
+          await sendDeliveryNoteEmail({
+            to: [repEmail],
+            subject: `Delivery Note — ${slipId} — ${slip.siteName} (${slip.siteCode})`,
+            pickSlipId: slipId,
+            siteName: slip.siteName,
+            siteCode: slip.siteCode,
+            warehouse: slip.warehouse,
+            releaseRepName,
+            releasedAt: now,
+            boxCount: (releaseBoxes ?? []).length,
+            totalQty: slip.totalQty,
+            attachments: [{ filename: pdfFileName, content: pdfBuffer }],
+          });
+        } else {
+          console.warn('[release] No email found for release rep', releaseRepId, '— delivery note email skipped');
+        }
+      } catch (emailErr) {
+        console.error('[release] Failed to email delivery note to rep:', emailErr instanceof Error ? emailErr.message : emailErr);
       }
     } catch (err) {
       // Delivery note generation is non-blocking — log warning but don't fail the release

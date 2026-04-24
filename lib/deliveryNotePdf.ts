@@ -43,6 +43,12 @@ export interface DeliveryNotePdfParams {
   stickerBarcodes: string[];
   /** Full URL for the QR code (e.g. https://iram-rvl-crm.vercel.app/delivery/{token}) */
   qrUrl: string;
+  /** Optional base64 PNG signature — if provided, rendered in the signature block */
+  signature?: string;
+  /** Name of the person who signed */
+  signedByName?: string;
+  /** ISO timestamp of when delivery was confirmed */
+  deliveredAt?: string;
 }
 
 /**
@@ -53,7 +59,17 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
     pickSlipId, clientName, vendorNumber, siteName, siteCode,
     warehouse, releaseRepName, releasedAt, storeRefs, manual,
     rows, boxCount, stickerBarcodes, qrUrl,
+    signature, signedByName, deliveredAt,
   } = params;
+
+  // Parse signature image if provided
+  let signatureBuffer: Buffer | null = null;
+  if (signature) {
+    try {
+      const base64Data = signature.replace(/^data:image\/\w+;base64,/, '');
+      signatureBuffer = Buffer.from(base64Data, 'base64');
+    } catch { /* skip */ }
+  }
 
   const pageW = 595.28; // A4
   const marginL = 40;
@@ -290,16 +306,44 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
     y += 15;
   }
 
-  // ── Physical signature block (backup) ──
+  // ── Physical signature block ──
   y += 10;
-  doc.font('Helvetica').fontSize(9);
-  const sigBlockW = usableW * 0.55;
-  const dateBlockW = usableW * 0.35;
-  doc.rect(tableX, y, sigBlockW, 35).stroke();
-  doc.text('Vendor Representative Name & Signature', tableX + 4, y + 12);
-  doc.rect(tableX + usableW - dateBlockW, y, dateBlockW, 35).stroke();
-  doc.text('Date', tableX + usableW - dateBlockW + 4, y + 12);
-  y += 50;
+  if (signatureBuffer) {
+    // Signed version — show signature image + name + date
+    doc.font('Helvetica-Bold').fontSize(9);
+    doc.text('Received By:', tableX, y);
+    y += 14;
+    try {
+      doc.image(signatureBuffer, tableX, y, { height: 50 });
+    } catch { /* skip */ }
+    y += 55;
+    doc.font('Helvetica').fontSize(9);
+    if (signedByName) {
+      doc.text(`Name: ${signedByName}`, tableX, y);
+      y += 13;
+    }
+    if (deliveredAt) {
+      let deliveredDateStr = deliveredAt;
+      try {
+        const dd = new Date(deliveredAt);
+        deliveredDateStr = dd.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
+          + ' ' + dd.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      } catch { /* keep raw */ }
+      doc.text(`Date: ${deliveredDateStr}`, tableX, y);
+      y += 13;
+    }
+    y += 10;
+  } else {
+    // Unsigned version — blank boxes for physical signing
+    doc.font('Helvetica').fontSize(9);
+    const sigBlockW = usableW * 0.55;
+    const dateBlockW = usableW * 0.35;
+    doc.rect(tableX, y, sigBlockW, 35).stroke();
+    doc.text('Vendor Representative Name & Signature', tableX + 4, y + 12);
+    doc.rect(tableX + usableW - dateBlockW, y, dateBlockW, 35).stroke();
+    doc.text('Date', tableX + usableW - dateBlockW + 4, y + 12);
+    y += 50;
+  }
 
   // ── Branding footer ──
   const brandY = pageH - marginB - 30;

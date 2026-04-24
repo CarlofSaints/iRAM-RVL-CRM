@@ -177,6 +177,54 @@ export async function sendUnreturnedSkipEmail(opts: {
   });
 }
 
+export async function sendDeliveryNoteEmail(opts: {
+  to: string[];
+  subject: string;
+  pickSlipId: string;
+  siteName: string;
+  siteCode: string;
+  warehouse: string;
+  releaseRepName: string;
+  releasedAt: string;
+  boxCount: number;
+  totalQty: number;
+  attachments: Array<{ filename: string; content: Buffer }>;
+}) {
+  const fmtDt = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' +
+        d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    } catch { return iso; }
+  };
+  const body = `
+    <p style="margin:0 0 14px;font-size:14px;">A delivery note has been generated for the following release:</p>
+    <table style="background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:14px 16px;width:100%;margin-bottom:20px;">
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Pick Slip</td><td style="font-size:13px;font-family:monospace;"><strong>${opts.pickSlipId}</strong></td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Store</td><td style="font-size:13px;">${opts.siteName} (${opts.siteCode})</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Warehouse</td><td style="font-size:13px;">${opts.warehouse}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Collecting Rep</td><td style="font-size:13px;">${opts.releaseRepName}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Released</td><td style="font-size:13px;">${fmtDt(opts.releasedAt)}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Boxes</td><td style="font-size:13px;">${opts.boxCount}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Total Qty</td><td style="font-size:13px;">${opts.totalQty.toLocaleString()}</td></tr>
+    </table>
+    <p style="margin:0;font-size:13px;color:#555;">The delivery note PDF is attached to this email.</p>
+  `;
+
+  const attachments = opts.attachments.map(a => ({
+    filename: a.filename,
+    content: a.content.toString('base64'),
+  }));
+
+  return getResend().emails.send({
+    from: FROM,
+    to: opts.to,
+    subject: opts.subject,
+    html: emailShell(body),
+    attachments,
+  });
+}
+
 export async function sendPasswordResetEmail(to: string, name: string, password: string) {
   const appUrl = getAppUrl();
   const body = `

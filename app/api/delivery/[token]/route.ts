@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { loadControl } from '@/lib/controlData';
 import { listLoads } from '@/lib/agedStockData';
 import { findSlipByDeliveryToken, updateSlipInRun } from '@/lib/pickSlipData';
-import { getClient } from '@/lib/spLinkData';
+import { getClient, listSpLinks } from '@/lib/spLinkData';
 import { loadUsers } from '@/lib/userData';
 import { logAudit } from '@/lib/auditLog';
-import { Resend } from 'resend';
+import { generateDeliveryNotePdf } from '@/lib/deliveryNotePdf';
+import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
+import { sendPickSlipEmail } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +36,17 @@ export async function GET(
     return NextResponse.json({ error: 'Delivery not found or link has expired' }, { status: 404 });
   }
 
-  const { slip } = result;
+  const { slip, clientId } = result;
+
+  // Load contacts who receive delivery notes (name+surname only — no emails on public page)
+  let contacts: Array<{ name: string; surname: string }> = [];
+  try {
+    const client = await getClient(clientId);
+    const allContacts = (client as { contacts?: Array<{ name?: string; surname?: string; email?: string; receiveDeliveryNotes?: boolean }> })?.contacts ?? [];
+    contacts = allContacts
+      .filter(c => c.receiveDeliveryNotes && c.name)
+      .map(c => ({ name: c.name || '', surname: c.surname || '' }));
+  } catch { /* non-blocking */ }
 
   return NextResponse.json({
     slipId: slip.id,
@@ -50,6 +62,7 @@ export async function GET(
     totalVal: slip.totalVal,
     boxCount: (slip.releaseBoxes ?? []).length,
     manual: slip.manual ?? false,
+    contacts,
     // If already delivered, include delivery info
     deliveredAt: slip.deliveredAt,
     deliverySignedByName: slip.deliverySignedByName,
@@ -151,42 +164,99 @@ export async function POST(
     detail: `Delivery confirmed by vendor rep "${vendorName.trim()}" via QR code`,
   });
 
-  // ── Email customer contacts who have receiveDeliveryNotes enabled ──
+  // ── Generate signed delivery note PDF, upload to SP, email to contacts ──
+  const now = new Date().toISOString();
+  let signedPdfBuffer: Buffer | null = null;
+
+  try {
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://iram-rvl-crm.vercel.app';
+    const qrUrl = `${siteUrl}/delivery/${token}`;
+
+    signedPdfBuffer = await generateDeliveryNotePdf({
+      pickSlipId: slip.id,
+      clientName: slip.clientName,
+      vendorNumber: slip.vendorNumber,
+      siteName: slip.siteName,
+      siteCode: slip.siteCode,
+      warehouse: slip.warehouse,
+      releaseRepName: slip.releaseRepName ?? '',
+      releasedAt: slip.releasedAt ?? now,
+      storeRefs: slip.receiptStoreRefs ?? [],
+      manual: slip.manual,
+      rows: (slip.rows ?? []).map(r => ({
+        articleCode: r.articleCode,
+        description: r.description,
+        qty: r.qty,
+        val: r.val,
+      })),
+      boxCount: (slip.releaseBoxes ?? []).length,
+      stickerBarcodes: (slip.releaseBoxes ?? []).map(b => b.stickerBarcode),
+      qrUrl,
+      signature,
+      signedByName: vendorName.trim(),
+      deliveredAt: now,
+    });
+
+    // Upload signed PDF to SP — under a "Signed" subfolder
+    const spLinks = await listSpLinks(clientId);
+    const dnLink = spLinks.find(l => l.deliveryNoteFolderUrl);
+
+    if (dnLink?.deliveryNoteFolderUrl && signedPdfBuffer) {
+      try {
+        const dateStr = (slip.releasedAt ?? now).slice(0, 10).replace(/-/g, '');
+        const resolved = await resolveSharedItem(dnLink.deliveryNoteFolderUrl);
+        const dateFolder = await createFolder(resolved.driveId, resolved.folderId, dateStr);
+        const signedFolder = await createFolder(resolved.driveId, dateFolder.id, 'Signed');
+        const pdfFileName = `${slip.siteName} ${slip.siteCode} - DN-${slip.id} - SIGNED.pdf`;
+        const uploaded = await uploadNewFile(resolved.driveId, signedFolder.id, pdfFileName, signedPdfBuffer, 'application/pdf');
+
+        await updateSlipInRun(clientId, loadId, slip.id, {
+          deliveryNoteSignedSpWebUrl: uploaded.webUrl,
+        });
+      } catch (spErr) {
+        console.error('[delivery] Failed to upload signed PDF to SP:', spErr instanceof Error ? spErr.message : spErr);
+      }
+    }
+  } catch (pdfErr) {
+    console.error('[delivery] Failed to generate signed delivery note PDF:', pdfErr instanceof Error ? pdfErr.message : pdfErr);
+  }
+
+  // ── Email customer contacts with signed PDF attached ──
   try {
     const client = await getClient(clientId);
     const contacts = (client as { contacts?: Array<{ email: string; receiveDeliveryNotes?: boolean; name?: string; surname?: string }> })?.contacts ?? [];
     const dnContacts = contacts.filter(c => c.receiveDeliveryNotes && c.email);
 
     if (dnContacts.length > 0 && process.env.RESEND_API_KEY) {
-      const resend = new Resend(process.env.RESEND_API_KEY);
       const toAddresses = dnContacts.map(c => c.email);
+      const confirmedAt = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Johannesburg' });
+      const bodyHtml = `
+        <p style="margin:0 0 14px;font-size:14px;">Stock has been delivered and signed for. The signed delivery note is attached.</p>
+        <table style="background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:14px 16px;width:100%;margin-bottom:20px;">
+          <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Pick Slip</td><td style="font-size:13px;font-family:monospace;"><strong>${slip.id}</strong></td></tr>
+          <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Store</td><td style="font-size:13px;">${slip.siteName} (${slip.siteCode})</td></tr>
+          <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Warehouse</td><td style="font-size:13px;">${slip.warehouse}</td></tr>
+          <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Total Qty</td><td style="font-size:13px;">${slip.totalQty}</td></tr>
+          <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Collecting Rep</td><td style="font-size:13px;">${repName}</td></tr>
+          <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Received By</td><td style="font-size:13px;font-weight:bold;">${vendorName.trim()}</td></tr>
+          <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Confirmed At</td><td style="font-size:13px;">${confirmedAt}</td></tr>
+        </table>
+        <p style="margin:0;font-size:13px;color:#555;">Signed delivery note attached${signedPdfBuffer ? '' : ' (PDF generation failed — details above only)'}.</p>
+      `;
 
-      await resend.emails.send({
-        from: 'iRam RVL <noreply@outerjoin.co.za>',
+      const attachments: Array<{ filename: string; content: Buffer }> = [];
+      if (signedPdfBuffer) {
+        attachments.push({
+          filename: `Delivery Note - ${slip.id} - SIGNED.pdf`,
+          content: signedPdfBuffer,
+        });
+      }
+
+      await sendPickSlipEmail({
         to: toAddresses,
         subject: `Delivery Confirmed — ${slip.id} — ${slip.siteName} (${slip.siteCode})`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <div style="background: #7CC042; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-              <h2 style="margin: 0;">Delivery Confirmed</h2>
-            </div>
-            <div style="padding: 20px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
-              <p>Stock has been delivered and signed for. Details below:</p>
-              <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
-                <tr><td style="padding: 6px 0; color: #666;">Pick Slip</td><td style="padding: 6px 0; font-weight: bold;">${slip.id}</td></tr>
-                <tr><td style="padding: 6px 0; color: #666;">Store</td><td style="padding: 6px 0;">${slip.siteName} (${slip.siteCode})</td></tr>
-                <tr><td style="padding: 6px 0; color: #666;">Warehouse</td><td style="padding: 6px 0;">${slip.warehouse}</td></tr>
-                <tr><td style="padding: 6px 0; color: #666;">Total Qty</td><td style="padding: 6px 0;">${slip.totalQty}</td></tr>
-                <tr><td style="padding: 6px 0; color: #666;">Collecting Rep</td><td style="padding: 6px 0;">${repName}</td></tr>
-                <tr><td style="padding: 6px 0; color: #666;">Received By</td><td style="padding: 6px 0; font-weight: bold;">${vendorName.trim()}</td></tr>
-                <tr><td style="padding: 6px 0; color: #666;">Confirmed At</td><td style="padding: 6px 0;">${new Date().toLocaleString('en-GB', { timeZone: 'Africa/Johannesburg' })}</td></tr>
-              </table>
-              ${slip.deliveryNoteSpWebUrl ? `<p style="margin-top: 16px;"><a href="${slip.deliveryNoteSpWebUrl}" style="color: #7CC042; font-weight: bold;">View Delivery Note PDF</a></p>` : ''}
-              <hr style="margin: 20px 0; border: none; border-top: 1px solid #e5e7eb;" />
-              <p style="font-size: 12px; color: #999;">This is an automated notification from iRam RVL CRM. Powered by OuterJoin.</p>
-            </div>
-          </div>
-        `,
+        bodyHtml,
+        attachments,
       });
     }
   } catch (err) {

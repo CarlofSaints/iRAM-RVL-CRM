@@ -126,6 +126,8 @@ export interface PickSlipRecord {
   deliveryToken?: string;
   /** SP web URL of the delivery note PDF */
   deliveryNoteSpWebUrl?: string;
+  /** SP web URL of the signed delivery note PDF */
+  deliveryNoteSignedSpWebUrl?: string;
   /** ISO timestamp when delivery note was generated */
   deliveryNoteGeneratedAt?: string;
   /** Vendor signature — base64 PNG from canvas pad */

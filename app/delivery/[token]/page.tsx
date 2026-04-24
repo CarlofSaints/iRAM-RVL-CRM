@@ -3,6 +3,11 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 
+interface ContactDto {
+  name: string;
+  surname: string;
+}
+
 interface SlipSummary {
   slipId: string;
   clientName: string;
@@ -17,6 +22,7 @@ interface SlipSummary {
   totalVal: number;
   boxCount: number;
   manual: boolean;
+  contacts?: ContactDto[];
   deliveredAt?: string;
   deliverySignedByName?: string;
 }
@@ -41,6 +47,7 @@ export default function DeliveryConfirmationPage() {
   // Form state
   const [securityCode, setSecurityCode] = useState('');
   const [vendorName, setVendorName] = useState('');
+  const [contactMode, setContactMode] = useState<'select' | 'other'>('select');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [success, setSuccess] = useState(false);
@@ -359,16 +366,53 @@ export default function DeliveryConfirmationPage() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-5">
             <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Received By</h2>
             <p className="text-xs text-gray-500 mb-3">
-              Full name of the person receiving the stock.
+              Select the person receiving the stock, or choose &quot;Other&quot; to type a name.
             </p>
-            <input
-              type="text"
-              value={vendorName}
-              onChange={e => setVendorName(e.target.value)}
-              placeholder="Full name"
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm"
-              autoComplete="off"
-            />
+            {slip.contacts && slip.contacts.length > 0 ? (
+              <>
+                <select
+                  value={contactMode === 'other' ? '__other__' : vendorName}
+                  onChange={e => {
+                    if (e.target.value === '__other__') {
+                      setContactMode('other');
+                      setVendorName('');
+                    } else {
+                      setContactMode('select');
+                      setVendorName(e.target.value);
+                    }
+                  }}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm mb-2"
+                >
+                  <option value="">Select name...</option>
+                  {slip.contacts.map((c, i) => {
+                    const fullName = `${c.name} ${c.surname}`.trim();
+                    return (
+                      <option key={i} value={fullName}>{fullName}</option>
+                    );
+                  })}
+                  <option value="__other__">Other</option>
+                </select>
+                {contactMode === 'other' && (
+                  <input
+                    type="text"
+                    value={vendorName}
+                    onChange={e => setVendorName(e.target.value)}
+                    placeholder="Enter full name"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm"
+                    autoComplete="off"
+                  />
+                )}
+              </>
+            ) : (
+              <input
+                type="text"
+                value={vendorName}
+                onChange={e => setVendorName(e.target.value)}
+                placeholder="Full name"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm"
+                autoComplete="off"
+              />
+            )}
           </div>
 
           {/* Signature pad */}

@@ -27,7 +27,7 @@ export interface DashboardRow {
   qty: number;
   val: number;
   date: string;
-  category: 'aged' | 'warehouse' | 'transit' | 'display' | 'store-refused' | 'not-found' | 'damaged' | 'collected';
+  category: 'aged' | 'warehouse' | 'transit' | 'delivered' | 'display' | 'store-refused' | 'not-found' | 'damaged' | 'collected';
   manual: boolean;
 }
 
@@ -139,11 +139,13 @@ export async function GET(req: NextRequest) {
       const client = clientsById.get(slip.clientId);
       if (!client) continue;
 
-      let category: 'warehouse' | 'transit';
+      let category: 'warehouse' | 'transit' | 'delivered';
       if (slip.status === 'receipted' || slip.status === 'booked') {
         category = 'warehouse';
       } else if (slip.status === 'in-transit' || slip.status === 'partial-release') {
         category = 'transit';
+      } else if (slip.status === 'delivered') {
+        category = 'delivered';
       } else {
         continue; // generated/sent/picked/etc. — not counted on dashboard
       }
