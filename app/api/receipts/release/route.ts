@@ -205,6 +205,7 @@ export async function POST(req: NextRequest) {
             releasedAt: now,
             boxCount: (releaseBoxes ?? []).length,
             totalQty: slip.totalQty,
+            qrUrl,
             attachments: [{ filename: pdfFileName, content: pdfBuffer }],
           });
         } else {

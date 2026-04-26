@@ -188,6 +188,7 @@ export async function sendDeliveryNoteEmail(opts: {
   releasedAt: string;
   boxCount: number;
   totalQty: number;
+  qrUrl: string;
   attachments: Array<{ filename: string; content: Buffer }>;
 }) {
   const fmtDt = (iso: string) => {
@@ -208,7 +209,10 @@ export async function sendDeliveryNoteEmail(opts: {
       <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Boxes</td><td style="font-size:13px;">${opts.boxCount}</td></tr>
       <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Total Qty</td><td style="font-size:13px;">${opts.totalQty.toLocaleString()}</td></tr>
     </table>
-    <p style="margin:0;font-size:13px;color:#555;">The delivery note PDF is attached to this email.</p>
+    <p style="margin:0 0 14px;font-size:13px;color:#555;">The delivery note PDF is attached to this email.</p>
+    <p style="margin:0 0 8px;font-size:13px;">Can't print? Confirm delivery online:</p>
+    <a href="${opts.qrUrl}" style="background:${PRIMARY};color:#fff;text-decoration:none;padding:12px 24px;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">Confirm Delivery</a>
+    <p style="margin:10px 0 0;font-size:11px;color:#999;word-break:break-all;">${opts.qrUrl}</p>
   `;
 
   const attachments = opts.attachments.map(a => ({
