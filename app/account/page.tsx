@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch, updateSession, avatarSrcFor } from '@/lib/useAuth';
@@ -26,9 +27,15 @@ function getInitials(name: string, surname: string) {
   return `${a}${b}` || '?';
 }
 
-export default function AccountPage() {
+export default function AccountPageWrapper() {
+  return <Suspense><AccountPageInner /></Suspense>;
+}
+
+function AccountPageInner() {
   const { session, loading, logout } = useAuth();
-  const [tab, setTab] = useState<Tab>('profile');
+  const searchParams = useSearchParams();
+  const initialTab = (searchParams.get('tab') as Tab) || 'profile';
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [data, setData] = useState<AccountData | null>(null);
   const [toast, setToast] = useState<ToastData | null>(null);
 
@@ -165,15 +172,52 @@ export default function AccountPage() {
     }
   }
 
+  // Handle ?upgraded=1 return from PayFast
+  useEffect(() => {
+    if (searchParams.get('upgraded') === '1') {
+      notify('Welcome to Pro! Your subscription is now active.');
+      // Clean the URL
+      window.history.replaceState({}, '', '/account?tab=billing');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function handleUpgrade() {
-    if (!confirm('Request an upgrade to the Pro plan? Our team will be in touch.')) return;
     setUpgradeLoading(true);
     try {
-      const res = await authFetch('/api/account/upgrade', { method: 'POST' });
+      const res = await authFetch('/api/payfast/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
       const json = await res.json();
-      if (!res.ok) { notify(json.error || 'Failed to send request', 'error'); return; }
-      notify('Upgrade requested — we\'ll be in touch shortly');
-      fetchAccount();
+      if (!res.ok) {
+        // Fallback to legacy request flow if PayFast isn't configured
+        if (json.error === 'PayFast not configured') {
+          if (!confirm('Request an upgrade to the Pro plan? Our team will be in touch.')) return;
+          const fallback = await authFetch('/api/account/upgrade', { method: 'POST' });
+          const fbJson = await fallback.json();
+          if (!fallback.ok) { notify(fbJson.error || 'Failed to send request', 'error'); return; }
+          notify('Upgrade requested — we\'ll be in touch shortly');
+          fetchAccount();
+          return;
+        }
+        notify(json.error || 'Failed to start checkout', 'error');
+        return;
+      }
+
+      // Redirect to PayFast checkout via a hidden form submission
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = json.payfastUrl;
+      for (const [key, val] of Object.entries(json.formData as Record<string, string>)) {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = key;
+        input.value = val;
+        form.appendChild(input);
+      }
+      document.body.appendChild(form);
+      form.submit();
     } finally {
       setUpgradeLoading(false);
     }
@@ -440,18 +484,24 @@ export default function AccountPage() {
                     </span>
                   )}
                 </div>
-                <div className="text-3xl font-bold text-gray-900 mb-1">Contact Sales</div>
+                <div className="text-3xl font-bold text-gray-900 mb-1">R189<span className="text-lg font-normal text-gray-500"> / month</span></div>
                 <p className="text-xs text-gray-500 mb-5">Power tools for advanced reporting.</p>
                 <ul className="flex flex-col gap-2 text-sm text-gray-700 mb-5">
                   <li className="flex items-start gap-2"><span className="text-amber-600 font-bold">✓</span> Everything in Standard</li>
-                  <li className="flex items-start gap-2"><span className="text-amber-600 font-bold">✓</span> Additional reporting</li>
-                  <li className="flex items-start gap-2"><span className="text-amber-600 font-bold">✓</span> Custom dashboards</li>
+                  <li className="flex items-start gap-2"><span className="text-amber-600 font-bold">✓</span> Excel exports (dashboard grids)</li>
+                  <li className="flex items-start gap-2"><span className="text-amber-600 font-bold">✓</span> Scheduled email reports</li>
+                  <li className="flex items-start gap-2"><span className="text-amber-600 font-bold">✓</span> Advanced charts & analytics</li>
                   <li className="flex items-start gap-2"><span className="text-amber-600 font-bold">✓</span> Priority support</li>
                 </ul>
 
                 {tier === 'pro' ? (
-                  <div className="text-sm font-semibold text-amber-700">
-                    Pro plan active{data.subscription?.upgradedAt ? ` since ${new Date(data.subscription.upgradedAt).toLocaleDateString()}` : ''}.
+                  <div>
+                    <div className="text-sm font-semibold text-amber-700">
+                      Pro plan active{data.subscription?.upgradedAt ? ` since ${new Date(data.subscription.upgradedAt).toLocaleDateString()}` : ''}.
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">
+                      To manage or cancel your subscription, contact support or visit your PayFast dashboard.
+                    </p>
                   </div>
                 ) : requested ? (
                   <div className="bg-amber-100 border border-amber-300 text-amber-800 text-xs rounded-lg px-3 py-2">

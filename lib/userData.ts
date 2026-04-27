@@ -10,6 +10,10 @@ export interface UserSubscription {
   upgradedAt?: string;
   /** Set when the user clicks "Upgrade to Pro" — pending admin action. */
   requestedUpgradeAt?: string;
+  /** PayFast subscription token for managing/cancelling the subscription. */
+  payfastToken?: string;
+  /** PayFast subscription ID returned in the ITN. */
+  payfastSubscriptionId?: string;
 }
 
 export interface User {

@@ -15,6 +15,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ke
     if (body.name !== undefined) perms[idx].name = String(body.name).trim();
     if (body.description !== undefined) perms[idx].description = String(body.description);
     if (body.category !== undefined) perms[idx].category = String(body.category);
+    if (body.proOnly !== undefined) perms[idx].proOnly = !!body.proOnly;
 
     await savePermissions(perms);
     return NextResponse.json(perms[idx]);

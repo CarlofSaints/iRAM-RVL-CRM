@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
   const guard = await requirePermission(req, 'manage_roles');
   if (guard instanceof NextResponse) return guard;
 
-  const { key, name, description, category } = await req.json();
+  const { key, name, description, category, proOnly } = await req.json();
   if (!key || typeof key !== 'string') {
     return NextResponse.json({ error: 'Missing key' }, { status: 400 });
   }
@@ -46,6 +46,7 @@ export async function POST(req: NextRequest) {
     description: (description ?? '').toString(),
     category: (category ?? 'Custom').toString(),
     isSystem: false,
+    proOnly: !!proOnly,
     createdAt: new Date().toISOString(),
   };
 

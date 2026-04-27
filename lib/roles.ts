@@ -24,6 +24,8 @@ export interface PermissionDef {
   description: string;
   category: string;
   isSystem: boolean;
+  /** When true, this permission is gated behind the Pro subscription tier (customer role only). */
+  proOnly?: boolean;
   createdAt: string;
 }
 
@@ -32,22 +34,23 @@ export interface PermissionDef {
  * set when seeded; newer user-created perms have `isSystem: false`.
  */
 export const DEFAULT_PERMISSIONS: Array<Omit<PermissionDef, 'createdAt' | 'isSystem'>> = [
-  { key: 'view_dashboard', name: 'View Dashboard', description: 'View main dashboard', category: 'Dashboard' },
-  { key: 'view_dashboard_scoped', name: 'View Dashboard (Scoped)', description: 'View dashboard limited to linked client', category: 'Dashboard' },
-  { key: 'view_all_clients', name: 'View All Clients', description: 'See data for every client — bypasses per-user client assignments', category: 'Dashboard' },
-  { key: 'manage_users', name: 'Manage Users', description: 'Add / edit / remove users', category: 'Admin' },
-  { key: 'manage_roles', name: 'Manage Roles & Permissions', description: 'Add / edit / remove roles & permissions', category: 'Admin' },
-  { key: 'manage_clients', name: 'Manage Clients / Suppliers', description: 'Manage clients/suppliers masterfile', category: 'Control Centre' },
-  { key: 'manage_stores', name: 'Manage Stores', description: 'Manage stores masterfile', category: 'Control Centre' },
-  { key: 'manage_products', name: 'Manage Products', description: 'Manage products masterfile', category: 'Control Centre' },
-  { key: 'manage_reps', name: 'Manage Reps', description: 'Manage reps masterfile', category: 'Control Centre' },
-  { key: 'manage_warehouses', name: 'Manage Warehouses', description: 'Manage warehouses masterfile', category: 'Control Centre' },
-  { key: 'import_excel', name: 'Import Excel', description: 'Upload Excel files to control masterfiles', category: 'Control Centre' },
-  { key: 'view_aged_stock', name: 'View Aged Stock', description: 'View the aged stock dashboard (scoped to assigned clients)', category: 'Aged Stock' },
-  { key: 'load_aged_stock', name: 'Load Aged Stock', description: 'Upload & commit aged stock lists', category: 'Aged Stock' },
-  { key: 'manage_pick_slips', name: 'Manage Pick Slips', description: 'Edit, send, and delete pick slips', category: 'Aged Stock' },
-  { key: 'receipt_stock', name: 'Receipt Stock', description: 'Receipt aged stock into warehouses via box scanning', category: 'Aged Stock' },
-  { key: 'scan_stock', name: 'Scan Stock', description: 'Scan picking slips and book stock into warehouses', category: 'Aged Stock' },
+  { key: 'view_dashboard', name: 'View Dashboard', description: 'View main dashboard', category: 'Dashboard', proOnly: false },
+  { key: 'view_dashboard_scoped', name: 'View Dashboard (Scoped)', description: 'View dashboard limited to linked client', category: 'Dashboard', proOnly: false },
+  { key: 'view_all_clients', name: 'View All Clients', description: 'See data for every client — bypasses per-user client assignments', category: 'Dashboard', proOnly: false },
+  { key: 'export_excel', name: 'Export to Excel', description: 'Download dashboard grids as Excel files', category: 'Dashboard', proOnly: true },
+  { key: 'manage_users', name: 'Manage Users', description: 'Add / edit / remove users', category: 'Admin', proOnly: false },
+  { key: 'manage_roles', name: 'Manage Roles & Permissions', description: 'Add / edit / remove roles & permissions', category: 'Admin', proOnly: false },
+  { key: 'manage_clients', name: 'Manage Clients / Suppliers', description: 'Manage clients/suppliers masterfile', category: 'Control Centre', proOnly: false },
+  { key: 'manage_stores', name: 'Manage Stores', description: 'Manage stores masterfile', category: 'Control Centre', proOnly: false },
+  { key: 'manage_products', name: 'Manage Products', description: 'Manage products masterfile', category: 'Control Centre', proOnly: false },
+  { key: 'manage_reps', name: 'Manage Reps', description: 'Manage reps masterfile', category: 'Control Centre', proOnly: false },
+  { key: 'manage_warehouses', name: 'Manage Warehouses', description: 'Manage warehouses masterfile', category: 'Control Centre', proOnly: false },
+  { key: 'import_excel', name: 'Import Excel', description: 'Upload Excel files to control masterfiles', category: 'Control Centre', proOnly: false },
+  { key: 'view_aged_stock', name: 'View Aged Stock', description: 'View the aged stock dashboard (scoped to assigned clients)', category: 'Aged Stock', proOnly: false },
+  { key: 'load_aged_stock', name: 'Load Aged Stock', description: 'Upload & commit aged stock lists', category: 'Aged Stock', proOnly: false },
+  { key: 'manage_pick_slips', name: 'Manage Pick Slips', description: 'Edit, send, and delete pick slips', category: 'Aged Stock', proOnly: false },
+  { key: 'receipt_stock', name: 'Receipt Stock', description: 'Receipt aged stock into warehouses via box scanning', category: 'Aged Stock', proOnly: false },
+  { key: 'scan_stock', name: 'Scan Stock', description: 'Scan picking slips and book stock into warehouses', category: 'Aged Stock', proOnly: false },
 ];
 
 /**

@@ -24,6 +24,8 @@ export interface Session {
   avatarUpdatedAt?: string;
   /** Current subscription tier. Defaults to 'standard'. */
   subscriptionTier?: 'standard' | 'pro';
+  /** Permission keys flagged as proOnly — used by the client to gate Pro features. */
+  proPermissions?: string[];
 }
 
 /**

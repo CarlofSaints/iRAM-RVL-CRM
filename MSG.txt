@@ -1,11 +1,1 @@
-Receipt/Release enhancements + Audit Log
-
-- Timestamps now include time (DD/MM/YYYY HH:MM)
-- Release barcode validation against receipted barcodes
-- Box count validation with RVL Manager override (partial-release status)
-- Release code field on Account Security tab for all users
-- Audit log system (monthly Blob files) + admin page
-- Fixed page titles to Receive/Release Stock
-- Updated User Guide with release flow steps
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+Pro tier gate system + PayFast subscription integration 

@@ -2,6 +2,8 @@
 
 import { useAuth, authFetch } from '@/lib/useAuth';
 import Sidebar from '@/components/Sidebar';
+import Logo from '@/components/Logo';
+import ProGateModal from '@/components/ProGateModal';
 import Link from 'next/link';
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import * as XLSX from 'xlsx';
@@ -155,6 +157,7 @@ function SummaryGrid({
   exportFileName,
   id,
   defaultCollapsed = true,
+  onBeforeExport,
 }: {
   title: string;
   columns: SummaryCol[];
@@ -162,6 +165,8 @@ function SummaryGrid({
   exportFileName: string;
   id?: string;
   defaultCollapsed?: boolean;
+  /** Return false to block the export (e.g. Pro gate). */
+  onBeforeExport?: () => boolean;
 }) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const [sortKey, setSortKey] = useState<string>(columns[0]?.key ?? '');
@@ -209,6 +214,7 @@ function SummaryGrid({
 
   function doExport() {
     if (sorted.length === 0) return;
+    if (onBeforeExport && !onBeforeExport()) return;
     const xlRows = sorted.map(r => {
       const out: Record<string, string | number> = {};
       for (const c of columns) out[c.label] = r[c.key] ?? '';
@@ -369,9 +375,26 @@ export default function DashboardPage() {
   const [colWidths, setColWidths] = useState<Record<number, number>>({});
   const resizingCol = useRef<{ idx: number; startX: number; startW: number } | null>(null);
 
+  // Pro gate
+  const [proGateOpen, setProGateOpen] = useState(false);
+  const [proGateFeature, setProGateFeature] = useState('');
+
   const perms = session?.permissions ?? [];
   const has = useCallback((k: string) => perms.includes(k), [perms]);
   const isScoped = session && !has('view_dashboard') && has('view_dashboard_scoped');
+
+  /** Check if a feature is Pro-gated for the current user.
+   *  Returns true (= blocked) if user is customer role + standard tier + feature is in proPermissions.
+   *  Non-customer roles are NEVER gated. */
+  const checkProGate = useCallback((feature: string, permKey: string): boolean => {
+    if (!session) return false;
+    if (session.role !== 'customer') return false;
+    if ((session.subscriptionTier ?? 'standard') === 'pro') return false;
+    if (!(session.proPermissions ?? []).includes(permKey)) return false;
+    setProGateFeature(feature);
+    setProGateOpen(true);
+    return true; // blocked
+  }, [session]);
 
   useEffect(() => {
     function onMouseMove(e: MouseEvent) {
@@ -894,6 +917,7 @@ export default function DashboardPage() {
   // ── Excel export ──────────────────────────────────────────────────────────
   function exportToExcel() {
     if (sortedGrid.length === 0) return;
+    if (checkProGate('export dashboard data to Excel', 'export_excel')) return;
     const rows = sortedGrid.map(c => {
       const row: Record<string, string | number> = {
         'Client': c.clientName,
@@ -971,11 +995,14 @@ export default function DashboardPage() {
 
       <main className="ml-64 px-8 py-8 flex flex-col gap-6">
         {/* Welcome */}
-        <div className="bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] px-6 py-5">
-          <h1 className="text-xl font-bold text-gray-900">
-            Welcome back, {session.name}
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">iRamFlow — Dashboard</p>
+        <div className="bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] px-6 py-5 flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">
+              Welcome back, {session.name}
+            </h1>
+            <p className="text-sm text-gray-500 mt-1">iRamFlow — Dashboard</p>
+          </div>
+          <Logo size={36} />
         </div>
 
         {/* Scoped (Customer) banner */}
@@ -1435,6 +1462,7 @@ export default function DashboardPage() {
               columns={urByVendorCols}
               rows={urByVendor}
               exportFileName={`iRamFlow Unreturned By Vendor - ${new Date().toISOString().slice(0, 10)}.xlsx`}
+              onBeforeExport={() => !checkProGate('export stock data to Excel', 'export_excel')}
             />
             <SummaryGrid
               id="sec-ur-store"
@@ -1442,6 +1470,7 @@ export default function DashboardPage() {
               columns={[{ key: 'label', label: 'Store', align: 'left' }, ...urCols.slice(1)]}
               rows={urByStore}
               exportFileName={`iRamFlow Unreturned By Store - ${new Date().toISOString().slice(0, 10)}.xlsx`}
+              onBeforeExport={() => !checkProGate('export stock data to Excel', 'export_excel')}
             />
             <SummaryGrid
               id="sec-ur-product"
@@ -1449,6 +1478,7 @@ export default function DashboardPage() {
               columns={urByProductCols}
               rows={urByProduct}
               exportFileName={`iRamFlow Unreturned By Product - ${new Date().toISOString().slice(0, 10)}.xlsx`}
+              onBeforeExport={() => !checkProGate('export stock data to Excel', 'export_excel')}
             />
             <SummaryGrid
               id="sec-ur-detail"
@@ -1456,6 +1486,7 @@ export default function DashboardPage() {
               columns={urDetailCols}
               rows={urDetail}
               exportFileName={`iRamFlow Unreturned Detail - ${new Date().toISOString().slice(0, 10)}.xlsx`}
+              onBeforeExport={() => !checkProGate('export stock data to Excel', 'export_excel')}
             />
           </>
         )}
@@ -1491,6 +1522,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </main>
+
+      <ProGateModal open={proGateOpen} onClose={() => setProGateOpen(false)} feature={proGateFeature} />
     </div>
   );
 }

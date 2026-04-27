@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { loadUsers, saveUsers } from '@/lib/userData';
-import { loadRoles, resolvePermissionsForRole } from '@/lib/rolesData';
+import { loadRoles, loadPermissions, resolvePermissionsForRole } from '@/lib/rolesData';
 
 export async function POST(req: NextRequest) {
   const { email, password } = await req.json();
@@ -30,6 +30,10 @@ export async function POST(req: NextRequest) {
   const role = roles.find(r => r.id === user.role);
   const permissions = await resolvePermissionsForRole(user.role);
 
+  // Build list of permission keys flagged as Pro-only (for client-side gating)
+  const allPermissions = await loadPermissions();
+  const proPermissions = allPermissions.filter(p => p.proOnly).map(p => p.key);
+
   return NextResponse.json({
     id: user.id,
     name: user.name,
@@ -38,6 +42,7 @@ export async function POST(req: NextRequest) {
     role: user.role,
     roleName: role?.name ?? user.role,
     permissions,
+    proPermissions,
     linkedClientId: user.linkedClientId,
     assignedClientIds: user.assignedClientIds ?? [],
     avatarUpdatedAt: user.avatarUpdatedAt,

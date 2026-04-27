@@ -29,6 +29,7 @@ export default function RolesAdminPage() {
   const [permName, setPermName] = useState('');
   const [permDesc, setPermDesc] = useState('');
   const [permCategory, setPermCategory] = useState('Custom');
+  const [permProOnly, setPermProOnly] = useState(false);
   const [permSaving, setPermSaving] = useState(false);
 
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
@@ -124,6 +125,7 @@ export default function RolesAdminPage() {
     setPermName('');
     setPermDesc('');
     setPermCategory('Custom');
+    setPermProOnly(false);
     setPermModal({ mode: 'create' });
   }
 
@@ -132,6 +134,7 @@ export default function RolesAdminPage() {
     setPermName(perm.name);
     setPermDesc(perm.description);
     setPermCategory(perm.category);
+    setPermProOnly(!!perm.proOnly);
     setPermModal({ mode: 'edit', perm });
   }
 
@@ -144,7 +147,7 @@ export default function RolesAdminPage() {
         const res = await authFetch('/api/permissions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key: permKey, name: permName, description: permDesc, category: permCategory }),
+          body: JSON.stringify({ key: permKey, name: permName, description: permDesc, category: permCategory, proOnly: permProOnly }),
         });
         if (!res.ok) {
           const data = await res.json();
@@ -156,7 +159,7 @@ export default function RolesAdminPage() {
         const res = await authFetch(`/api/permissions/${permModal.perm!.key}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: permName, description: permDesc, category: permCategory }),
+          body: JSON.stringify({ name: permName, description: permDesc, category: permCategory, proOnly: permProOnly }),
         });
         if (!res.ok) {
           const data = await res.json();
@@ -169,6 +172,19 @@ export default function RolesAdminPage() {
       refresh();
     } finally {
       setPermSaving(false);
+    }
+  }
+
+  async function toggleProOnly(perm: PermissionDef) {
+    const res = await authFetch(`/api/permissions/${perm.key}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proOnly: !perm.proOnly }),
+    });
+    if (res.ok) { notify(`${perm.name} ${perm.proOnly ? 'removed from' : 'marked as'} Pro`); refresh(); }
+    else {
+      const data = await res.json();
+      notify(data.error || 'Failed to update', 'error');
     }
   }
 
@@ -284,6 +300,7 @@ export default function RolesAdminPage() {
                     <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Key</th>
                     <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
                     <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Category</th>
+                    <th className="text-center px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Pro</th>
                     <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</th>
                     <th className="px-6 py-3" />
                   </tr>
@@ -292,8 +309,30 @@ export default function RolesAdminPage() {
                   {perms.map(p => (
                     <tr key={p.key} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                       <td className="px-6 py-3 font-mono text-xs text-gray-700">{p.key}</td>
-                      <td className="px-6 py-3 font-medium text-gray-900">{p.name}</td>
+                      <td className="px-6 py-3 font-medium text-gray-900">
+                        <span className="flex items-center gap-2">
+                          {p.name}
+                          {p.proOnly && (
+                            <span className="bg-gradient-to-r from-amber-400 to-amber-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide">
+                              PRO
+                            </span>
+                          )}
+                        </span>
+                      </td>
                       <td className="px-6 py-3 text-gray-600">{p.category}</td>
+                      <td className="px-6 py-3 text-center">
+                        <button
+                          onClick={() => toggleProOnly(p)}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                            p.proOnly ? 'bg-amber-500' : 'bg-gray-200'
+                          }`}
+                          title={p.proOnly ? 'Pro Only — click to make free' : 'Free — click to make Pro Only'}
+                        >
+                          <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+                            p.proOnly ? 'translate-x-4.5' : 'translate-x-0.5'
+                          }`} />
+                        </button>
+                      </td>
                       <td className="px-6 py-3">
                         {p.isSystem
                           ? <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">System</span>
@@ -411,6 +450,14 @@ export default function RolesAdminPage() {
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
                   placeholder="e.g. Dashboard, Admin, Custom" />
               </div>
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input type="checkbox" checked={permProOnly} onChange={e => setPermProOnly(e.target.checked)}
+                  className="accent-amber-500 w-4 h-4" />
+                <div className="flex flex-col">
+                  <span className="text-sm font-medium text-gray-700">Pro Only</span>
+                  <span className="text-xs text-gray-400">Gate this permission behind the Pro subscription tier (customer role only)</span>
+                </div>
+              </label>
               <div className="flex gap-3 pt-2">
                 <button type="submit" disabled={permSaving}
                   className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-50 text-white text-sm font-bold px-5 py-2 rounded-lg transition-colors">

@@ -34,7 +34,15 @@ export async function POST(req: NextRequest) {
   const permissions = await loadPermissions();
   let permissionsSeeded = 0;
   for (const p of DEFAULT_PERMISSIONS) {
-    if (permissions.find(x => x.key === p.key)) continue;
+    const existing = permissions.find(x => x.key === p.key);
+    if (existing) {
+      // Backfill proOnly on existing permissions that lack the field
+      if (existing.proOnly === undefined && p.proOnly !== undefined) {
+        existing.proOnly = p.proOnly;
+        permissionsSeeded++; // count as change so we persist
+      }
+      continue;
+    }
     const perm: PermissionDef = { ...p, isSystem: true, createdAt: now };
     permissions.push(perm);
     permissionsSeeded++;
