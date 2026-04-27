@@ -1,1 +1,1 @@
-Pro tier gate system + PayFast subscription integration 
+Pro tier gate + PayFast + Suspense fix 
