@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import StatusBadge from '@/components/StatusBadge';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -16,7 +17,7 @@ interface PdfRow {
   val: number;
 }
 
-type SlipStatus = 'generated' | 'sent' | 'picked' | 'booked' | 'receipted' | 'in-transit' | 'returned-to-vendor' | 'delivered';
+type SlipStatus = 'generated' | 'sent' | 'booked' | 'captured' | 'in-transit' | 'failed-release' | 'partial-release' | 'delivered';
 
 interface SlipDto {
   id: string;
@@ -42,6 +43,7 @@ interface SlipDto {
   spFileId?: string;
   manual?: boolean;
   channel?: string;
+  deliveryNoteSpWebUrl?: string;
 }
 
 interface RepDto {
@@ -70,25 +72,25 @@ function fmtCurrency(v: number): string {
   return `R ${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-const STATUS_LABELS: Record<SlipStatus, string> = {
+const STATUS_LABELS: Record<string, string> = {
   'generated': 'Generated',
   'sent': 'Sent',
-  'picked': 'Picked',
   'booked': 'Booked',
-  'receipted': 'Receipted',
+  'captured': 'Captured',
   'in-transit': 'In Transit',
-  'returned-to-vendor': 'Returned to Vendor',
+  'failed-release': 'Failed Release',
+  'partial-release': 'Partial Release',
   'delivered': 'Delivered',
 };
 
-const STATUS_COLORS: Record<SlipStatus, string> = {
+const STATUS_COLORS: Record<string, string> = {
   'generated': 'bg-gray-100 text-gray-700',
   'sent': 'bg-blue-100 text-blue-700',
-  'picked': 'bg-amber-100 text-amber-700',
   'booked': 'bg-teal-100 text-teal-700',
-  'receipted': 'bg-green-100 text-green-700',
+  'captured': 'bg-green-100 text-green-700',
   'in-transit': 'bg-purple-100 text-purple-700',
-  'returned-to-vendor': 'bg-red-100 text-red-700',
+  'failed-release': 'bg-red-100 text-red-700',
+  'partial-release': 'bg-red-100 text-red-700',
   'delivered': 'bg-emerald-100 text-emerald-700',
 };
 
@@ -499,7 +501,7 @@ export default function PickingSlipsPage() {
             className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
           >
             <option value="">All statuses</option>
-            {(Object.keys(STATUS_LABELS) as SlipStatus[]).map(k => (
+            {Object.keys(STATUS_LABELS).map(k => (
               <option key={k} value={k}>{STATUS_LABELS[k]}</option>
             ))}
           </select>
@@ -610,9 +612,7 @@ export default function PickingSlipsPage() {
                   <td className="px-3 py-1.5 text-right whitespace-nowrap">{fmtCurrency(s.totalVal)}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap text-xs text-gray-500">{fmtDate(s.generatedAt)}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap">
-                    <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[s.status] || 'bg-gray-100 text-gray-700'}`}>
-                      {STATUS_LABELS[s.status] || s.status}
-                    </span>
+                    <StatusBadge status={s.status} />
                     {s.manual && (
                       <span className="inline-block ml-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
                         Manual
@@ -622,25 +622,75 @@ export default function PickingSlipsPage() {
                   {canManage && (
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       <div className="flex gap-1">
-                        <button
-                          onClick={() => openEdit(s)}
-                          className="px-2 py-1 text-xs font-medium text-[var(--color-primary)] border border-[var(--color-primary)]/30 rounded hover:bg-[var(--color-primary)]/5"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => openSend([s])}
-                          className="px-2 py-1 text-xs font-medium text-blue-600 border border-blue-200 rounded hover:bg-blue-50"
-                        >
-                          Send
-                        </button>
-                        {canReceipt && (
+                        {/* generated/sent: Edit, Send */}
+                        {(s.status === 'generated' || s.status === 'sent') && (
+                          <>
+                            <button
+                              onClick={() => openEdit(s)}
+                              className="px-2 py-1 text-xs font-medium text-[var(--color-primary)] border border-[var(--color-primary)]/30 rounded hover:bg-[var(--color-primary)]/5"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => openSend([s])}
+                              className="px-2 py-1 text-xs font-medium text-blue-600 border border-blue-200 rounded hover:bg-blue-50"
+                            >
+                              Send
+                            </button>
+                          </>
+                        )}
+                        {/* booked: Edit, Send, Capture */}
+                        {s.status === 'booked' && (
+                          <>
+                            <button
+                              onClick={() => openEdit(s)}
+                              className="px-2 py-1 text-xs font-medium text-[var(--color-primary)] border border-[var(--color-primary)]/30 rounded hover:bg-[var(--color-primary)]/5"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => openSend([s])}
+                              className="px-2 py-1 text-xs font-medium text-blue-600 border border-blue-200 rounded hover:bg-blue-50"
+                            >
+                              Send
+                            </button>
+                            {canReceipt && (
+                              <button
+                                onClick={() => router.push(`/aged-stock/receipts/capture?slipId=${encodeURIComponent(s.id)}&clientId=${encodeURIComponent(s.clientId)}&loadId=${encodeURIComponent(s.loadId)}`)}
+                                className="px-2 py-1 text-xs font-medium text-teal-600 border border-teal-200 rounded hover:bg-teal-50"
+                              >
+                                Capture
+                              </button>
+                            )}
+                          </>
+                        )}
+                        {/* captured: Release */}
+                        {(s.status === 'captured' || s.status === 'failed-release') && canReceipt && (
                           <button
                             onClick={() => router.push(`/aged-stock/receipts/capture?slipId=${encodeURIComponent(s.id)}&clientId=${encodeURIComponent(s.clientId)}&loadId=${encodeURIComponent(s.loadId)}`)}
-                            className="px-2 py-1 text-xs font-medium text-teal-600 border border-teal-200 rounded hover:bg-teal-50"
+                            className="px-2 py-1 text-xs font-medium text-purple-600 border border-purple-200 rounded hover:bg-purple-50"
                           >
-                            Capture
+                            {s.status === 'failed-release' ? 'Retry Release' : 'Release'}
                           </button>
+                        )}
+                        {/* in-transit/partial-release/delivered: View, Send DN */}
+                        {(s.status === 'in-transit' || s.status === 'partial-release' || s.status === 'delivered') && (
+                          <>
+                            <button
+                              onClick={() => router.push(`/aged-stock/receipts/capture?slipId=${encodeURIComponent(s.id)}&clientId=${encodeURIComponent(s.clientId)}&loadId=${encodeURIComponent(s.loadId)}`)}
+                              className="px-2 py-1 text-xs font-medium text-gray-600 border border-gray-200 rounded hover:bg-gray-50"
+                            >
+                              View
+                            </button>
+                            {s.deliveryNoteSpWebUrl && (
+                              <button
+                                onClick={() => openSend([s])}
+                                className="px-2 py-1 text-xs font-medium text-emerald-600 border border-emerald-200 rounded hover:bg-emerald-50"
+                              >
+                                Send DN
+                              </button>
+                            )}
+                          </>
                         )}
                       </div>
                     </td>

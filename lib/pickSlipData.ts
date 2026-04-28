@@ -36,14 +36,22 @@ export interface ReceiptBox {
 export type PickSlipStatus =
   | 'generated'
   | 'sent'
-  | 'picked'
   | 'booked'
-  | 'receipted'
+  | 'captured'
   | 'in-transit'
-  | 'returned-to-vendor'
   | 'failed-release'
   | 'partial-release'
   | 'delivered';
+
+/** Map legacy statuses to current values. */
+export function normalizeStatus(s: string): PickSlipStatus {
+  switch (s) {
+    case 'receipted': return 'captured';
+    case 'picked': return 'booked';
+    case 'returned-to-vendor': return 'delivered';
+    default: return s as PickSlipStatus;
+  }
+}
 
 export interface PickSlipRecord {
   /** Unique pick slip ID, e.g. PS-9448-20260309-001 */
@@ -228,16 +236,24 @@ export async function getPickSlipRun(
   clientId: string,
   loadId: string
 ): Promise<PickSlipRunIndex | null> {
+  let run: PickSlipRunIndex | null = null;
   if (process.env.VERCEL) {
-    return blobReadJson<PickSlipRunIndex>(runKey(clientId, loadId));
+    run = await blobReadJson<PickSlipRunIndex>(runKey(clientId, loadId));
+  } else {
+    try {
+      const filePath = runLocalPath(clientId, loadId);
+      if (fs.existsSync(filePath)) {
+        run = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as PickSlipRunIndex;
+      }
+    } catch { /* empty */ }
   }
-  try {
-    const filePath = runLocalPath(clientId, loadId);
-    if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as PickSlipRunIndex;
+  // Normalize legacy statuses on read
+  if (run) {
+    for (const slip of run.slips) {
+      slip.status = normalizeStatus(slip.status);
     }
-  } catch { /* empty */ }
-  return null;
+  }
+  return run;
 }
 
 export async function savePickSlipRun(run: PickSlipRunIndex): Promise<void> {

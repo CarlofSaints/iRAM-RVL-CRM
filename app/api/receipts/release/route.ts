@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
   if (!slip) {
     return NextResponse.json({ error: 'Pick slip not found' }, { status: 404 });
   }
-  if (slip.status !== 'receipted' && slip.status !== 'failed-release') {
+  if (slip.status !== 'captured' && slip.status !== 'failed-release') {
     return NextResponse.json({ error: `Cannot release a slip with status "${slip.status}"` }, { status: 400 });
   }
 

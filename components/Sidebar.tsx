@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { Session, avatarSrcFor } from '@/lib/useAuth';
 import Logo from '@/components/Logo';
 import HelpButton from '@/components/HelpButton';
@@ -46,6 +46,7 @@ function SubNavLink({ href, label, active }: { href: string; label: string; acti
 
 export default function Sidebar({ session, onLogout }: SidebarProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const perms = session.permissions ?? [];
   const has = (k: string) => perms.includes(k);
 
@@ -61,16 +62,16 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
   const visibleControlLinks = controlLinks.filter(l => has(l.perm));
   const showControlSection = visibleControlLinks.length > 0;
 
-  // Aged Stock — Dashboard + Load. The dashboard perm is the cheaper one;
-  // users with load_aged_stock always get view_aged_stock by convention.
+  // Aged Stock — ordered to reflect actual workflow.
   const agedStockLinks: Array<{ href: string; label: string; perm: string }> = [
     { href: '/aged-stock', label: 'Dashboard', perm: 'view_aged_stock' },
-    { href: '/aged-stock/load', label: 'Load Aged Stock', perm: 'load_aged_stock' },
-    { href: '/aged-stock/manual-capture', label: 'Manual Capture', perm: 'manage_pick_slips' },
+    { href: '/aged-stock/load', label: '1.) Load Aged Stock', perm: 'load_aged_stock' },
+    { href: '/aged-stock/manual-capture', label: '1.1) Manual Capture', perm: 'manage_pick_slips' },
+    { href: '/aged-stock/scan', label: '2.) Book Stock into WH', perm: 'scan_stock' },
+    { href: '/aged-stock/receipts?mode=capture', label: '3.) Capture', perm: 'receipt_stock' },
+    { href: '/aged-stock/receipts?mode=release', label: '4.) Release Stock', perm: 'receipt_stock' },
     { href: '/aged-stock/picking-slips', label: 'Picking Slips', perm: 'view_aged_stock' },
     { href: '/aged-stock/stickers', label: 'Sticker Labels', perm: 'view_aged_stock' },
-    { href: '/aged-stock/scan', label: 'Scan to Receive/Release', perm: 'scan_stock' },
-    { href: '/aged-stock/receipts', label: 'Receive/Release Stock', perm: 'receipt_stock' },
   ];
   const visibleAgedStockLinks = agedStockLinks.filter(l => has(l.perm));
   const showAgedStockSection = visibleAgedStockLinks.length > 0;
@@ -203,9 +204,22 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
             </button>
             {agedStockOpen && (
               <div className="flex flex-col gap-0.5 mt-0.5">
-                {visibleAgedStockLinks.map(l => (
-                  <SubNavLink key={l.href} href={l.href} label={l.label} active={pathname === l.href} />
-                ))}
+                {visibleAgedStockLinks.map(l => {
+                  // For links with query params (e.g. /aged-stock/receipts?mode=capture),
+                  // match both pathname AND the mode param.
+                  const [linkPath, linkQuery] = l.href.split('?');
+                  let isActive: boolean;
+                  if (linkQuery) {
+                    const params = new URLSearchParams(linkQuery);
+                    const linkMode = params.get('mode');
+                    isActive = pathname === linkPath && searchParams.get('mode') === linkMode;
+                  } else {
+                    isActive = pathname === linkPath;
+                  }
+                  return (
+                    <SubNavLink key={l.href} href={l.href} label={l.label} active={isActive} />
+                  );
+                })}
               </div>
             )}
           </>

@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 /**
  * POST /api/receipts/complete
  *
- * Finalize the receipt — sets status to 'receipted' with timestamp.
+ * Finalize the receipt — sets status to 'captured' with timestamp.
  */
 export async function POST(req: NextRequest) {
   const guard = await requirePermission(req, 'receipt_stock');
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   const userName = me ? `${me.name} ${me.surname}` : guard.userId;
 
   const updated = await updateSlipInRun(clientId, loadId, slipId, {
-    status: 'receipted',
+    status: 'captured',
     receiptedAt: new Date().toISOString(),
     receiptedBy: guard.userId,
     receiptedByName: userName,

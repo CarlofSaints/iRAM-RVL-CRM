@@ -1,1 +1,12 @@
-Pro tier gate + PayFast + Suspense fix 
+Process flow rework: simplify statuses, reorder menu, add tooltips
+
+- Remove picked/receipted/returned-to-vendor statuses, add captured
+- normalizeStatus() migrates legacy data on read from Blob
+- Sidebar menu reordered to match workflow: Load → Book → Capture → Release
+- Capture and Release split into separate pages via ?mode= query param
+- StatusBadge component with hover tooltips explaining each status
+- Process-gated actions on Picking Slips (no Capture before Booked, etc.)
+- Timezone fix: delivery signature timestamps use Africa/Johannesburg
+- Scan page renamed to "Book Stock into WH"
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>

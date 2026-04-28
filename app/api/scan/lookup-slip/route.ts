@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
 
   const runs = await listAllPickSlipRuns(scopedIds, listLoads);
 
-  const bookableStatuses = ['generated', 'sent', 'picked'];
+  const bookableStatuses = ['generated', 'sent'];
   const foundSlips: Array<{
     id: string; loadId: string; clientId: string; clientName: string;
     vendorNumber: string; siteCode: string; siteName: string;

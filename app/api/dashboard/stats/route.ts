@@ -140,7 +140,7 @@ export async function GET(req: NextRequest) {
       if (!client) continue;
 
       let category: 'warehouse' | 'transit' | 'delivered';
-      if (slip.status === 'receipted' || slip.status === 'booked') {
+      if (slip.status === 'captured' || slip.status === 'booked') {
         category = 'warehouse';
       } else if (slip.status === 'in-transit' || slip.status === 'partial-release') {
         category = 'transit';

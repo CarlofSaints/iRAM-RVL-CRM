@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Validate all slips exist and are bookable BEFORE making changes
-  const bookableStatuses = ['generated', 'sent', 'picked'];
+  const bookableStatuses = ['generated', 'sent'];
   for (const ref of slips) {
     const run = await getPickSlipRun(ref.clientId, ref.loadId);
     if (!run) {

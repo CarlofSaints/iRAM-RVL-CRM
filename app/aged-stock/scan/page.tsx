@@ -350,7 +350,7 @@ export default function ScanPage() {
 
       {/* Header */}
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Scan to Receive/Release</h1>
+        <h1 className="text-3xl font-bold text-gray-900">Book Stock into WH</h1>
         <p className="text-sm text-gray-600 mt-1">
           Scan picking slip barcodes, link sticker boxes, and book stock into the warehouse
         </p>

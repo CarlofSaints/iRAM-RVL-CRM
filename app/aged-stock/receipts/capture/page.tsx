@@ -93,8 +93,9 @@ function fmtDate(iso: string): string {
 function fmtDateTime(iso: string): string {
   try {
     const d = new Date(iso);
-    const date = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const tz = 'Africa/Johannesburg';
+    const date = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
+    const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
     return `${date} ${time}`;
   } catch { return iso; }
 }
@@ -104,19 +105,17 @@ function uuid(): string {
 }
 
 function resolveMode(status: string): PageMode {
-  if (status === 'receipted' || status === 'failed-release') return 'release';
-  if (status === 'in-transit' || status === 'returned-to-vendor' || status === 'partial-release' || status === 'delivered') return 'view';
-  return 'receipt'; // generated, sent, picked, booked
+  if (status === 'captured' || status === 'failed-release') return 'release';
+  if (status === 'in-transit' || status === 'partial-release' || status === 'delivered') return 'view';
+  return 'receipt'; // generated, sent, booked
 }
 
 const STATUS_BADGE: Record<string, string> = {
   'generated': 'bg-gray-100 text-gray-700',
   'sent': 'bg-blue-100 text-blue-700',
-  'picked': 'bg-amber-100 text-amber-700',
   'booked': 'bg-teal-100 text-teal-700',
-  'receipted': 'bg-green-100 text-green-700',
+  'captured': 'bg-green-100 text-green-700',
   'in-transit': 'bg-purple-100 text-purple-700',
-  'returned-to-vendor': 'bg-red-100 text-red-700',
   'failed-release': 'bg-red-100 text-red-700',
   'partial-release': 'bg-red-100 text-red-700',
   'delivered': 'bg-emerald-100 text-emerald-700',
@@ -125,11 +124,9 @@ const STATUS_BADGE: Record<string, string> = {
 const STATUS_LABEL: Record<string, string> = {
   'generated': 'Generated',
   'sent': 'Sent',
-  'picked': 'Picked',
   'booked': 'Booked',
-  'receipted': 'Receipted',
+  'captured': 'Captured',
   'in-transit': 'In Transit',
-  'returned-to-vendor': 'Returned to Vendor',
   'failed-release': 'Failed Release',
   'partial-release': 'Partial Release',
   'delivered': 'Delivered',
@@ -766,7 +763,7 @@ export default function ReceiptCapturePage() {
       <div className="text-center py-20">
         <p className="text-gray-500 mb-4">Pick slip not found</p>
         <button onClick={() => router.push('/aged-stock/receipts')} className="text-[var(--color-primary)] hover:underline text-sm">
-          Back to Receive/Release Stock
+          Back
         </button>
       </div>
     );
@@ -780,7 +777,7 @@ export default function ReceiptCapturePage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">
-            {showUnreturnedCapture ? 'Unreturned Stock Capture' : mode === 'release' ? 'Release Stock' : mode === 'view' ? 'View Pick Slip' : 'Receive Stock'}
+            {showUnreturnedCapture ? 'Unreturned Stock Capture' : mode === 'release' ? 'Release Stock' : mode === 'view' ? 'View Pick Slip' : 'Capture'}
           </h1>
           <p className="text-sm text-gray-600 mt-1">
             {showUnreturnedCapture
@@ -793,9 +790,9 @@ export default function ReceiptCapturePage() {
               ? `Released on ${fmtDateTime(slip.releasedAt)} by ${slip.releasedByName}`
               : mode === 'view'
               ? `Status: ${STATUS_LABEL[slip.status] || slip.status}`
-              : slip.status === 'receipted'
-              ? `Receipted on ${fmtDateTime(slip.receiptedAt!)} by ${slip.receiptedByName}`
-              : 'Scan sticker barcodes to receipt stock into the warehouse'}
+              : slip.status === 'captured'
+              ? `Captured on ${fmtDateTime(slip.receiptedAt!)} by ${slip.receiptedByName}`
+              : 'Scan sticker barcodes and capture stock into the warehouse'}
           </p>
         </div>
         <button
