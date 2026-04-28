@@ -26,6 +26,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'slipId, clientId, and loadId are required' }, { status: 400 });
   }
 
+  // Verify slip is in a capturable status (only 'booked' can be captured)
+  const { getPickSlipRun } = await import('@/lib/pickSlipData');
+  const run = await getPickSlipRun(clientId, loadId);
+  if (!run) {
+    return NextResponse.json({ error: 'Pick slip run not found' }, { status: 404 });
+  }
+  const existingSlip = run.slips.find(s => s.id === slipId);
+  if (!existingSlip) {
+    return NextResponse.json({ error: 'Pick slip not found' }, { status: 404 });
+  }
+  if (existingSlip.status !== 'booked') {
+    return NextResponse.json({ error: `Cannot capture a slip with status "${existingSlip.status}"` }, { status: 400 });
+  }
+
   // Resolve user name for audit
   const users = await loadUsers();
   const me = users.find(u => u.id === guard.userId);

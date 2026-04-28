@@ -149,6 +149,11 @@ export default function PickingSlipsPage() {
   const [sendRep, setSendRep] = useState('');
   const [sendSending, setSendSending] = useState(false);
 
+  // Send DN modal
+  const [dnSlip, setDnSlip] = useState<SlipDto | null>(null);
+  const [dnTo, setDnTo] = useState('');
+  const [dnSending, setDnSending] = useState(false);
+
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteDeleting, setDeleteDeleting] = useState(false);
 
@@ -383,6 +388,46 @@ export default function PickingSlipsPage() {
       notify('Network error sending', 'error');
     } finally {
       setSendSending(false);
+    }
+  }
+
+  // ── Send Delivery Note ──
+
+  function openSendDn(slip: SlipDto) {
+    setDnSlip(slip);
+    setDnTo('');
+  }
+
+  async function doSendDn() {
+    if (!dnSlip) return;
+    const toList = dnTo.split(/[,;]\s*/).map(s => s.trim()).filter(Boolean);
+    if (toList.length === 0) {
+      notify('Enter at least one TO email', 'error');
+      return;
+    }
+    setDnSending(true);
+    try {
+      const res = await authFetch('/api/pick-slips/send-dn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slipId: dnSlip.id,
+          clientId: dnSlip.clientId,
+          loadId: dnSlip.loadId,
+          to: toList,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notify('Delivery note sent');
+        setDnSlip(null);
+      } else {
+        notify(data.error || 'Failed to send delivery note', 'error');
+      }
+    } catch {
+      notify('Network error sending delivery note', 'error');
+    } finally {
+      setDnSending(false);
     }
   }
 
@@ -684,7 +729,7 @@ export default function PickingSlipsPage() {
                             </button>
                             {s.deliveryNoteSpWebUrl && (
                               <button
-                                onClick={() => openSend([s])}
+                                onClick={() => openSendDn(s)}
                                 className="px-2 py-1 text-xs font-medium text-emerald-600 border border-emerald-200 rounded hover:bg-emerald-50"
                               >
                                 Send DN
@@ -917,6 +962,76 @@ export default function PickingSlipsPage() {
                   </button>
                   <button
                     onClick={() => setSendSlips([])}
+                    className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Send DN Modal ─────────────────────────────────────────────────── */}
+      {dnSlip && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-4">Send Delivery Note</h2>
+
+            {dnSending ? (
+              <div className="flex flex-col items-center py-8 gap-3">
+                <div className="h-8 w-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                <p className="text-sm text-gray-600">Generating &amp; sending delivery note...</p>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-3 mb-4">
+                  <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-600">
+                    <div>{dnSlip.id} — {dnSlip.siteName} ({dnSlip.siteCode})</div>
+                    <div className="mt-1 text-gray-400">{dnSlip.clientName} — {dnSlip.vendorNumber}</div>
+                  </div>
+
+                  {/* Rep dropdown */}
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Rep</label>
+                    <select
+                      onChange={e => {
+                        const rep = reps.find(r => r.id === e.target.value);
+                        if (rep?.email) setDnTo(rep.email);
+                      }}
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+                    >
+                      <option value="">{reps.length === 0 ? 'No reps configured' : 'Select a rep...'}</option>
+                      {reps.map(r => (
+                        <option key={r.id} value={r.id}>
+                          {r.name} {r.surname}{r.email ? ` (${r.email})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">TO</label>
+                    <input
+                      value={dnTo}
+                      onChange={e => setDnTo(e.target.value)}
+                      placeholder="email@example.com"
+                      className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={doSendDn}
+                    disabled={!dnTo.trim()}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Send Delivery Note
+                  </button>
+                  <button
+                    onClick={() => setDnSlip(null)}
                     className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
                   >
                     Cancel

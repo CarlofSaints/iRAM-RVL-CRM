@@ -286,6 +286,9 @@ export default function DeliveryConfirmationPage() {
           <p className="text-gray-500 text-sm">
             This delivery is not currently awaiting confirmation.
           </p>
+          <p className="text-gray-400 text-xs mt-2">
+            Current status: <span className="font-mono">{slip.status}</span>
+          </p>
         </div>
       </div>
     );
