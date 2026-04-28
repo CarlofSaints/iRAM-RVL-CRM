@@ -148,8 +148,9 @@ export async function sendUnreturnedSkipEmail(opts: {
     if (!iso) return '—';
     try {
       const d = new Date(iso);
-      return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' +
-        d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const tz = 'Africa/Johannesburg';
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz }) + ' ' +
+        d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
     } catch { return iso; }
   };
   const body = `
@@ -194,8 +195,9 @@ export async function sendDeliveryNoteEmail(opts: {
   const fmtDt = (iso: string) => {
     try {
       const d = new Date(iso);
-      return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' +
-        d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const tz = 'Africa/Johannesburg';
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz }) + ' ' +
+        d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
     } catch { return iso; }
   };
   const body = `

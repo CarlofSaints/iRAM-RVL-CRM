@@ -116,8 +116,9 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
   let releaseDateStr = releasedAt;
   try {
     const d = new Date(releasedAt);
-    releaseDateStr = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
-      + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const tz = 'Africa/Johannesburg';
+    releaseDateStr = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz })
+      + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
   } catch { /* keep raw */ }
 
   // Table columns: Article Code | Description | Qty | Value
@@ -326,8 +327,9 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
       let deliveredDateStr = deliveredAt;
       try {
         const dd = new Date(deliveredAt);
-        deliveredDateStr = dd.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
-          + ' ' + dd.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+        const tz = 'Africa/Johannesburg';
+        deliveredDateStr = dd.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz })
+          + ' ' + dd.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
       } catch { /* keep raw */ }
       doc.text(`Date: ${deliveredDateStr}`, tableX, y);
       y += 13;
