@@ -200,11 +200,11 @@ export async function POST(req: NextRequest) {
   }
 
   // Update status to 'sent' for successfully processed slips
+  // Only advance from 'generated' → 'sent'. Never regress later statuses.
   const now = new Date().toISOString();
   for (const slip of targetSlips) {
-    // Only mark sent if the email was actually sent (no error for this slip)
     const hadError = errors.some(e => e.startsWith(slip.id));
-    if (!hadError) {
+    if (!hadError && slip.status === 'generated') {
       try {
         await updateSlipInRun(slip._clientId, slip._loadId, slip.id, {
           status: 'sent',
