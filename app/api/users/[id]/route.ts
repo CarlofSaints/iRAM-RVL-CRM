@@ -15,6 +15,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const idx = users.findIndex(u => u.id === id);
     if (idx === -1) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
+    // Super-admin protection: only a super-admin can edit/demote another super-admin
+    if (users[idx].role === 'super-admin' && guard.userRole !== 'super-admin') {
+      return NextResponse.json({ error: 'Only a Super Admin can modify a Super Admin user' }, { status: 403 });
+    }
+
+    // Only a super-admin can assign the super-admin role to someone
+    if (body.role === 'super-admin' && guard.userRole !== 'super-admin') {
+      return NextResponse.json({ error: 'Only a Super Admin can assign the Super Admin role' }, { status: 403 });
+    }
+
     if (body.name !== undefined) users[idx].name = body.name;
     if (body.surname !== undefined) users[idx].surname = body.surname;
     if (body.email !== undefined) users[idx].email = body.email;
@@ -95,10 +105,17 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   const { id } = await params;
   const users = await loadUsers();
-  const filtered = users.filter(u => u.id !== id);
-  if (filtered.length === users.length) {
+  const target = users.find(u => u.id === id);
+  if (!target) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
+
+  // Only a super-admin can delete another super-admin
+  if (target.role === 'super-admin' && guard.userRole !== 'super-admin') {
+    return NextResponse.json({ error: 'Only a Super Admin can delete a Super Admin user' }, { status: 403 });
+  }
+
+  const filtered = users.filter(u => u.id !== id);
   await saveUsers(filtered);
   return NextResponse.json({ ok: true });
 }

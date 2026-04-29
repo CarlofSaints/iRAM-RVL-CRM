@@ -103,7 +103,7 @@ export async function resolvePermissionsForRole(roleId: string): Promise<string[
 export async function requirePermission(
   req: NextRequest,
   key: string
-): Promise<NextResponse | { ok: true; userId: string; permissions: string[] }> {
+): Promise<NextResponse | { ok: true; userId: string; permissions: string[]; userRole: string }> {
   const userId = req.headers.get('x-user-id');
   if (!userId) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
@@ -120,7 +120,7 @@ export async function requirePermission(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  return { ok: true, userId, permissions };
+  return { ok: true, userId, permissions, userRole: user.role };
 }
 
 /**
@@ -130,7 +130,7 @@ export async function requirePermission(
  */
 export async function requireLogin(
   req: NextRequest
-): Promise<NextResponse | { ok: true; userId: string; permissions: string[] }> {
+): Promise<NextResponse | { ok: true; userId: string; permissions: string[]; userRole: string }> {
   const userId = req.headers.get('x-user-id');
   if (!userId) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
@@ -141,5 +141,5 @@ export async function requireLogin(
     return NextResponse.json({ error: 'Invalid session' }, { status: 401 });
   }
   const permissions = await resolvePermissionsForRole(user.role);
-  return { ok: true, userId, permissions };
+  return { ok: true, userId, permissions, userRole: user.role };
 }

@@ -92,6 +92,10 @@ export default function AdminUsersPage() {
   const notify = (message: string, type: 'success' | 'error' = 'success') =>
     setToast({ message, type });
 
+  const isSuperAdmin = session?.role === 'super-admin';
+  // Non-super-admin users cannot see or select the super-admin role
+  const availableRoles = isSuperAdmin ? roles : roles.filter(r => r.id !== 'super-admin');
+
   const roleLabel = (id: string) => roles.find(r => r.id === id)?.name ?? id;
   const clientName = (id?: string) => {
     if (!id) return '—';
@@ -301,7 +305,7 @@ export default function AdminUsersPage() {
               <label className="text-xs text-gray-500 font-medium">Role</label>
               <select value={addRole} onChange={e => setAddRole(e.target.value)}
                 className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]">
-                {roles.map(r => (
+                {availableRoles.map(r => (
                   <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
               </select>
@@ -454,10 +458,14 @@ export default function AdminUsersPage() {
                                 {isFlipping ? '...' : 'Downgrade'}
                               </button>
                             )}
-                            <button onClick={() => openEdit(u)}
-                              className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
-                            <button onClick={() => handleDelete(u)}
-                              className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
+                            {(isSuperAdmin || u.role !== 'super-admin') && (
+                              <button onClick={() => openEdit(u)}
+                                className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
+                            )}
+                            {(isSuperAdmin || u.role !== 'super-admin') && (
+                              <button onClick={() => handleDelete(u)}
+                                className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -496,7 +504,7 @@ export default function AdminUsersPage() {
                 <label className="text-xs text-gray-500 font-medium">Role</label>
                 <select value={editRole} onChange={e => setEditRole(e.target.value)}
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]">
-                  {roles.map(r => (
+                  {availableRoles.map(r => (
                     <option key={r.id} value={r.id}>{r.name}</option>
                   ))}
                 </select>

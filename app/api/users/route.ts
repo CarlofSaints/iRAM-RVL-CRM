@@ -26,6 +26,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
 
+  // Only a super-admin can assign the super-admin role
+  if (role === 'super-admin' && guard.userRole !== 'super-admin') {
+    return NextResponse.json({ error: 'Only a Super Admin can assign the Super Admin role' }, { status: 403 });
+  }
+
   // Validate role exists
   const roles = await loadRoles();
   if (!roles.find(r => r.id === role)) {
