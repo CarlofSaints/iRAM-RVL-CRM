@@ -1005,10 +1005,10 @@ export default function DashboardPage() {
           <Logo size={36} />
         </div>
 
-        {/* Scoped (Customer) banner */}
+        {/* Assigned clients only banner */}
         {isScoped && (
           <div className="bg-[var(--color-primary)]/5 border border-[var(--color-primary)]/20 rounded-xl px-6 py-4">
-            <div className="text-xs font-semibold text-[var(--color-primary)] uppercase tracking-wide">Scoped View</div>
+            <div className="text-xs font-semibold text-[var(--color-primary)] uppercase tracking-wide">Assigned Client View</div>
             <div className="text-sm text-gray-700 mt-1">
               Viewing data for: <strong>{clientName ?? (session.linkedClientId ? '…' : 'No linked client')}</strong>
             </div>

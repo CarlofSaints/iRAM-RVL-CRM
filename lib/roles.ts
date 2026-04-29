@@ -35,7 +35,7 @@ export interface PermissionDef {
  */
 export const DEFAULT_PERMISSIONS: Array<Omit<PermissionDef, 'createdAt' | 'isSystem'>> = [
   { key: 'view_dashboard', name: 'View Dashboard', description: 'View main dashboard', category: 'Dashboard', proOnly: false },
-  { key: 'view_dashboard_scoped', name: 'View Dashboard (Scoped)', description: 'View dashboard limited to linked client', category: 'Dashboard', proOnly: false },
+  { key: 'view_dashboard_scoped', name: 'View Dashboard (Assigned Clients Only)', description: 'View dashboard limited to assigned clients only', category: 'Dashboard', proOnly: false },
   { key: 'view_all_clients', name: 'View All Clients', description: 'See data for every client — bypasses per-user client assignments', category: 'Dashboard', proOnly: false },
   { key: 'export_excel', name: 'Export to Excel', description: 'Download dashboard grids as Excel files', category: 'Dashboard', proOnly: true },
   { key: 'manage_users', name: 'Manage Users', description: 'Add / edit / remove users', category: 'Admin', proOnly: false },
@@ -46,7 +46,7 @@ export const DEFAULT_PERMISSIONS: Array<Omit<PermissionDef, 'createdAt' | 'isSys
   { key: 'manage_reps', name: 'Manage Reps', description: 'Manage reps masterfile', category: 'Control Centre', proOnly: false },
   { key: 'manage_warehouses', name: 'Manage Warehouses', description: 'Manage warehouses masterfile', category: 'Control Centre', proOnly: false },
   { key: 'import_excel', name: 'Import Excel', description: 'Upload Excel files to control masterfiles', category: 'Control Centre', proOnly: false },
-  { key: 'view_aged_stock', name: 'View Aged Stock', description: 'View the aged stock dashboard (scoped to assigned clients)', category: 'Aged Stock', proOnly: false },
+  { key: 'view_aged_stock', name: 'View Aged Stock', description: 'View the aged stock dashboard (limited to assigned clients)', category: 'Aged Stock', proOnly: false },
   { key: 'load_aged_stock', name: 'Load Aged Stock', description: 'Upload & commit aged stock lists', category: 'Aged Stock', proOnly: false },
   { key: 'manage_pick_slips', name: 'Manage Pick Slips', description: 'Edit, send, and delete pick slips', category: 'Aged Stock', proOnly: false },
   { key: 'receipt_stock', name: 'Receipt Stock', description: 'Receipt aged stock into warehouses via box scanning', category: 'Aged Stock', proOnly: false },
@@ -93,7 +93,7 @@ export const DEFAULT_ROLES: Array<Omit<Role, 'createdAt' | 'isSystem'>> = [
   {
     id: 'customer',
     name: 'Customer',
-    description: 'External client user — scoped dashboard tied to their linked client record',
+    description: 'External client user — dashboard limited to their assigned client record',
     permissionKeys: ['view_dashboard_scoped'],
   },
 ];

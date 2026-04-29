@@ -449,7 +449,7 @@ export default function ClearDataPage() {
                           onChange={e => setCascadeStickers(e.target.checked)}
                           className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
                         />
-                        <span className="text-sm text-gray-700">Also delete sticker batches (all — not vendor-scoped)</span>
+                        <span className="text-sm text-gray-700">Also delete sticker batches (all — not limited to selected vendor)</span>
                       </label>
                     )}
                   </div>
@@ -460,7 +460,7 @@ export default function ClearDataPage() {
             {/* ── Standalone Bulk Sections ─────────────────────────────── */}
             <div className="border-t border-gray-200 pt-5">
               <h2 className="text-sm font-semibold text-gray-800 mb-3">
-                Standalone (not vendor-scoped)
+                Standalone (not limited to selected vendor)
               </h2>
 
               <div className="space-y-3">
