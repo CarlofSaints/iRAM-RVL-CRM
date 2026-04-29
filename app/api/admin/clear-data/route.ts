@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { loadControl } from '@/lib/controlData';
-import { listLoads, clearAllLoads } from '@/lib/agedStockData';
+import { listLoads, clearAllLoads, deleteLoad } from '@/lib/agedStockData';
 import {
   getManualIndex,
   getPickSlipRun,
@@ -15,6 +15,8 @@ import { logAudit, clearAuditLog } from '@/lib/auditLog';
 export const dynamic = 'force-dynamic';
 
 interface ClearRequest {
+  clientId?: string;
+  selectedLoadIds?: string[];
   modules: {
     agedStock?: boolean;
     pickSlips?: boolean;
@@ -28,7 +30,7 @@ interface ClearRequest {
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requirePermission(req, 'manage_users');
+  const guard = await requirePermission(req, 'clear_data');
   if (guard instanceof NextResponse) return guard;
 
   const users = await loadUsers();
@@ -42,7 +44,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { modules, cascade } = body;
+  const { clientId, selectedLoadIds, modules, cascade } = body;
   const counts = {
     agedStockLoads: 0,
     pickSlipRuns: 0,
@@ -50,15 +52,32 @@ export async function POST(req: NextRequest) {
     auditMonths: 0,
   };
 
-  // Get all client IDs from control data
-  const clients = await loadControl<{ id: string }>('clients');
-  const clientIds = clients.map(c => c.id);
+  // Determine scope: single client + selected loads, or all clients
+  const isTargeted = !!clientId && Array.isArray(selectedLoadIds) && selectedLoadIds.length > 0;
+
+  // Get client IDs in scope
+  let clientIds: string[];
+  if (isTargeted) {
+    clientIds = [clientId!];
+  } else {
+    const clients = await loadControl<{ id: string }>('clients');
+    clientIds = clients.map(c => c.id);
+  }
 
   // ── 1. Aged Stock ─────────────────────────────────────────────────────────
   if (modules.agedStock) {
-    for (const clientId of clientIds) {
-      const deleted = await clearAllLoads(clientId);
-      counts.agedStockLoads += deleted;
+    if (isTargeted) {
+      // Delete only selected loads for the single client
+      for (const loadId of selectedLoadIds!) {
+        await deleteLoad(clientId!, loadId);
+        counts.agedStockLoads++;
+      }
+    } else {
+      // Legacy: clear all loads for all clients
+      for (const cid of clientIds) {
+        const deleted = await clearAllLoads(cid);
+        counts.agedStockLoads += deleted;
+      }
     }
   }
 
@@ -67,28 +86,37 @@ export async function POST(req: NextRequest) {
     (modules.agedStock && cascade.agedStockPickSlips) || modules.pickSlips;
 
   if (clearPickSlips) {
-    for (const clientId of clientIds) {
-      // Load-based runs — read the aged stock index to get loadIds
-      const loads = await listLoads(clientId);
-      for (const load of loads) {
-        const run = await getPickSlipRun(clientId, load.id);
+    if (isTargeted) {
+      // Only clear pick slip runs for the selected loads
+      for (const loadId of selectedLoadIds!) {
+        const run = await getPickSlipRun(clientId!, loadId);
         if (run && run.slips.length > 0) {
-          await clearPickSlipRun(clientId, load.id);
+          await clearPickSlipRun(clientId!, loadId);
           counts.pickSlipRuns++;
         }
       }
-      // Manual runs
-      const manualIds = await getManualIndex(clientId);
-      for (const manualLoadId of manualIds) {
-        const run = await getPickSlipRun(clientId, manualLoadId);
-        if (run && run.slips.length > 0) {
-          await clearPickSlipRun(clientId, manualLoadId);
-          counts.pickSlipRuns++;
+    } else {
+      // Legacy: clear all pick slips for all clients
+      for (const cid of clientIds) {
+        const loads = await listLoads(cid);
+        for (const load of loads) {
+          const run = await getPickSlipRun(cid, load.id);
+          if (run && run.slips.length > 0) {
+            await clearPickSlipRun(cid, load.id);
+            counts.pickSlipRuns++;
+          }
         }
-      }
-      // Clear the manual index itself
-      if (manualIds.length > 0) {
-        await clearManualIndex(clientId);
+        const manualIds = await getManualIndex(cid);
+        for (const manualLoadId of manualIds) {
+          const run = await getPickSlipRun(cid, manualLoadId);
+          if (run && run.slips.length > 0) {
+            await clearPickSlipRun(cid, manualLoadId);
+            counts.pickSlipRuns++;
+          }
+        }
+        if (manualIds.length > 0) {
+          await clearManualIndex(cid);
+        }
       }
     }
   }
@@ -103,7 +131,6 @@ export async function POST(req: NextRequest) {
 
   // ── 4. Audit Log ──────────────────────────────────────────────────────────
   if (modules.auditLog) {
-    // Log the clear action BEFORE wiping the log
     await logAudit({
       action: 'clear_data',
       userId: guard.userId,
@@ -112,12 +139,14 @@ export async function POST(req: NextRequest) {
     });
     counts.auditMonths = await clearAuditLog();
   } else {
-    // Log the clear action (audit log is NOT being cleared)
+    const targetInfo = isTargeted
+      ? ` Client=${clientId}, loads=${selectedLoadIds!.join(',')}.`
+      : '';
     logAudit({
       action: 'clear_data',
       userId: guard.userId,
       userName,
-      detail: `Cleared data: ${Object.entries(modules).filter(([, v]) => v).map(([k]) => k).join(', ')}. Cascade: ${Object.entries(cascade).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}. Counts: loads=${counts.agedStockLoads}, runs=${counts.pickSlipRuns}, batches=${counts.stickerBatches}`,
+      detail: `Cleared data: ${Object.entries(modules).filter(([, v]) => v).map(([k]) => k).join(', ')}. Cascade: ${Object.entries(cascade).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}.${targetInfo} Counts: loads=${counts.agedStockLoads}, runs=${counts.pickSlipRuns}, batches=${counts.stickerBatches}`,
     }).catch(err => console.error('[clear-data] audit log write failed:', err));
   }
 
