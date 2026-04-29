@@ -36,11 +36,13 @@ export async function POST(req: NextRequest) {
   for (const p of DEFAULT_PERMISSIONS) {
     const existing = permissions.find(x => x.key === p.key);
     if (existing) {
-      // Backfill proOnly on existing permissions that lack the field
-      if (existing.proOnly === undefined && p.proOnly !== undefined) {
-        existing.proOnly = p.proOnly;
-        permissionsSeeded++; // count as change so we persist
-      }
+      // Keep system permission name, description, category, proOnly in sync with code defaults
+      let changed = false;
+      if (existing.name !== p.name) { existing.name = p.name; changed = true; }
+      if (existing.description !== p.description) { existing.description = p.description; changed = true; }
+      if (existing.category !== p.category) { existing.category = p.category; changed = true; }
+      if (existing.proOnly !== p.proOnly) { existing.proOnly = p.proOnly; changed = true; }
+      if (changed) permissionsSeeded++;
       continue;
     }
     const perm: PermissionDef = { ...p, isSystem: true, createdAt: now };
