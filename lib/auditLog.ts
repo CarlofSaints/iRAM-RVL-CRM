@@ -8,7 +8,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { put, get } from '@vercel/blob';
+import { put, get, del } from '@vercel/blob';
 import { randomUUID } from 'crypto';
 
 export interface AuditEntry {
@@ -114,4 +114,29 @@ export function getRecentMonths(): string[] {
     months.push(`${yyyy}-${mm}`);
   }
   return months;
+}
+
+/**
+ * Clear ALL audit log entries. Iterates the last 24 months and deletes each
+ * monthly blob. Returns count of months that were successfully deleted.
+ */
+export async function clearAuditLog(): Promise<number> {
+  const now = new Date();
+  let count = 0;
+  for (let i = 0; i < 24; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const key = `auditLog/${yyyy}-${mm}.json`;
+    if (process.env.VERCEL) {
+      try { await del(key); count++; }
+      catch { /* blob may not exist for this month */ }
+    } else {
+      try {
+        const fp = path.join(process.cwd(), 'data', 'auditLog', `${yyyy}-${mm}.json`);
+        if (fs.existsSync(fp)) { fs.unlinkSync(fp); count++; }
+      } catch { /* empty */ }
+    }
+  }
+  return count;
 }

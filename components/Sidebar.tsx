@@ -235,6 +235,9 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
         {has('manage_users') && (
           <NavLink href="/admin/audit-log" label="Audit Log" active={pathname === '/admin/audit-log'} />
         )}
+        {has('manage_users') && (
+          <NavLink href="/admin/clear-data" label="Clear Data" active={pathname === '/admin/clear-data'} />
+        )}
       </nav>
 
       {/* User Guide + Logout */}

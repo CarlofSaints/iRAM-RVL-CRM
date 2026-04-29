@@ -10,7 +10,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { put, get } from '@vercel/blob';
+import { put, get, del } from '@vercel/blob';
 import type { PickSlipPdfRow } from './pickSlipPdf';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -413,4 +413,34 @@ export async function findSlipByDeliveryToken(
     }
   }
   return null;
+}
+
+/**
+ * Delete a single pick slip run blob for a given client + loadId.
+ */
+export async function clearPickSlipRun(clientId: string, loadId: string): Promise<void> {
+  if (process.env.VERCEL) {
+    try { await del(runKey(clientId, loadId)); }
+    catch { /* blob may already be gone */ }
+  } else {
+    try {
+      const f = runLocalPath(clientId, loadId);
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    } catch { /* empty */ }
+  }
+}
+
+/**
+ * Clear the manual pick slip index for a client (reset to []).
+ */
+export async function clearManualIndex(clientId: string): Promise<void> {
+  if (process.env.VERCEL) {
+    try { await del(manualIndexKey(clientId)); }
+    catch { /* blob may already be gone */ }
+  } else {
+    try {
+      const f = path.join(process.cwd(), 'data', 'pickSlips', clientId, '_manual-index.json');
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    } catch { /* empty */ }
+  }
 }

@@ -15,7 +15,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { put, get } from '@vercel/blob';
+import { put, get, del } from '@vercel/blob';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -302,4 +302,26 @@ export async function nextStickerSequence(
   }
 
   return total + 1;
+}
+
+/**
+ * Delete ALL sticker batches. Reads the index, deletes each batch blob,
+ * resets the index to []. Returns count of batches deleted.
+ */
+export async function clearAllBatches(): Promise<number> {
+  const index = await listBatches();
+  let count = 0;
+  for (const meta of index) {
+    if (process.env.VERCEL) {
+      try { await del(batchKey(meta.id)); count++; }
+      catch { /* blob may already be gone */ }
+    } else {
+      try {
+        const f = batchLocalPath(meta.id);
+        if (fs.existsSync(f)) { fs.unlinkSync(f); count++; }
+      } catch { /* empty */ }
+    }
+  }
+  await saveIndex([]);
+  return count;
 }

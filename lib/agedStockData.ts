@@ -227,6 +227,28 @@ export async function saveLoad(full: AgedStockLoadFull): Promise<void> {
   await saveIndex(full.clientId, index);
 }
 
+/**
+ * Delete ALL loads for a client. Reads the index, deletes each load blob,
+ * then resets the index to []. Returns count of loads deleted.
+ */
+export async function clearAllLoads(clientId: string): Promise<number> {
+  const index = await listLoads(clientId);
+  let count = 0;
+  for (const meta of index) {
+    if (process.env.VERCEL) {
+      try { await del(loadKey(clientId, meta.id)); count++; }
+      catch { /* blob may already be gone */ }
+    } else {
+      try {
+        const f = loadLocalPath(clientId, meta.id);
+        if (fs.existsSync(f)) { fs.unlinkSync(f); count++; }
+      } catch { /* empty */ }
+    }
+  }
+  await saveIndex(clientId, []);
+  return count;
+}
+
 export async function deleteLoad(clientId: string, loadId: string): Promise<void> {
   if (process.env.VERCEL) {
     try { await del(loadKey(clientId, loadId)); }
