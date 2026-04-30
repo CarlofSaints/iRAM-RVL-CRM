@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic';
 export interface DashboardRow {
   clientId: string;
   clientName: string;
-  vendorNumbers: string[];
+  vendorNumber: string;
   storeName: string;
   storeCode: string;
   warehouse: string;
@@ -110,11 +110,12 @@ export async function GET(req: NextRequest) {
     for (const meta of index) {
       const full = await getLoad(clientId, meta.id);
       if (!full) continue;
+      const clientVendors = (client as ClientWithLinks).vendorNumbers ?? [];
       for (const r of full.rows) {
         rows.push({
           clientId: client.id,
           clientName: client.name,
-          vendorNumbers: (client as ClientWithLinks).vendorNumbers ?? [],
+          vendorNumber: (r as { vendorNumber?: string }).vendorNumber || clientVendors[0] || '',
           storeName: r.siteName,
           storeCode: r.siteCode,
           warehouse: '',
@@ -156,7 +157,7 @@ export async function GET(req: NextRequest) {
         rows.push({
           clientId: client.id,
           clientName: client.name,
-          vendorNumbers: (client as ClientWithLinks).vendorNumbers ?? [],
+          vendorNumber: slip.vendorNumber || '',
           storeName: slip.siteName,
           storeCode: slip.siteCode,
           warehouse: wh,
@@ -181,7 +182,7 @@ export async function GET(req: NextRequest) {
           const base = {
             clientId: client.id,
             clientName: client.name,
-            vendorNumbers: (client as ClientWithLinks).vendorNumbers ?? [],
+            vendorNumber: slip.vendorNumber || '',
             storeName: slip.siteName,
             storeCode: slip.siteCode,
             warehouse: wh,

@@ -141,9 +141,12 @@ export async function POST(
   const defaultVendor = linksWithPickSlipFolder[0].vendorNumber;
 
   // Group load rows by siteCode + vendorNumber
+  // Prefer vendorNumber from the file (committed row), fall back to article→vendor lookup
   const rowsBySiteVendor = new Map<string, { siteCode: string; vendorNumber: string; rows: typeof load.rows }>();
   for (const row of load.rows) {
-    const vendorNum = articleToVendor.get(normArticle(row.articleCode)) ?? defaultVendor;
+    const vendorNum = (row as { vendorNumber?: string }).vendorNumber
+      || articleToVendor.get(normArticle(row.articleCode))
+      || defaultVendor;
     const key = `${row.siteCode}|${vendorNum}`;
     if (!rowsBySiteVendor.has(key)) {
       rowsBySiteVendor.set(key, { siteCode: row.siteCode, vendorNumber: vendorNum, rows: [] });

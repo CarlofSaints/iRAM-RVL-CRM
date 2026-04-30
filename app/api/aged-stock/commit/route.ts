@@ -94,10 +94,22 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Build a set of the client's vendor numbers for filtering multi-vendor files
+  const clientVendorSet = new Set(
+    (draft.vendorNumbers ?? []).map(v => v.trim()).filter(Boolean)
+  );
+
   // Aggregate draft rows across selected periods
   const loadId = randomUUID();
   const rows: AgedStockRow[] = [];
   for (const r of draft.rows) {
+    // If the row has a vendorNumber from the file AND the client has vendorNumbers,
+    // only include rows whose vendorNumber matches one of the client's vendorNumbers.
+    // Rows without a vendorNumber (formats without vendor info) are always included.
+    if (r.vendorNumber && clientVendorSet.size > 0 && !clientVendorSet.has(r.vendorNumber)) {
+      continue;
+    }
+
     let qty = 0;
     let val = 0;
     for (const k of selected) {
@@ -127,6 +139,7 @@ export async function POST(req: NextRequest) {
       description: r.description,
       barcode,
       vendorProductCode,
+      vendorNumber: r.vendorNumber || '',
       qty,
       val,
     });
