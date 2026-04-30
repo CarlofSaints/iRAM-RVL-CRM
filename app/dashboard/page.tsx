@@ -16,7 +16,7 @@ import {
 interface DashboardRow {
   clientId: string;
   clientName: string;
-  vendorNumbers: string[];
+  vendorNumber: string;
   storeName: string;
   storeCode: string;
   warehouse: string;
@@ -325,7 +325,7 @@ function SummaryGrid({
 interface GridRow {
   clientId: string;
   clientName: string;
-  vendorNumbers: string[];
+  vendorNumber: string;
   agedQty: number;
   agedVal: number;
   warehouseQty: Record<string, number>;
@@ -451,7 +451,7 @@ export default function DashboardPage() {
     const products = new Set<string>();
 
     for (const r of allRows) {
-      clients.add(`${r.clientName}${r.vendorNumbers.length ? ` - ${r.vendorNumbers.join(', ')}` : ''}`);
+      clients.add(`${r.clientName}${r.vendorNumber ? ` - ${r.vendorNumber}` : ''}`);
       if (r.repName) reps.add(r.repName);
       if (r.storeName) storeNames.add(r.storeName);
       if (r.pickSlipRef) pickSlipRefs.add(r.pickSlipRef);
@@ -473,7 +473,7 @@ export default function DashboardPage() {
   const clientLabelToIds = useMemo(() => {
     const map = new Map<string, Set<string>>();
     for (const r of allRows) {
-      const lbl = `${r.clientName}${r.vendorNumbers.length ? ` - ${r.vendorNumbers.join(', ')}` : ''}`;
+      const lbl = `${r.clientName}${r.vendorNumber ? ` - ${r.vendorNumber}` : ''}`;
       if (!map.has(lbl)) map.set(lbl, new Set());
       map.get(lbl)!.add(r.clientId);
     }
@@ -491,7 +491,7 @@ export default function DashboardPage() {
   function matchesClientFilter(r: DashboardRow): boolean {
     if (clientFilter.size === 0) return true;
     if (clientFilter.has('__none__')) return false;
-    const lbl = `${r.clientName}${r.vendorNumbers.length ? ` - ${r.vendorNumbers.join(', ')}` : ''}`;
+    const lbl = `${r.clientName}${r.vendorNumber ? ` - ${r.vendorNumber}` : ''}`;
     return clientFilter.has(lbl);
   }
 
@@ -616,18 +616,19 @@ export default function DashboardPage() {
     }
     const map = new Map<string, GridRow>();
     for (const r of subset) {
-      if (!map.has(r.clientId)) {
-        map.set(r.clientId, {
+      const groupKey = `${r.clientId}|${r.vendorNumber}`;
+      if (!map.has(groupKey)) {
+        map.set(groupKey, {
           clientId: r.clientId,
           clientName: r.clientName,
-          vendorNumbers: r.vendorNumbers,
+          vendorNumber: r.vendorNumber,
           agedQty: 0, agedVal: 0,
           warehouseQty: {}, warehouseVal: {},
           transitQty: 0, transitVal: 0,
           deliveredQty: 0, deliveredVal: 0,
         });
       }
-      const g = map.get(r.clientId)!;
+      const g = map.get(groupKey)!;
       if (r.category === 'aged') {
         g.agedQty += r.qty;
         g.agedVal += r.val;
@@ -652,7 +653,7 @@ export default function DashboardPage() {
       let va: string | number = 0;
       let vb: string | number = 0;
       if (sortCol === 'clientName') { va = a.clientName.toLowerCase(); vb = b.clientName.toLowerCase(); }
-      else if (sortCol === 'vendorNumbers') { va = a.vendorNumbers.join(', ').toLowerCase(); vb = b.vendorNumbers.join(', ').toLowerCase(); }
+      else if (sortCol === 'vendorNumber') { va = a.vendorNumber.toLowerCase(); vb = b.vendorNumber.toLowerCase(); }
       else if (sortCol === 'agedQty') { va = a.agedQty; vb = b.agedQty; }
       else if (sortCol === 'agedVal') { va = a.agedVal; vb = b.agedVal; }
       else if (sortCol === 'transitQty') { va = a.transitQty; vb = b.transitQty; }
@@ -745,8 +746,9 @@ export default function DashboardPage() {
   const urByVendor = useMemo(() => {
     const map = new Map<string, { label: string; vendorNum: string; aged: DashboardRow[]; ur: DashboardRow[] }>();
     for (const r of [...agedFiltered, ...urFiltered]) {
-      if (!map.has(r.clientId)) map.set(r.clientId, { label: r.clientName, vendorNum: r.vendorNumbers.join(', '), aged: [], ur: [] });
-      const g = map.get(r.clientId)!;
+      const key = `${r.clientId}|${r.vendorNumber}`;
+      if (!map.has(key)) map.set(key, { label: r.clientName, vendorNum: r.vendorNumber, aged: [], ur: [] });
+      const g = map.get(key)!;
       if (r.category === 'aged') g.aged.push(r); else g.ur.push(r);
     }
     return [...map.values()].map(g => ({
@@ -921,7 +923,7 @@ export default function DashboardPage() {
     const rows = sortedGrid.map(c => {
       const row: Record<string, string | number> = {
         'Client': c.clientName,
-        'Vendor Numbers': c.vendorNumbers.join(', '),
+        'Vendor Number': c.vendorNumber,
         'Aged Stock Qty': c.agedQty,
         'Aged Stock Value': c.agedVal,
       };
@@ -939,7 +941,7 @@ export default function DashboardPage() {
     // Totals row
     const totals: Record<string, string | number> = {
       'Client': 'TOTAL',
-      'Vendor Numbers': '',
+      'Vendor Number': '',
       'Aged Stock Qty': gridTotals.agedQty,
       'Aged Stock Value': gridTotals.agedVal,
     };
@@ -1296,8 +1298,8 @@ export default function DashboardPage() {
                     {(() => { const i = colIdx(); return (
                       <th key="vendor" style={colWidths[i] ? { width: colWidths[i] } : undefined}
                         className="px-3 py-2 font-semibold text-gray-600 text-xs uppercase relative cursor-pointer select-none hover:bg-gray-100"
-                        onClick={() => handleSort('vendorNumbers')}>
-                        Vendor #<SortArrow col="vendorNumbers" /><ResizeHandle colIdx={i} />
+                        onClick={() => handleSort('vendorNumber')}>
+                        Vendor #<SortArrow col="vendorNumber" /><ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
                     {(() => { const i = colIdx(); return (
@@ -1364,7 +1366,7 @@ export default function DashboardPage() {
                 <tbody>
                   {sortedGrid.map(c => (
                     <tr
-                      key={c.clientId}
+                      key={`${c.clientId}|${c.vendorNumber}`}
                       className={`border-t border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
                         selectedClient === c.clientId ? 'bg-green-50' : ''
                       }`}
@@ -1379,7 +1381,7 @@ export default function DashboardPage() {
                           {c.clientName}
                         </Link>
                       </td>
-                      <td className="px-3 py-2 text-gray-500">{c.vendorNumbers.join(', ')}</td>
+                      <td className="px-3 py-2 text-gray-500">{c.vendorNumber}</td>
                       <td className="px-3 py-2 text-right font-medium">{fmtNum(c.agedQty)}</td>
                       <td className="px-3 py-2 text-right font-medium">{fmtRand(c.agedVal)}</td>
                       {warehouses.map(w => {

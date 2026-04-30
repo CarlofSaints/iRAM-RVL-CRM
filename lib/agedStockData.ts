@@ -65,6 +65,8 @@ export interface AgedStockRow {
   description: string;
   barcode: string;
   vendorProductCode: string;
+  /** Vendor number from the file (SafeTop col B). Empty when not available. */
+  vendorNumber: string;
   qty: number;
   val: number;
 }

@@ -49,6 +49,8 @@ export interface AgedStockRawRow {
   barcode: string;
   /** Non-empty only for formats that include it in the file. */
   vendorProductCode: string;
+  /** Non-empty only for formats that include a vendor column (SafeTop col B). */
+  vendorNumber: string;
   /** Keyed by AgedStockPeriod.key. */
   periods: Record<string, { qty: number; val: number }>;
 }
@@ -201,6 +203,8 @@ interface DetectedFormat {
   /** -1 when not present in the format. */
   barcodeCol: number;
   vendorProductCodeCol: number;
+  /** Column with vendor/supplier number. -1 when not present. */
+  vendorCol: number;
 }
 
 function detectFormat(rows: unknown[][]): DetectedFormat | null {
@@ -230,6 +234,7 @@ function detectFormat(rows: unknown[][]): DetectedFormat | null {
       descriptionCol: 4,
       barcodeCol: -1,
       vendorProductCodeCol: -1,
+      vendorCol: -1,
     };
   }
 
@@ -253,6 +258,7 @@ function detectFormat(rows: unknown[][]): DetectedFormat | null {
         descriptionCol: 6,
         barcodeCol,
         vendorProductCodeCol: barcodeCol + 1,
+        vendorCol: 1,                       // col B = "Regular Vendor"
       };
     }
   }
@@ -275,6 +281,7 @@ function detectFormat(rows: unknown[][]): DetectedFormat | null {
         descriptionCol: 5,
         barcodeCol: -1,
         vendorProductCodeCol: -1,
+        vendorCol: -1,
       };
     }
   }
@@ -298,6 +305,7 @@ function detectFormat(rows: unknown[][]): DetectedFormat | null {
           descriptionCol: 3,
           barcodeCol,
           vendorProductCodeCol: barcodeCol + 1,
+          vendorCol: -1,
         };
       }
       return {
@@ -311,6 +319,7 @@ function detectFormat(rows: unknown[][]): DetectedFormat | null {
         descriptionCol: 3,
         barcodeCol: -1,
         vendorProductCodeCol: -1,
+        vendorCol: -1,
       };
     }
   }
@@ -410,6 +419,7 @@ export function parseAgedStockFile(buffer: Buffer): AgedStockParseResult {
     const vendorProductCode = det.vendorProductCodeCol >= 0
       ? cellText(g[det.vendorProductCodeCol])
       : '';
+    const vendorNumber = det.vendorCol >= 0 ? cellText(g[det.vendorCol]) : '';
 
     const periodValues: Record<string, { qty: number; val: number }> = {};
     for (const p of periods) {
@@ -421,7 +431,7 @@ export function parseAgedStockFile(buffer: Buffer): AgedStockParseResult {
 
     rows.push({
       siteCode, siteName, articleCode, description,
-      barcode, vendorProductCode, periods: periodValues,
+      barcode, vendorProductCode, vendorNumber, periods: periodValues,
     });
   }
 
