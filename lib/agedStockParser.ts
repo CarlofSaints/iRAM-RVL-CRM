@@ -245,7 +245,7 @@ function detectFormat(rows: unknown[][]): DetectedFormat | null {
       return {
         format: 'safetop',
         periodHeaderRow: Math.max(0, i - 1),
-        firstDataRow: i + 2,               // skip column-name row + totals row
+        firstDataRow: i + 1,               // skip column-name row; subtotal rows filtered in main loop
         periodStartCol: barcodeCol + 3,     // skip Barcode, BMC, BMC category
         siteCodeCol: 3,
         siteNameCol: 4,
