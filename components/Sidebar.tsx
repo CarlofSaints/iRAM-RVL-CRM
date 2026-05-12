@@ -111,7 +111,7 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
       )}
 
       <aside
-        className={`w-64 bg-[var(--color-charcoal)] min-h-screen flex flex-col fixed left-0 top-0 z-40 transition-transform duration-200 ${
+        className={`w-64 bg-[var(--color-charcoal)] h-screen flex flex-col fixed left-0 top-0 z-40 transition-transform duration-200 ${
           collapsed ? '-translate-x-full' : 'translate-x-0'
         }`}
       >
