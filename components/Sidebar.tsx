@@ -69,9 +69,10 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
     { href: '/aged-stock/manual-capture', label: '1.1) Manual Capture', perm: 'manage_pick_slips' },
     { href: '/aged-stock/scan', label: '2.) Book Stock into WH', perm: 'scan_stock' },
     { href: '/aged-stock/receipts?mode=capture', label: '3.) Capture', perm: 'receipt_stock' },
-    { href: '/aged-stock/receipts?mode=release', label: '4.) Release Stock', perm: 'receipt_stock' },
+    { href: '/aged-stock/release', label: '4.) Release Stock', perm: 'receipt_stock' },
     { href: '/aged-stock/picking-slips', label: 'Picking Slips', perm: 'view_aged_stock' },
     { href: '/aged-stock/stickers', label: 'Sticker Labels', perm: 'view_aged_stock' },
+    { href: '/aged-stock/reports', label: 'Reports', perm: 'view_aged_stock' },
   ];
   const visibleAgedStockLinks = agedStockLinks.filter(l => has(l.perm));
   const showAgedStockSection = visibleAgedStockLinks.length > 0;

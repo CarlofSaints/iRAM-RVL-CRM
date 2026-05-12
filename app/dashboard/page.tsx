@@ -7,9 +7,6 @@ import ProGateModal from '@/components/ProGateModal';
 import Link from 'next/link';
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import * as XLSX from 'xlsx';
-import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
-} from 'recharts';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -584,55 +581,7 @@ export default function DashboardPage() {
     return { aged, warehouse, transit, delivered, losses, grnVal };
   }, [baseFiltered, selectedWarehouse, selectedClient]);
 
-  // 3. chartData = baseFiltered filtered by selectedClient, aggregated by warehouse
-  const chartData = useMemo(() => {
-    let subset = baseFiltered;
-    if (selectedClient) {
-      subset = subset.filter(r => r.clientId === selectedClient);
-    }
-    const byWh: Record<string, { qty: number; val: number }> = {};
-    let transitQty = 0;
-    let transitVal = 0;
-    let deliveredQty = 0;
-    let deliveredVal = 0;
-    for (const r of subset) {
-      if (r.category === 'warehouse' && r.warehouse) {
-        if (!byWh[r.warehouse]) byWh[r.warehouse] = { qty: 0, val: 0 };
-        byWh[r.warehouse].qty += r.qty;
-        byWh[r.warehouse].val += r.val;
-      } else if (r.category === 'transit') {
-        transitQty += r.qty;
-        transitVal += r.val;
-      } else if (r.category === 'delivered') {
-        deliveredQty += r.qty;
-        deliveredVal += r.val;
-      }
-    }
-    const bars: Array<{ name: string; key: string; qty: number; val: number }> = [];
-    // Warehouse bars in control-centre order
-    for (const w of warehouses) {
-      const k = w.code.toUpperCase().trim();
-      const d = byWh[k];
-      if (d && d.qty > 0) {
-        bars.push({ name: w.code, key: k, qty: d.qty, val: d.val });
-      }
-    }
-    // Also include warehouses from data not in the control list
-    for (const [k, d] of Object.entries(byWh)) {
-      if (!bars.some(b => b.key === k) && d.qty > 0) {
-        bars.push({ name: k, key: k, qty: d.qty, val: d.val });
-      }
-    }
-    if (transitQty > 0) {
-      bars.push({ name: 'In Transit', key: '__transit__', qty: transitQty, val: transitVal });
-    }
-    if (deliveredQty > 0) {
-      bars.push({ name: 'Delivered', key: '__delivered__', qty: deliveredQty, val: deliveredVal });
-    }
-    return bars;
-  }, [baseFiltered, selectedClient, warehouses]);
-
-  // 4. gridData = baseFiltered filtered by selectedWarehouse, aggregated by client
+  // gridData = baseFiltered filtered by selectedWarehouse, aggregated by client
   const gridRows = useMemo(() => {
     let subset = baseFiltered;
     if (selectedWarehouse) {
@@ -1140,11 +1089,6 @@ export default function DashboardPage() {
   const totalCols = 6 + warehouses.length * 2 + 2 + 2 + 1; // +2 for actual qty/val, +2 for delivered qty/val, +1 for GRN/GRV
 
   // Chart bar click handler
-  function handleBarClick(data: { key: string }) {
-    if (!data) return;
-    setSelectedWarehouse(prev => prev === data.key ? null : data.key);
-  }
-
   return (
     <div className="min-h-screen bg-gray-50">
       <Sidebar session={session} onLogout={logout} />
@@ -1273,7 +1217,6 @@ export default function DashboardPage() {
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
               {[
                 { id: 'sec-kpi', label: 'KPI Cards' },
-                { id: 'sec-chart', label: 'Chart' },
                 { id: 'sec-warehouse', label: 'Warehouse' },
                 ...(drilldownWarehouse ? [{ id: 'sec-wh-drill', label: 'Store Detail' }] : []),
                 { id: 'sec-client', label: 'Client Summary' },
@@ -1296,147 +1239,82 @@ export default function DashboardPage() {
 
         {/* ── 3 Grouped KPI Cards ─────────────────────────────────────────── */}
         {hasAgedStock && (
-          <div id="sec-kpi" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 scroll-mt-28">
+          <div id="sec-kpi" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 scroll-mt-28">
             {/* Aged Stock */}
-            <div className={`bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] p-5 transition-all ${
+            <div className={`bg-white rounded-lg shadow-sm border-l-3 border-[var(--color-primary)] px-3 py-2.5 transition-all ${
               selectedWarehouse === '__aged__' ? 'ring-2 ring-[var(--color-primary)]' : ''
             }`}>
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 w-10 h-10 rounded-lg bg-[var(--color-primary)]/10 flex items-center justify-center shrink-0">
-                  <svg className="w-5 h-5 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total Aged Stock</div>
-                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtRand(cardTotals.aged.val)}</div>
-                  <div className="text-sm text-gray-500 mt-0.5">{fmtNum(cardTotals.aged.qty)} units loaded</div>
-                  {cardTotals.losses.qty > 0 && (
-                    <div className="mt-2 pt-2 border-t border-gray-100">
-                      <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Actual (Collected)</div>
-                      <div className="text-lg font-bold text-[var(--color-primary)] mt-0.5">{fmtRand(cardTotals.aged.val - cardTotals.losses.val)}</div>
-                      <div className="text-xs text-gray-500">{fmtNum(cardTotals.aged.qty - cardTotals.losses.qty)} units</div>
-                      <div className="text-[10px] text-red-400 mt-0.5">Losses: {fmtNum(cardTotals.losses.qty)} units ({fmtRand(cardTotals.losses.val)})</div>
-                    </div>
-                  )}
-                </div>
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="w-4 h-4 text-[var(--color-primary)] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide leading-tight">Total Aged Stock</span>
               </div>
+              <div className="text-base font-bold text-gray-900 break-words">{fmtRand(cardTotals.aged.val)}</div>
+              <div className="text-xs text-gray-500">{fmtNum(cardTotals.aged.qty)} units loaded</div>
+              {cardTotals.losses.qty > 0 && (
+                <div className="mt-1.5 pt-1.5 border-t border-gray-100">
+                  <div className="text-[10px] font-semibold text-gray-400 uppercase">Actual (Collected)</div>
+                  <div className="text-sm font-bold text-[var(--color-primary)]">{fmtRand(cardTotals.aged.val - cardTotals.losses.val)}</div>
+                  <div className="text-[10px] text-gray-500">{fmtNum(cardTotals.aged.qty - cardTotals.losses.qty)} units</div>
+                  <div className="text-[10px] text-red-400">Losses: {fmtNum(cardTotals.losses.qty)} units ({fmtRand(cardTotals.losses.val)})</div>
+                </div>
+              )}
             </div>
 
             {/* Warehouse Stock */}
-            <div className="bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] p-5">
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 w-10 h-10 rounded-lg bg-[var(--color-primary)]/10 flex items-center justify-center shrink-0">
-                  <svg className="w-5 h-5 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                  </svg>
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Warehouse Stock</div>
-                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtRand(cardTotals.warehouse.val)}</div>
-                  <div className="text-sm text-gray-500 mt-0.5">{fmtNum(cardTotals.warehouse.qty)} units</div>
-                </div>
+            <div className="bg-white rounded-lg shadow-sm border-l-3 border-[var(--color-primary)] px-3 py-2.5">
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="w-4 h-4 text-[var(--color-primary)] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                </svg>
+                <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide leading-tight">Warehouse Stock</span>
               </div>
+              <div className="text-base font-bold text-gray-900 break-words">{fmtRand(cardTotals.warehouse.val)}</div>
+              <div className="text-xs text-gray-500">{fmtNum(cardTotals.warehouse.qty)} units</div>
             </div>
 
             {/* In Transit */}
-            <div className={`bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] p-5 transition-all ${
+            <div className={`bg-white rounded-lg shadow-sm border-l-3 border-[var(--color-primary)] px-3 py-2.5 transition-all ${
               selectedWarehouse === '__transit__' ? 'ring-2 ring-[var(--color-primary)]' : ''
             }`}>
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 w-10 h-10 rounded-lg bg-[var(--color-primary)]/10 flex items-center justify-center shrink-0">
-                  <svg className="w-5 h-5 text-[var(--color-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
-                  </svg>
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">In Transit</div>
-                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtRand(cardTotals.transit.val)}</div>
-                  <div className="text-sm text-gray-500 mt-0.5">{fmtNum(cardTotals.transit.qty)} units</div>
-                </div>
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="w-4 h-4 text-[var(--color-primary)] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" />
+                </svg>
+                <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide leading-tight">In Transit</span>
               </div>
+              <div className="text-base font-bold text-gray-900 break-words">{fmtRand(cardTotals.transit.val)}</div>
+              <div className="text-xs text-gray-500">{fmtNum(cardTotals.transit.qty)} units</div>
             </div>
 
             {/* Stock Delivered */}
-            <div className={`bg-white rounded-xl shadow-sm border-l-4 border-emerald-500 p-5 transition-all ${
+            <div className={`bg-white rounded-lg shadow-sm border-l-3 border-emerald-500 px-3 py-2.5 transition-all ${
               selectedWarehouse === '__delivered__' ? 'ring-2 ring-emerald-500' : ''
             }`}>
-              <div className="flex items-start gap-3">
-                <div className="mt-0.5 w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
-                  <svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Stock Delivered</div>
-                  <div className="text-2xl font-bold text-gray-900 mt-1">{fmtRand(cardTotals.delivered.val)}</div>
-                  <div className="text-sm text-gray-500 mt-0.5">{fmtNum(cardTotals.delivered.qty)} units</div>
-                </div>
+              <div className="flex items-center gap-2 mb-1">
+                <svg className="w-4 h-4 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide leading-tight">Stock Delivered</span>
               </div>
+              <div className="text-base font-bold text-gray-900 break-words">{fmtRand(cardTotals.delivered.val)}</div>
+              <div className="text-xs text-gray-500">{fmtNum(cardTotals.delivered.qty)} units</div>
             </div>
 
             {/* GRN/GRV Value */}
             {cardTotals.grnVal > 0 && (
-              <div className="bg-white rounded-xl shadow-sm border-l-4 border-amber-500 p-5">
-                <div className="flex items-start gap-3">
-                  <div className="mt-0.5 w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0">
-                    <svg className="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">GRN/GRV Value</div>
-                    <div className="text-2xl font-bold text-gray-900 mt-1">{fmtRand(cardTotals.grnVal)}</div>
-                    <div className="text-xs text-gray-400 mt-0.5">Captured receipt value</div>
-                  </div>
+              <div className="bg-white rounded-lg shadow-sm border-l-3 border-amber-500 px-3 py-2.5">
+                <div className="flex items-center gap-2 mb-1">
+                  <svg className="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide leading-tight">GRN/GRV Value</span>
                 </div>
+                <div className="text-base font-bold text-gray-900 break-words">{fmtRand(cardTotals.grnVal)}</div>
+                <div className="text-[10px] text-gray-400">Captured receipt value</div>
               </div>
             )}
-          </div>
-        )}
-
-        {/* ── Bar Chart ───────────────────────────────────────────────────── */}
-        {hasAgedStock && chartData.length > 0 && (
-          <div id="sec-chart" className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 scroll-mt-28">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Stock by Warehouse</h2>
-              {selectedWarehouse && (
-                <button
-                  onClick={() => setSelectedWarehouse(null)}
-                  className="text-xs text-gray-500 hover:text-gray-700 underline"
-                >
-                  Clear warehouse selection
-                </button>
-              )}
-            </div>
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip
-                  formatter={(value, name) => {
-                    const v = Number(value) || 0;
-                    if (name === 'qty') return [fmtNum(v), 'Quantity'];
-                    return [fmtRand(v), 'Value'];
-                  }}
-                  contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }}
-                />
-                <Bar dataKey="qty" radius={[4, 4, 0, 0]} cursor="pointer"
-                  onClick={(_data, index) => {
-                    const entry = chartData[index];
-                    if (entry) handleBarClick(entry);
-                  }}
-                >
-                  {chartData.map((entry) => (
-                    <Cell
-                      key={entry.key}
-                      fill={entry.key === '__transit__' ? '#06b6d4' : entry.key === '__delivered__' ? '#10b981' : '#7CC042'}
-                      opacity={selectedWarehouse && selectedWarehouse !== entry.key ? 0.3 : 1}
-                    />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
           </div>
         )}
 

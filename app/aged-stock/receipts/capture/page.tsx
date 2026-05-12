@@ -221,7 +221,10 @@ export default function ReceiptCapturePage() {
   const [grnAutoFilled, setGrnAutoFilled] = useState(false);
   const [grnRelatedSlipId, setGrnRelatedSlipId] = useState('');
 
-  const mode: PageMode = slip ? resolveMode(slip.status) : 'receipt';
+  const editOverride = searchParams.get('edit') === '1';
+  const mode: PageMode = slip
+    ? (editOverride && (slip.status === 'captured' || slip.status === 'failed-release') ? 'receipt' : resolveMode(slip.status))
+    : 'receipt';
 
   // ── Load slip + reps ──
   const loadData = useCallback(async () => {

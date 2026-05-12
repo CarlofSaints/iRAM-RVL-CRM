@@ -86,6 +86,12 @@ export default function ScanPage() {
   // Submit
   const [booking, setBooking] = useState(false);
 
+  // Nothing to return modal
+  const [showNtrModal, setShowNtrModal] = useState(false);
+  const [ntrRepId, setNtrRepId] = useState('');
+  const [ntrSecurityCode, setNtrSecurityCode] = useState('');
+  const [ntrSubmitting, setNtrSubmitting] = useState(false);
+
   // ── Load reps + users on mount ──
   const loadRepsAndUsers = useCallback(async () => {
     try {
@@ -323,6 +329,54 @@ export default function ScanPage() {
     }
   }
 
+  // ── Nothing to return ──
+  async function handleNothingToReturn() {
+    if (slips.length === 0) return;
+    if (!ntrRepId) {
+      notify('Select a rep', 'error');
+      return;
+    }
+    if (ntrSecurityCode.trim().length !== 4) {
+      notify('Enter the 4-character release code', 'error');
+      return;
+    }
+
+    setNtrSubmitting(true);
+    try {
+      const res = await authFetch('/api/scan/book', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slips: slips.map(s => ({
+            slipId: s.id,
+            clientId: s.clientId,
+            loadId: s.loadId,
+          })),
+          repId: ntrRepId,
+          securityCode: ntrSecurityCode.trim(),
+          boxes: [],
+          nothingToReturn: true,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        const slipCount = slips.length;
+        notify(slipCount === 1 ? 'Booked as nothing to return' : `${slipCount} pick slips booked as nothing to return`);
+        setShowNtrModal(false);
+        setNtrRepId('');
+        setNtrSecurityCode('');
+        clearAll();
+        setTimeout(() => slipInputRef.current?.focus(), 100);
+      } else {
+        notify(data.error || 'Booking failed', 'error');
+      }
+    } catch {
+      notify('Network error booking stock', 'error');
+    } finally {
+      setNtrSubmitting(false);
+    }
+  }
+
   // Combined rep/user options for dropdown — only those with release codes
   const repOptions = [
     ...reps.filter(r => r.releaseCode).map(r => ({
@@ -384,12 +438,20 @@ export default function ScanPage() {
             Add Slip
           </button>
           {slips.length > 0 && (
-            <button
-              onClick={clearAll}
-              className="px-4 py-1.5 border border-gray-300 text-gray-600 rounded-md text-sm font-medium hover:bg-gray-50"
-            >
-              Clear All
-            </button>
+            <>
+              <button
+                onClick={() => { setNtrRepId(''); setNtrSecurityCode(''); setShowNtrModal(true); }}
+                className="px-4 py-1.5 bg-amber-500 text-white rounded-md text-sm font-medium hover:bg-amber-600"
+              >
+                Nothing to Return
+              </button>
+              <button
+                onClick={clearAll}
+                className="px-4 py-1.5 border border-gray-300 text-gray-600 rounded-md text-sm font-medium hover:bg-gray-50"
+              >
+                Clear All
+              </button>
+            </>
           )}
         </div>
 
@@ -669,6 +731,63 @@ export default function ScanPage() {
             </button>
           </div>
         </>
+      )}
+
+      {/* ── Nothing to Return Modal ─────────────────────────────────────── */}
+      {showNtrModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Nothing to Return</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              The rep visited the store but found no stock to collect. This will book the pick slip{slips.length > 1 ? 's' : ''} with zero boxes so it can proceed to capture.
+            </p>
+
+            <div className="flex flex-col gap-3 mb-5">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Select Rep <span className="text-red-500">*</span></label>
+                <select
+                  value={ntrRepId}
+                  onChange={e => setNtrRepId(e.target.value)}
+                  className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm"
+                >
+                  <option value="">{repOptions.length === 0 ? 'No reps with release codes' : 'Select rep/user...'}</option>
+                  {repOptions.map(r => (
+                    <option key={r.id} value={r.id}>{r.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Release Code <span className="text-red-500">*</span></label>
+                <input
+                  type="password"
+                  value={ntrSecurityCode}
+                  onChange={e => setNtrSecurityCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
+                  maxLength={4}
+                  placeholder="4-char code"
+                  className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm font-mono tracking-widest"
+                />
+                <span className="text-[10px] text-gray-400 mt-0.5 block">The rep must provide their 4-character release code</span>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleNothingToReturn}
+                disabled={ntrSubmitting || !ntrRepId || ntrSecurityCode.trim().length !== 4}
+                className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50 flex items-center gap-2"
+              >
+                {ntrSubmitting && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Confirm
+              </button>
+              <button
+                onClick={() => setShowNtrModal(false)}
+                className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

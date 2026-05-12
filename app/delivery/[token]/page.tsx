@@ -8,6 +8,18 @@ interface ContactDto {
   surname: string;
 }
 
+interface SlipBreakdown {
+  slipId: string;
+  siteName: string;
+  siteCode: string;
+  warehouse: string;
+  totalQty: number;
+  totalVal: number;
+  boxCount: number;
+  status: string;
+  manual: boolean;
+}
+
 interface SlipSummary {
   slipId: string;
   clientName: string;
@@ -25,6 +37,7 @@ interface SlipSummary {
   contacts?: ContactDto[];
   deliveredAt?: string;
   deliverySignedByName?: string;
+  slips?: SlipBreakdown[];
 }
 
 function fmtDateTime(iso: string): string {
@@ -312,22 +325,37 @@ export default function DeliveryConfirmationPage() {
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-5">
           <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Delivery Details</h2>
           <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <span className="text-gray-500 text-xs block">Pick Slip</span>
-              <span className="font-mono font-medium text-xs">{slip.slipId}</span>
-            </div>
-            <div>
-              <span className="text-gray-500 text-xs block">Client</span>
-              <span className="font-medium">{slip.clientName}</span>
-            </div>
-            <div>
-              <span className="text-gray-500 text-xs block">Store</span>
-              <span className="font-medium">{slip.siteName} ({slip.siteCode})</span>
-            </div>
-            <div>
-              <span className="text-gray-500 text-xs block">Warehouse</span>
-              <span className="font-medium">{slip.warehouse}</span>
-            </div>
+            {slip.slips && slip.slips.length > 1 ? (
+              <>
+                <div>
+                  <span className="text-gray-500 text-xs block">Pick Slips</span>
+                  <span className="font-medium">{slip.slips.length} slips</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs block">Client</span>
+                  <span className="font-medium">{slip.clientName}</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <span className="text-gray-500 text-xs block">Pick Slip</span>
+                  <span className="font-mono font-medium text-xs">{slip.slipId}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs block">Client</span>
+                  <span className="font-medium">{slip.clientName}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs block">Store</span>
+                  <span className="font-medium">{slip.siteName} ({slip.siteCode})</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs block">Warehouse</span>
+                  <span className="font-medium">{slip.warehouse}</span>
+                </div>
+              </>
+            )}
             <div>
               <span className="text-gray-500 text-xs block">Collecting Rep</span>
               <span className="font-medium">{slip.releaseRepName}</span>
@@ -345,6 +373,33 @@ export default function DeliveryConfirmationPage() {
               <span className="font-medium text-xs">{slip.releasedAt ? fmtDateTime(slip.releasedAt) : 'N/A'}</span>
             </div>
           </div>
+
+          {/* Multi-slip breakdown */}
+          {slip.slips && slip.slips.length > 1 && (
+            <div className="mt-4 border-t border-gray-100 pt-3">
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Per-Slip Breakdown</h3>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-gray-500">
+                    <th className="py-1 pr-2">Slip</th>
+                    <th className="py-1 pr-2">Store</th>
+                    <th className="py-1 text-right">Qty</th>
+                    <th className="py-1 text-right">Boxes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {slip.slips.map(s => (
+                    <tr key={s.slipId} className="border-t border-gray-50">
+                      <td className="py-1.5 pr-2 font-mono">{s.slipId.slice(-7)}</td>
+                      <td className="py-1.5 pr-2">{s.siteName} ({s.siteCode})</td>
+                      <td className="py-1.5 text-right">{s.totalQty.toLocaleString()}</td>
+                      <td className="py-1.5 text-right">{s.boxCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* Confirmation form */}

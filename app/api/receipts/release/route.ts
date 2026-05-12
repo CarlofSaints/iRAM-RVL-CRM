@@ -3,21 +3,31 @@ import { randomUUID } from 'crypto';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { loadControl } from '@/lib/controlData';
-import { updateSlipInRun, getPickSlipRun, type ReceiptBox } from '@/lib/pickSlipData';
+import { updateSlipInRun, getPickSlipRun, type ReceiptBox, type PickSlipRecord } from '@/lib/pickSlipData';
 import { listSpLinks } from '@/lib/spLinkData';
 import { logAudit } from '@/lib/auditLog';
 import { generateDeliveryNotePdf } from '@/lib/deliveryNotePdf';
+import { generateMultiSlipDeliveryNotePdf } from '@/lib/deliveryNotePdf';
 import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
 import { sendDeliveryNoteEmail } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
 
+interface SlipPayload {
+  slipId: string;
+  clientId: string;
+  loadId: string;
+  releaseBoxes: ReceiptBox[];
+}
+
 /**
  * POST /api/receipts/release
  *
  * Release stock from warehouse for transit back to client/vendor.
- * Validates the rep's release code — match → in-transit, mismatch → failed-release.
- * On successful release, generates a delivery note PDF with QR code and uploads to SP.
+ * Supports both single-slip (legacy) and multi-slip payloads.
+ *
+ * Single-slip body: { slipId, clientId, loadId, releaseRepId, releaseRepName, releaseBoxes, releaseCode }
+ * Multi-slip body:  { slips: [{ slipId, clientId, loadId, releaseBoxes }], releaseRepId, releaseRepName, releaseCode }
  */
 export async function POST(req: NextRequest) {
   const guard = await requirePermission(req, 'receipt_stock');
@@ -25,30 +35,34 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const {
-    slipId,
-    clientId,
-    loadId,
     releaseRepId,
     releaseRepName,
-    releaseBoxes,
     releaseCode,
     managerOverrideCode,
     managerOverrideRepId,
   } = body as {
-    slipId: string;
-    clientId: string;
-    loadId: string;
     releaseRepId: string;
     releaseRepName: string;
-    releaseBoxes: ReceiptBox[];
     releaseCode: string;
     managerOverrideCode?: string;
     managerOverrideRepId?: string;
   };
 
-  if (!slipId || !clientId || !loadId) {
-    return NextResponse.json({ error: 'slipId, clientId, and loadId are required' }, { status: 400 });
+  // Normalize: wrap single-slip into array
+  let slipPayloads: SlipPayload[];
+  if (Array.isArray(body.slips) && body.slips.length > 0) {
+    slipPayloads = body.slips;
+  } else if (body.slipId && body.clientId && body.loadId) {
+    slipPayloads = [{
+      slipId: body.slipId,
+      clientId: body.clientId,
+      loadId: body.loadId,
+      releaseBoxes: body.releaseBoxes ?? [],
+    }];
+  } else {
+    return NextResponse.json({ error: 'slips array or (slipId, clientId, loadId) are required' }, { status: 400 });
   }
+
   if (!releaseRepId) {
     return NextResponse.json({ error: 'releaseRepId is required' }, { status: 400 });
   }
@@ -56,24 +70,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'releaseCode is required' }, { status: 400 });
   }
 
-  // Verify the slip exists and is in a releasable status
-  const run = await getPickSlipRun(clientId, loadId);
-  if (!run) {
-    return NextResponse.json({ error: 'Pick slip run not found' }, { status: 404 });
-  }
-  const slip = run.slips.find(s => s.id === slipId);
-  if (!slip) {
-    return NextResponse.json({ error: 'Pick slip not found' }, { status: 404 });
-  }
-  if (slip.status !== 'captured' && slip.status !== 'failed-release') {
-    return NextResponse.json({ error: `Cannot release a slip with status "${slip.status}"` }, { status: 400 });
+  // Verify all slips exist and are releasable
+  const resolvedSlips: Array<{ payload: SlipPayload; slip: PickSlipRecord }> = [];
+  for (const sp of slipPayloads) {
+    const run = await getPickSlipRun(sp.clientId, sp.loadId);
+    if (!run) {
+      return NextResponse.json({ error: `Pick slip run not found for ${sp.slipId}` }, { status: 404 });
+    }
+    const slip = run.slips.find(s => s.id === sp.slipId);
+    if (!slip) {
+      return NextResponse.json({ error: `Pick slip ${sp.slipId} not found` }, { status: 404 });
+    }
+    if (slip.status !== 'captured' && slip.status !== 'failed-release') {
+      return NextResponse.json({ error: `Cannot release ${sp.slipId} with status "${slip.status}"` }, { status: 400 });
+    }
+    resolvedSlips.push({ payload: sp, slip });
   }
 
-  // Load users first — needed for rep lookup AND audit
+  // Load users — needed for rep lookup AND audit
   const users = await loadUsers();
   const me = users.find(u => u.id === guard.userId);
 
-  // Look up the rep's stored release code — check both control reps AND users
+  // Look up the rep's stored release code
   const reps = await loadControl<{ id: string; releaseCode?: string }>('reps');
   const rep = reps.find(r => r.id === releaseRepId);
   const repUser = users.find(u => u.id === releaseRepId);
@@ -90,11 +108,9 @@ export async function POST(req: NextRequest) {
   const codeMatch = releaseCode.toUpperCase().trim() === storedCode.toUpperCase().trim();
 
   if (codeMatch) {
-    // Check if this is a manager-authorized partial release
     const isPartial = !!managerOverrideCode;
 
     if (isPartial && managerOverrideRepId) {
-      // Validate manager's release code
       const manager = users.find(u => u.id === managerOverrideRepId);
       if (!manager || !manager.releaseCode) {
         return NextResponse.json(
@@ -113,98 +129,149 @@ export async function POST(req: NextRequest) {
 
     const finalStatus = isPartial ? 'partial-release' : 'in-transit';
     const now = new Date().toISOString();
-
-    // Generate delivery token
     const deliveryToken = randomUUID();
+    const isMulti = resolvedSlips.length > 1;
 
-    const updated = await updateSlipInRun(clientId, loadId, slipId, {
-      status: finalStatus,
-      releaseRepId,
-      releaseRepName,
-      releaseBoxes: releaseBoxes ?? [],
-      releasedAt: now,
-      releasedBy: guard.userId,
-      releasedByName: userName,
-      deliveryToken,
-    });
+    // Update all slips with shared delivery token
+    const updatedSlips: PickSlipRecord[] = [];
+    for (const { payload, slip } of resolvedSlips) {
+      const updated = await updateSlipInRun(payload.clientId, payload.loadId, payload.slipId, {
+        status: finalStatus,
+        releaseRepId,
+        releaseRepName,
+        releaseBoxes: payload.releaseBoxes ?? [],
+        releasedAt: now,
+        releasedBy: guard.userId,
+        releasedByName: userName,
+        deliveryToken,
+      });
+      if (updated) updatedSlips.push(updated);
 
-    await logAudit({
-      action: isPartial ? 'partial_release' : 'release_complete',
-      userId: guard.userId,
-      userName,
-      slipId,
-      clientId,
-      detail: isPartial
-        ? `Partial release of ${(releaseBoxes ?? []).length} boxes (manager override by ${managerOverrideRepId})`
-        : `Stock released — ${(releaseBoxes ?? []).length} boxes in transit. Rep: ${releaseRepName}`,
-    });
+      await logAudit({
+        action: isPartial ? 'partial_release' : 'release_complete',
+        userId: guard.userId,
+        userName,
+        slipId: payload.slipId,
+        clientId: payload.clientId,
+        detail: isPartial
+          ? `Partial release of ${(payload.releaseBoxes ?? []).length} boxes (manager override by ${managerOverrideRepId})`
+          : `Stock released — ${(payload.releaseBoxes ?? []).length} boxes in transit. Rep: ${releaseRepName}${isMulti ? ` (multi-slip release, ${resolvedSlips.length} slips)` : ''}`,
+      });
+    }
 
-    // ── Generate & upload delivery note PDF (non-blocking on failure) ──
+    // ── Generate & upload delivery note PDF ──
     try {
       const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://iram-rvl-crm.vercel.app';
       const qrUrl = `${siteUrl}/delivery/${deliveryToken}`;
 
-      const pdfBuffer = await generateDeliveryNotePdf({
-        pickSlipId: slipId,
-        clientName: slip.clientName,
-        vendorNumber: slip.vendorNumber,
-        siteName: slip.siteName,
-        siteCode: slip.siteCode,
-        warehouse: slip.warehouse,
-        releaseRepName,
-        releasedAt: now,
-        storeRefs: slip.receiptStoreRefs ?? [],
-        manual: slip.manual,
-        rows: (slip.rows ?? []).map(r => ({
-          articleCode: r.articleCode,
-          description: r.description,
-          qty: r.qty,
-          val: r.val,
-        })),
-        boxCount: (releaseBoxes ?? []).length,
-        stickerBarcodes: (releaseBoxes ?? []).map(b => b.stickerBarcode),
-        qrUrl,
-      });
+      let pdfBuffer: Buffer;
+      let pdfFileName: string;
 
-      // Upload to SP — find link with deliveryNoteFolderUrl
-      const spLinks = await listSpLinks(clientId);
-      const dnLink = spLinks.find(l => l.deliveryNoteFolderUrl);
+      // Use the first slip for client-level info (all slips share clientName/vendorNumber)
+      const firstSlip = resolvedSlips[0].slip;
+      const firstClientId = resolvedSlips[0].payload.clientId;
 
-      if (dnLink?.deliveryNoteFolderUrl) {
-        const dateStr = now.slice(0, 10).replace(/-/g, '');
-        const resolved = await resolveSharedItem(dnLink.deliveryNoteFolderUrl);
-        const folder = await createFolder(resolved.driveId, resolved.folderId, dateStr);
-        const pdfFileName = `${slip.siteName} ${slip.siteCode} - DN-${slipId}.pdf`;
-        const uploaded = await uploadNewFile(resolved.driveId, folder.id, pdfFileName, pdfBuffer, 'application/pdf');
-
-        // Save delivery note SP URL on slip
-        await updateSlipInRun(clientId, loadId, slipId, {
-          deliveryNoteSpWebUrl: uploaded.webUrl,
-          deliveryNoteGeneratedAt: new Date().toISOString(),
-        });
-      } else {
-        console.warn('[release] No SP link with deliveryNoteFolderUrl for client', clientId, '— delivery note not uploaded');
-        // Still save the generation timestamp (PDF was generated, just not uploaded)
-        await updateSlipInRun(clientId, loadId, slipId, {
-          deliveryNoteGeneratedAt: new Date().toISOString(),
-        });
-      }
-      // ── Email delivery note PDF to the release rep (non-blocking) ──
-      try {
-        const repEmail = repUser?.email;
-        if (repEmail) {
-          const pdfFileName = `Delivery Note - ${slipId}.pdf`;
-          await sendDeliveryNoteEmail({
-            to: [repEmail],
-            subject: `Delivery Note — ${slipId} — ${slip.siteName} (${slip.siteCode})`,
-            pickSlipId: slipId,
+      if (isMulti) {
+        // Multi-slip delivery note
+        pdfBuffer = await generateMultiSlipDeliveryNotePdf({
+          clientName: firstSlip.clientName,
+          vendorNumber: firstSlip.vendorNumber,
+          releaseRepName,
+          releasedAt: now,
+          qrUrl,
+          slips: resolvedSlips.map(({ payload, slip }) => ({
+            pickSlipId: slip.id,
             siteName: slip.siteName,
             siteCode: slip.siteCode,
             warehouse: slip.warehouse,
+            storeRefs: slip.receiptStoreRefs ?? [],
+            receiptGrnDate: slip.receiptGrnDate,
+            manual: slip.manual,
+            rows: (slip.rows ?? []).map(r => ({
+              articleCode: r.articleCode,
+              description: r.description,
+              qty: r.qty,
+              val: r.val,
+            })),
+            stickerBarcodes: (payload.releaseBoxes ?? []).map(b => b.stickerBarcode),
+          })),
+        });
+
+        // Multi-slip filename: {clientName} - {YYYY-MM-DD} ({last3OfSlip1}, {last3OfSlip2}).pdf
+        const dateStr = now.slice(0, 10);
+        const last3s = resolvedSlips.map(({ slip }) => slip.id.slice(-3)).join(', ');
+        pdfFileName = `${firstSlip.clientName} - ${dateStr} (${last3s}).pdf`;
+      } else {
+        // Single-slip delivery note (unchanged)
+        const slip = firstSlip;
+        const boxes = resolvedSlips[0].payload.releaseBoxes ?? [];
+        pdfBuffer = await generateDeliveryNotePdf({
+          pickSlipId: slip.id,
+          clientName: slip.clientName,
+          vendorNumber: slip.vendorNumber,
+          siteName: slip.siteName,
+          siteCode: slip.siteCode,
+          warehouse: slip.warehouse,
+          releaseRepName,
+          releasedAt: now,
+          storeRefs: slip.receiptStoreRefs ?? [],
+          manual: slip.manual,
+          rows: (slip.rows ?? []).map(r => ({
+            articleCode: r.articleCode,
+            description: r.description,
+            qty: r.qty,
+            val: r.val,
+          })),
+          boxCount: boxes.length,
+          stickerBarcodes: boxes.map(b => b.stickerBarcode),
+          qrUrl,
+        });
+        pdfFileName = `${slip.siteName} ${slip.siteCode} - DN-${slip.id}.pdf`;
+      }
+
+      // Upload to SP
+      const spLinks = await listSpLinks(firstClientId);
+      const dnLink = spLinks.find(l => l.deliveryNoteFolderUrl);
+      let uploadedWebUrl: string | undefined;
+
+      if (dnLink?.deliveryNoteFolderUrl) {
+        const dateFolder = now.slice(0, 10).replace(/-/g, '');
+        const resolved = await resolveSharedItem(dnLink.deliveryNoteFolderUrl);
+        const folder = await createFolder(resolved.driveId, resolved.folderId, dateFolder);
+        const uploaded = await uploadNewFile(resolved.driveId, folder.id, pdfFileName, pdfBuffer, 'application/pdf');
+        uploadedWebUrl = uploaded.webUrl;
+      } else {
+        console.warn('[release] No SP link with deliveryNoteFolderUrl for client', firstClientId, '— delivery note not uploaded');
+      }
+
+      // Save delivery note URL on ALL slips (shared DN)
+      for (const { payload } of resolvedSlips) {
+        await updateSlipInRun(payload.clientId, payload.loadId, payload.slipId, {
+          deliveryNoteSpWebUrl: uploadedWebUrl,
+          deliveryNoteGeneratedAt: new Date().toISOString(),
+        });
+      }
+
+      // Email delivery note to the release rep
+      try {
+        const repEmail = repUser?.email;
+        if (repEmail) {
+          const subject = isMulti
+            ? `Delivery Note — ${resolvedSlips.length} slips — ${firstSlip.clientName}`
+            : `Delivery Note — ${firstSlip.id} — ${firstSlip.siteName} (${firstSlip.siteCode})`;
+          const totalBoxes = resolvedSlips.reduce((s, { payload }) => s + (payload.releaseBoxes ?? []).length, 0);
+          const totalQty = resolvedSlips.reduce((s, { slip }) => s + slip.totalQty, 0);
+          await sendDeliveryNoteEmail({
+            to: [repEmail],
+            subject,
+            pickSlipId: isMulti ? resolvedSlips.map(({ slip }) => slip.id).join(', ') : firstSlip.id,
+            siteName: isMulti ? `${resolvedSlips.length} stores` : firstSlip.siteName,
+            siteCode: isMulti ? '' : firstSlip.siteCode,
+            warehouse: firstSlip.warehouse,
             releaseRepName,
             releasedAt: now,
-            boxCount: (releaseBoxes ?? []).length,
-            totalQty: slip.totalQty,
+            boxCount: totalBoxes,
+            totalQty,
             qrUrl,
             attachments: [{ filename: pdfFileName, content: pdfBuffer }],
           });
@@ -215,34 +282,37 @@ export async function POST(req: NextRequest) {
         console.error('[release] Failed to email delivery note to rep:', emailErr instanceof Error ? emailErr.message : emailErr);
       }
     } catch (err) {
-      // Delivery note generation is non-blocking — log warning but don't fail the release
       console.error('[release] Delivery note generation/upload failed:', err instanceof Error ? err.message : err);
     }
 
     return NextResponse.json(
-      { ok: true, status: finalStatus, slip: updated },
+      { ok: true, status: finalStatus, slip: updatedSlips[0] ?? null, slips: updatedSlips },
       { headers: { 'Cache-Control': 'no-store' } },
     );
   } else {
-    // Mismatch — set to failed-release
-    const updated = await updateSlipInRun(clientId, loadId, slipId, {
-      status: 'failed-release',
-      releaseRepId,
-      releaseRepName,
-      releaseBoxes: releaseBoxes ?? [],
-    });
+    // Mismatch — set ALL slips to failed-release
+    const updatedSlips: PickSlipRecord[] = [];
+    for (const { payload } of resolvedSlips) {
+      const updated = await updateSlipInRun(payload.clientId, payload.loadId, payload.slipId, {
+        status: 'failed-release',
+        releaseRepId,
+        releaseRepName,
+        releaseBoxes: payload.releaseBoxes ?? [],
+      });
+      if (updated) updatedSlips.push(updated);
 
-    await logAudit({
-      action: 'failed_release',
-      userId: guard.userId,
-      userName,
-      slipId,
-      clientId,
-      detail: `Release code mismatch for rep ${releaseRepName} (${releaseRepId})`,
-    });
+      await logAudit({
+        action: 'failed_release',
+        userId: guard.userId,
+        userName,
+        slipId: payload.slipId,
+        clientId: payload.clientId,
+        detail: `Release code mismatch for rep ${releaseRepName} (${releaseRepId})`,
+      });
+    }
 
     return NextResponse.json(
-      { ok: false, status: 'failed-release', error: 'Release code does not match', slip: updated },
+      { ok: false, status: 'failed-release', error: 'Release code does not match', slip: updatedSlips[0] ?? null, slips: updatedSlips },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );
   }

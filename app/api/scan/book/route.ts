@@ -61,7 +61,9 @@ export async function POST(req: NextRequest) {
   if (!securityCode) {
     return NextResponse.json({ error: 'securityCode is required' }, { status: 400 });
   }
-  if (!boxes || boxes.length === 0) {
+  const nothingToReturn = body.nothingToReturn === true;
+
+  if (!nothingToReturn && (!boxes || boxes.length === 0)) {
     return NextResponse.json({ error: 'At least one box is required' }, { status: 400 });
   }
 
@@ -105,10 +107,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Security code does not match' }, { status: 403 });
   }
 
-  // Link stickers to ALL pick slips (multi-link)
+  // Link stickers to ALL pick slips (multi-link) — skip when nothing to return
   const allSlipIds = slips.map(s => s.slipId);
   const linkErrors: string[] = [];
-  for (const box of boxes) {
+  const effectiveBoxes = nothingToReturn ? [] : (boxes ?? []);
+  for (const box of effectiveBoxes) {
     for (const slipId of allSlipIds) {
       const result = await findAndLinkSticker(box.stickerBarcode, slipId);
       if (!result) {
@@ -138,8 +141,8 @@ export async function POST(req: NextRequest) {
       bookedByName: bookingUserName,
       bookedRepId: repId,
       bookedRepName: repName,
-      receiptBoxes: boxes,
-      receiptTotalBoxes: boxes.length,
+      receiptBoxes: effectiveBoxes,
+      receiptTotalBoxes: effectiveBoxes.length,
     });
 
     if (!updated) {
@@ -155,9 +158,11 @@ export async function POST(req: NextRequest) {
       userName: bookingUserName,
       slipId: ref.slipId,
       clientId: ref.clientId,
-      detail: isMulti
-        ? `Multi-slip booking — ${boxes.length} box${boxes.length !== 1 ? 'es' : ''} scanned for ${ref.slipId} (booked with: ${slipIdsList}). Rep: ${repName}`
-        : `Stock booked — ${boxes.length} box${boxes.length !== 1 ? 'es' : ''} scanned for ${ref.slipId}. Rep: ${repName}`,
+      detail: nothingToReturn
+        ? `Stock booked (nothing to return) for ${ref.slipId}. Rep: ${repName}`
+        : isMulti
+        ? `Multi-slip booking — ${effectiveBoxes.length} box${effectiveBoxes.length !== 1 ? 'es' : ''} scanned for ${ref.slipId} (booked with: ${slipIdsList}). Rep: ${repName}`
+        : `Stock booked — ${effectiveBoxes.length} box${effectiveBoxes.length !== 1 ? 'es' : ''} scanned for ${ref.slipId}. Rep: ${repName}`,
     });
   }
 

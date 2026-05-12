@@ -119,7 +119,14 @@ export default function PickingSlipsPage() {
   const [clientFilter, setClientFilter] = useState<Set<string>>(new Set());
   const [storeQuery, setStoreQuery] = useState('');
   const [refQuery, setRefQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(() => {
+    // Default: all statuses EXCEPT 'delivered'
+    const all = new Set(Object.keys(STATUS_LABELS));
+    all.delete('delivered');
+    return all;
+  });
+  const [statusDropOpen, setStatusDropOpen] = useState(false);
+  const statusDropRef = useRef<HTMLDivElement>(null);
   const [vendorFilter, setVendorFilter] = useState('');
   const [channelFilter, setChannelFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState<'' | 'manual' | 'loaded'>('');
@@ -250,7 +257,7 @@ export default function PickingSlipsPage() {
         if (!hay.includes(sq)) return false;
       }
       if (rq && !s.id.toLowerCase().includes(rq)) return false;
-      if (statusFilter && s.status !== statusFilter) return false;
+      if (statusFilter.size > 0 && !statusFilter.has(s.status)) return false;
       if (typeFilter === 'manual' && !s.manual) return false;
       if (typeFilter === 'loaded' && s.manual) return false;
       return true;
@@ -300,6 +307,17 @@ export default function PickingSlipsPage() {
     if (vendorDropOpen) document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [vendorDropOpen]);
+
+  // Close status dropdown on click outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (statusDropRef.current && !statusDropRef.current.contains(e.target as Node)) {
+        setStatusDropOpen(false);
+      }
+    }
+    if (statusDropOpen) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [statusDropOpen]);
 
   const allSelected = sorted.length > 0 && selected.size === sorted.length;
 
@@ -603,18 +621,63 @@ export default function PickingSlipsPage() {
             ))}
           </select>
         </div>
-        <div>
+        <div className="relative" ref={statusDropRef}>
           <label className="block text-xs text-gray-600 mb-1">Status</label>
-          <select
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
-            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+          <button
+            type="button"
+            onClick={() => setStatusDropOpen(o => !o)}
+            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm text-left bg-white flex items-center justify-between"
           >
-            <option value="">All statuses</option>
-            {Object.keys(STATUS_LABELS).map(k => (
-              <option key={k} value={k}>{STATUS_LABELS[k]}</option>
-            ))}
-          </select>
+            <span className={statusFilter.size > 0 && statusFilter.size < Object.keys(STATUS_LABELS).length ? 'text-gray-900' : 'text-gray-500'}>
+              {statusFilter.size === 0 || statusFilter.size === Object.keys(STATUS_LABELS).length
+                ? 'All statuses'
+                : `${statusFilter.size} selected`}
+            </span>
+            <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {statusDropOpen && (
+            <div className="absolute z-30 mt-1 w-56 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto">
+              <div className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter(new Set(Object.keys(STATUS_LABELS)))}
+                  className="text-xs text-[var(--color-primary)] hover:underline font-medium"
+                >
+                  All
+                </button>
+                <span className="text-gray-300">|</span>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter(new Set())}
+                  className="text-xs text-gray-500 hover:underline font-medium"
+                >
+                  None
+                </button>
+              </div>
+              {Object.keys(STATUS_LABELS).map(k => (
+                <label key={k} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={statusFilter.has(k)}
+                    onChange={() => {
+                      setStatusFilter(prev => {
+                        const next = new Set(prev);
+                        if (next.has(k)) next.delete(k);
+                        else next.add(k);
+                        return next;
+                      });
+                    }}
+                    className="rounded border-gray-300"
+                  />
+                  <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium ${STATUS_COLORS[k] ?? ''}`}>
+                    {STATUS_LABELS[k]}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
         </div>
         <div>
           <label className="block text-xs text-gray-600 mb-1">Type</label>

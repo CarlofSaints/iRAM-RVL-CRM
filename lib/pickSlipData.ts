@@ -418,6 +418,43 @@ export async function findSlipByDeliveryToken(
 }
 
 /**
+ * Find ALL pick slips sharing a delivery token. Iterates all runs for all clients.
+ * Used for multi-slip delivery notes where one token covers multiple slips.
+ */
+export async function findAllSlipsByDeliveryToken(
+  token: string,
+  clientIds: string[],
+  listLoadsFn: (clientId: string) => Promise<Array<{ id: string }>>
+): Promise<Array<{ slip: PickSlipRecord; clientId: string; loadId: string }>> {
+  const results: Array<{ slip: PickSlipRecord; clientId: string; loadId: string }> = [];
+  for (const clientId of clientIds) {
+    // Load-based runs
+    const loads = await listLoadsFn(clientId);
+    for (const load of loads) {
+      const run = await getPickSlipRun(clientId, load.id);
+      if (!run) continue;
+      for (const slip of run.slips) {
+        if (slip.deliveryToken === token) {
+          results.push({ slip, clientId, loadId: load.id });
+        }
+      }
+    }
+    // Manual runs
+    const manualIds = await getManualIndex(clientId);
+    for (const manualLoadId of manualIds) {
+      const run = await getPickSlipRun(clientId, manualLoadId);
+      if (!run) continue;
+      for (const slip of run.slips) {
+        if (slip.deliveryToken === token) {
+          results.push({ slip, clientId, loadId: manualLoadId });
+        }
+      }
+    }
+  }
+  return results;
+}
+
+/**
  * Delete a single pick slip run blob for a given client + loadId.
  */
 export async function clearPickSlipRun(clientId: string, loadId: string): Promise<void> {

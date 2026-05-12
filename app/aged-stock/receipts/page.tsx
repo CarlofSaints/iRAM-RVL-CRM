@@ -200,18 +200,35 @@ export default function ReceiptsListPage() {
                     <StatusBadge status={s.status} />
                   </td>
                   <td className="px-3 py-1.5 whitespace-nowrap">
-                    <button
-                      onClick={() => router.push(`/aged-stock/receipts/capture?slipId=${encodeURIComponent(s.id)}&clientId=${encodeURIComponent(s.clientId)}&loadId=${encodeURIComponent(s.loadId)}`)}
-                      className={`px-2.5 py-1 text-xs font-medium rounded border ${
-                        isCapture
-                          ? 'text-teal-600 border-teal-200 bg-teal-50 hover:bg-teal-100'
-                          : s.status === 'failed-release'
-                          ? 'text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100'
-                          : 'text-purple-600 border-purple-200 bg-purple-50 hover:bg-purple-100'
-                      }`}
-                    >
-                      {isCapture ? 'Capture' : s.status === 'failed-release' ? 'Retry Release' : 'Release'}
-                    </button>
+                    <div className="flex gap-1.5">
+                      {isCapture ? (
+                        <button
+                          onClick={() => router.push(`/aged-stock/receipts/capture?slipId=${encodeURIComponent(s.id)}&clientId=${encodeURIComponent(s.clientId)}&loadId=${encodeURIComponent(s.loadId)}`)}
+                          className="px-2.5 py-1 text-xs font-medium rounded border text-teal-600 border-teal-200 bg-teal-50 hover:bg-teal-100"
+                        >
+                          Capture
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => router.push('/aged-stock/release')}
+                            className={`px-2.5 py-1 text-xs font-medium rounded border ${
+                              s.status === 'failed-release'
+                                ? 'text-amber-700 border-amber-300 bg-amber-50 hover:bg-amber-100'
+                                : 'text-purple-600 border-purple-200 bg-purple-50 hover:bg-purple-100'
+                            }`}
+                          >
+                            {s.status === 'failed-release' ? 'Retry Release' : 'Release'}
+                          </button>
+                          <button
+                            onClick={() => router.push(`/aged-stock/receipts/capture?slipId=${encodeURIComponent(s.id)}&clientId=${encodeURIComponent(s.clientId)}&loadId=${encodeURIComponent(s.loadId)}&edit=1`)}
+                            className="px-2.5 py-1 text-xs font-medium rounded border text-gray-600 border-gray-200 bg-gray-50 hover:bg-gray-100"
+                          >
+                            Edit
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
