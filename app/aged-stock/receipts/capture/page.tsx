@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
@@ -28,6 +28,7 @@ interface SlipDto {
   receiptStoreRef3?: string;
   receiptStoreRef4?: string;
   receiptStoreRefs?: string[];
+  receiptGrnDate?: string;
   receiptBoxes?: ReceiptBox[];
   receiptedAt?: string;
   receiptedByName?: string;
@@ -38,7 +39,7 @@ interface SlipDto {
   releasedByName?: string;
   generatedAt?: string;
   bookedAt?: string;
-  rows?: Array<{ articleCode: string; description: string; qty: number; val: number }>;
+  rows?: Array<{ articleCode: string; description: string; qty: number; val: number; barcode?: string; vendorProductCode?: string }>;
   unreturnedStock?: UnreturnedRow[];
   unreturnedCapturedAt?: string;
   unreturnedSkipped?: boolean;
@@ -161,6 +162,7 @@ export default function ReceiptCapturePage() {
   const [upliftedById, setUpliftedById] = useState('');
   const [upliftedByName, setUpliftedByName] = useState('');
   const [storeRefs, setStoreRefs] = useState<string[]>(['']);
+  const [receiptGrnDate, setReceiptGrnDate] = useState('');
 
   // Box scanning (receipt)
   const [scanBarcode, setScanBarcode] = useState('');
@@ -193,8 +195,14 @@ export default function ReceiptCapturePage() {
 
   // ── Manual stock capture state (for manual pick slips) ──
   const [showManualCapture, setShowManualCapture] = useState(false);
-  const [manualRows, setManualRows] = useState<Array<{ articleCode: string; description: string; qty: number; val: number }>>([]);
+  const [manualRows, setManualRows] = useState<Array<{ articleCode: string; description: string; barcode: string; vendorProductCode: string; qty: number; val: number }>>([]);
   const [savingManual, setSavingManual] = useState(false);
+  // Product search for manual capture
+  const [vendorProducts, setVendorProducts] = useState<Array<{ articleNumber: string; description: string; barcode: string; vendorProductCode: string }>>([]);
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [productDropOpen, setProductDropOpen] = useState(false);
+  const [loadingProducts, setLoadingProducts] = useState(false);
+  const productDropRef = useRef<HTMLDivElement>(null);
 
   // ── Unreturned stock capture state ──
   const [showUnreturnedCapture, setShowUnreturnedCapture] = useState(false);
@@ -203,6 +211,11 @@ export default function ReceiptCapturePage() {
   const [showSkipModal, setShowSkipModal] = useState(false);
   const [skipRepId, setSkipRepId] = useState('');
   const [skipRepName, setSkipRepName] = useState('');
+
+  // ── CC confirmation modal for unreturned stock email ──
+  const [showCcModal, setShowCcModal] = useState(false);
+  const [ccSecondary, setCcSecondary] = useState(false);
+  const [storeRepEmailSecondary, setStoreRepEmailSecondary] = useState('');
 
   // ── GRN auto-suggest state ──
   const [grnAutoFilled, setGrnAutoFilled] = useState(false);
@@ -232,6 +245,7 @@ export default function ReceiptCapturePage() {
           setReceiptTotalBoxes(found.receiptTotalBoxes != null ? String(found.receiptTotalBoxes) : '');
           setUpliftedById(found.receiptUpliftedById ?? '');
           setUpliftedByName(found.receiptUpliftedByName ?? '');
+          setReceiptGrnDate(found.receiptGrnDate ?? '');
           // Hydrate store refs — prefer array field, fall back to legacy
           const arrayRefs = found.receiptStoreRefs ?? [];
           const legacyRefs = [found.receiptStoreRef1, found.receiptStoreRef2, found.receiptStoreRef3, found.receiptStoreRef4]
@@ -266,6 +280,61 @@ export default function ReceiptCapturePage() {
   }, [session, slipId]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Load store's iramRepEmailSecondary for CC modal
+  useEffect(() => {
+    if (!slip?.siteCode) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await authFetch('/api/control/stores', { cache: 'no-store' });
+        if (!res.ok || cancelled) return;
+        const stores = await res.json();
+        const match = (stores as Array<{ siteCode: string; iramRepEmailSecondary?: string }>)
+          .find(s => s.siteCode === slip.siteCode);
+        if (match?.iramRepEmailSecondary && !cancelled) {
+          setStoreRepEmailSecondary(match.iramRepEmailSecondary);
+        }
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slip?.siteCode]);
+
+  // Load products when manual capture is activated
+  useEffect(() => {
+    if (!showManualCapture || !slip?.clientId || vendorProducts.length > 0) return;
+    setLoadingProducts(true);
+    authFetch(`/api/clients/${slip.clientId}/products`, { cache: 'no-store' })
+      .then(res => res.json())
+      .then(data => setVendorProducts(data.products ?? []))
+      .catch(() => notify('Failed to load product list', 'error'))
+      .finally(() => setLoadingProducts(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showManualCapture, slip?.clientId]);
+
+  // Filtered products for manual capture search
+  const filteredProducts = useMemo(() => {
+    if (!productSearchQuery.trim() || productSearchQuery.trim().length < 2) return [];
+    const q = productSearchQuery.toLowerCase();
+    const addedCodes = new Set(manualRows.map(r => r.articleCode));
+    return vendorProducts
+      .filter(p => !addedCodes.has(p.articleNumber) && (
+        p.description.toLowerCase().includes(q) || p.articleNumber.toLowerCase().includes(q)
+      ))
+      .slice(0, 15);
+  }, [vendorProducts, productSearchQuery, manualRows]);
+
+  // Close product dropdown on click outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (productDropRef.current && !productDropRef.current.contains(e.target as Node)) {
+        setProductDropOpen(false);
+      }
+    }
+    if (productDropOpen) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [productDropOpen]);
 
   // ── GRN auto-suggest: check related slips for existing store refs ──
   useEffect(() => {
@@ -329,6 +398,7 @@ export default function ReceiptCapturePage() {
           storeRef3: storeRefs[2] ?? '',
           storeRef4: storeRefs[3] ?? '',
           storeRefs: storeRefs.filter(r => r.trim()),
+          grnDate: receiptGrnDate || undefined,
           boxes: currentBoxes ?? boxes,
         }),
       });
@@ -453,15 +523,9 @@ export default function ReceiptCapturePage() {
       const data = await res.json();
       if (res.ok) {
         if (slip.manual) {
-          // Manual slips need stock qty/val capture first
-          notify('Receipt completed — now enter the actual stock quantities and values');
-          const rows = (slip.rows ?? []).map(r => ({
-            articleCode: r.articleCode,
-            description: r.description,
-            qty: r.qty,
-            val: r.val,
-          }));
-          setManualRows(rows);
+          // Manual slips need stock qty/val capture — user searches and adds products
+          notify('Receipt completed — now search and add the products that were collected');
+          setManualRows([]);
           setShowManualCapture(true);
         } else {
           notify('Receipt completed — now capture unreturned stock details');
@@ -501,7 +565,7 @@ export default function ReceiptCapturePage() {
     return row.pickSlipQty - (row.display + row.storeRefused + row.notFound + row.damaged);
   }
 
-  async function handleSaveUnreturned() {
+  function handleSaveUnreturnedClick() {
     if (!slip) return;
     // Validate no negative collected
     for (const row of unreturnedRows) {
@@ -510,6 +574,13 @@ export default function ReceiptCapturePage() {
         return;
       }
     }
+    // Show CC confirmation modal
+    setShowCcModal(true);
+  }
+
+  async function doSaveUnreturned(sendEmail: boolean) {
+    if (!slip) return;
+    setShowCcModal(false);
     setSavingUnreturned(true);
     try {
       const res = await authFetch('/api/receipts/unreturned', {
@@ -520,11 +591,13 @@ export default function ReceiptCapturePage() {
           clientId: slip.clientId,
           loadId: slip.loadId,
           rows: unreturnedRows,
+          sendEmail,
+          ccSecondary: sendEmail ? ccSecondary : false,
         }),
       });
       const data = await res.json();
       if (res.ok) {
-        notify('Unreturned stock capture saved');
+        notify(sendEmail ? 'Unreturned stock capture saved — confirmation email sent' : 'Unreturned stock capture saved');
         router.push('/aged-stock/receipts');
       } else {
         notify(data.error || 'Save failed', 'error');
@@ -580,6 +653,23 @@ export default function ReceiptCapturePage() {
     } finally {
       setSavingManual(false);
     }
+  }
+
+  function addManualProduct(product: { articleNumber: string; description: string; barcode: string; vendorProductCode: string }) {
+    setManualRows(prev => [...prev, {
+      articleCode: product.articleNumber,
+      description: product.description,
+      barcode: product.barcode,
+      vendorProductCode: product.vendorProductCode,
+      qty: 0,
+      val: 0,
+    }]);
+    setProductSearchQuery('');
+    setProductDropOpen(false);
+  }
+
+  function removeManualRow(idx: number) {
+    setManualRows(prev => prev.filter((_, i) => i !== idx));
   }
 
   function updateManualRow(idx: number, field: 'qty' | 'val', value: number) {
@@ -912,17 +1002,13 @@ export default function ReceiptCapturePage() {
                 />
               </div>
               <div>
-                <label className="block text-xs text-gray-600 mb-1">Uplifted By</label>
-                <select
-                  value={upliftedById}
-                  onChange={e => onRepChange(e.target.value)}
+                <label className="block text-xs text-gray-600 mb-1">GRN/GRV Date</label>
+                <input
+                  type="date"
+                  value={receiptGrnDate}
+                  onChange={e => setReceiptGrnDate(e.target.value)}
                   className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm"
-                >
-                  <option value="">Select rep...</option>
-                  {reps.map(r => (
-                    <option key={r.id} value={r.id}>{r.name} {r.surname}</option>
-                  ))}
-                </select>
+                />
               </div>
               {storeRefs.map((ref, i) => (
                 <div key={i} className="flex items-end gap-1.5">
@@ -1088,65 +1174,122 @@ export default function ReceiptCapturePage() {
             <div>
               <p className="text-sm font-medium text-orange-800">Manual Stock Capture</p>
               <p className="text-xs text-orange-600 mt-0.5">
-                This is a manual pick slip. Enter the actual quantity and value for each product that was collected from the store.
+                Search for products by name or article code, add them to the list, then enter the quantity and value collected.
               </p>
             </div>
           </div>
 
           <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
-            <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Product Quantities &amp; Values</h2>
+            <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Add Products</h2>
 
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs font-semibold text-gray-600 uppercase tracking-wide border-b border-gray-200">
-                    <th className="pb-2 pr-3">Product</th>
-                    <th className="pb-2 pr-3">Article Code</th>
-                    <th className="pb-2 pr-3 text-center">Qty</th>
-                    <th className="pb-2 text-center">Value (R)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {manualRows.map((row, idx) => (
-                    <tr key={idx} className="border-t border-gray-100">
-                      <td className="py-2 pr-3 font-medium max-w-[250px] truncate" title={row.description}>{row.description}</td>
-                      <td className="py-2 pr-3 font-mono text-gray-600 text-xs">{row.articleCode}</td>
-                      <td className="py-2 pr-3">
-                        <input
-                          type="number"
-                          min={0}
-                          value={row.qty || ''}
-                          onChange={e => updateManualRow(idx, 'qty', parseInt(e.target.value) || 0)}
-                          className="w-20 mx-auto block px-1.5 py-1 border border-gray-300 rounded text-sm text-center"
-                        />
-                      </td>
-                      <td className="py-2">
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={row.val || ''}
-                          onChange={e => updateManualRow(idx, 'val', parseFloat(e.target.value) || 0)}
-                          className="w-24 mx-auto block px-1.5 py-1 border border-gray-300 rounded text-sm text-center"
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {loadingProducts ? (
+              <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
+                <div className="h-4 w-4 border-2 border-gray-300 border-t-[var(--color-primary)] rounded-full animate-spin" />
+                Loading product list...
+              </div>
+            ) : (
+              <>
+                {/* Product search */}
+                <div className="relative mb-4" ref={productDropRef}>
+                  <input
+                    type="text"
+                    placeholder="Search by product name or article code..."
+                    value={productSearchQuery}
+                    onChange={e => {
+                      setProductSearchQuery(e.target.value);
+                      setProductDropOpen(e.target.value.trim().length >= 2);
+                    }}
+                    onFocus={() => { if (productSearchQuery.trim().length >= 2) setProductDropOpen(true); }}
+                    className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-primary)] focus:border-[var(--color-primary)]"
+                  />
+                  {productDropOpen && filteredProducts.length > 0 && (
+                    <div className="absolute z-30 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
+                      {filteredProducts.map(p => (
+                        <button
+                          key={p.articleNumber}
+                          type="button"
+                          onClick={() => addManualProduct(p)}
+                          className="w-full text-left px-3 py-2 hover:bg-gray-50 border-b border-gray-50 last:border-0"
+                        >
+                          <div className="text-sm font-medium text-gray-900 truncate">{p.description}</div>
+                          <div className="text-xs text-gray-500">Article: {p.articleNumber}{p.barcode ? ` · Barcode: ${p.barcode}` : ''}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {productDropOpen && productSearchQuery.trim().length >= 2 && filteredProducts.length === 0 && (
+                    <div className="absolute z-30 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg p-3 text-sm text-gray-500">
+                      No matching products found
+                    </div>
+                  )}
+                </div>
 
-            <div className="mt-3 pt-3 border-t border-gray-100 text-sm text-gray-600">
-              Total: <strong>{manualRows.reduce((s, r) => s + r.qty, 0).toLocaleString()}</strong> units
-              &nbsp;·&nbsp;
-              <strong>R {manualRows.reduce((s, r) => s + r.val, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-            </div>
+                {/* Added products list */}
+                {manualRows.length > 0 ? (
+                  <>
+                    <div className="space-y-2">
+                      {manualRows.map((row, idx) => (
+                        <div key={idx} className="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2.5">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium text-gray-900 truncate">{row.description}</div>
+                            <div className="text-xs text-gray-500">{row.articleCode}</div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div>
+                              <label className="text-[10px] text-gray-500 block text-center">Qty</label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={row.qty || ''}
+                                onChange={e => updateManualRow(idx, 'qty', parseInt(e.target.value) || 0)}
+                                className="w-16 px-1.5 py-1 border border-gray-300 rounded text-sm text-center"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-gray-500 block text-center">Value (R)</label>
+                              <input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={row.val || ''}
+                                onChange={e => updateManualRow(idx, 'val', parseFloat(e.target.value) || 0)}
+                                className="w-24 px-1.5 py-1 border border-gray-300 rounded text-sm text-center"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeManualRow(idx)}
+                              className="mt-3 p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                              title="Remove product"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-3 pt-3 border-t border-gray-100 text-sm text-gray-600">
+                      Total: <strong>{manualRows.reduce((s, r) => s + r.qty, 0).toLocaleString()}</strong> units
+                      &nbsp;·&nbsp;
+                      <strong>R {manualRows.reduce((s, r) => s + r.val, 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center py-6 text-sm text-gray-400">
+                    No products added yet. Use the search above to find and add products.
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           <div className="flex gap-3">
             <button
               onClick={handleSaveManualCapture}
-              disabled={savingManual || manualRows.every(r => r.qty === 0)}
+              disabled={savingManual || manualRows.length === 0 || manualRows.every(r => r.qty === 0)}
               className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {savingManual && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
@@ -1239,7 +1382,7 @@ export default function ReceiptCapturePage() {
           {/* Unreturned action buttons */}
           <div className="flex gap-3">
             <button
-              onClick={handleSaveUnreturned}
+              onClick={handleSaveUnreturnedClick}
               disabled={savingUnreturned || unreturnedRows.some(r => collectedQty(r) < 0)}
               className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
@@ -1424,8 +1567,8 @@ export default function ReceiptCapturePage() {
                 <span className="font-medium">{slip.receiptTotalBoxes ?? '—'}</span>
               </div>
               <div>
-                <span className="text-gray-500 text-xs block">Uplifted By</span>
-                <span className="font-medium">{slip.receiptUpliftedByName || '—'}</span>
+                <span className="text-gray-500 text-xs block">GRN/GRV Date</span>
+                <span className="font-medium">{slip.receiptGrnDate ? fmtDate(slip.receiptGrnDate) : '—'}</span>
               </div>
               <div>
                 <span className="text-gray-500 text-xs block">Receipted At</span>
@@ -1671,6 +1814,54 @@ export default function ReceiptCapturePage() {
               <button
                 onClick={() => setShowSkipModal(false)}
                 className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CC Confirmation Modal for Unreturned Stock Email ──────────── */}
+      {showCcModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Send Confirmation Email?</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              A confirmation email with the collection details will be sent to the store manager, collecting rep, RVL managers, and CAM.
+            </p>
+            {storeRepEmailSecondary && (
+              <label className="flex items-center gap-2 mb-4 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={ccSecondary}
+                  onChange={e => setCcSecondary(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
+                />
+                <span className="text-sm text-gray-700">
+                  CC Secondary Rep Email (<span className="font-mono text-xs">{storeRepEmailSecondary}</span>)
+                </span>
+              </label>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={() => doSaveUnreturned(true)}
+                disabled={savingUnreturned}
+                className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
+              >
+                {savingUnreturned && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Confirm &amp; Send
+              </button>
+              <button
+                onClick={() => doSaveUnreturned(false)}
+                disabled={savingUnreturned}
+                className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Save Without Email
+              </button>
+              <button
+                onClick={() => setShowCcModal(false)}
+                className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700"
               >
                 Cancel
               </button>

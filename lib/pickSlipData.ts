@@ -114,6 +114,8 @@ export interface PickSlipRecord {
   bookedRepName?: string;
   /** Store references — replaces legacy receiptStoreRef1-4 */
   receiptStoreRefs?: string[];
+  /** GRN/GRV date entered during receipt capture */
+  receiptGrnDate?: string;
   /** Release fields — populated during warehouse stock release */
   releaseRepId?: string;
   releaseRepName?: string;

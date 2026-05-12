@@ -27,6 +27,8 @@ interface DashboardRow {
   qty: number;
   val: number;
   date: string;
+  bookedAt?: string;
+  receiptVal?: number;
   category: 'aged' | 'warehouse' | 'transit' | 'delivered' | 'display' | 'store-refused' | 'not-found' | 'damaged' | 'collected';
   manual?: boolean;
 }
@@ -34,6 +36,7 @@ interface DashboardRow {
 interface DashboardStats {
   controlCounts: {
     clients: number;
+    distinctClients: number;
     stores: number;
     products: number;
     reps: number;
@@ -328,12 +331,15 @@ interface GridRow {
   vendorNumber: string;
   agedQty: number;
   agedVal: number;
+  lossQty: number;
+  lossVal: number;
   warehouseQty: Record<string, number>;
   warehouseVal: Record<string, number>;
   transitQty: number;
   transitVal: number;
   deliveredQty: number;
   deliveredVal: number;
+  grnVal: number;
 }
 
 // ── Main component ──────────────────────────────────────────────────────────
@@ -346,6 +352,7 @@ export default function DashboardPage() {
   const [clientName, setClientName] = useState<string | null>(null);
 
   // Multi-select filters (empty Set = all / no filter)
+  const [clientNameFilter, setClientNameFilter] = useState<Set<string>>(new Set());
   const [clientFilter, setClientFilter] = useState<Set<string>>(new Set());
   const [repFilter, setRepFilter] = useState<Set<string>>(new Set());
   const [storeFilter, setStoreFilter] = useState<Set<string>>(new Set());
@@ -363,6 +370,9 @@ export default function DashboardPage() {
   // Cross-filter selections
   const [selectedWarehouse, setSelectedWarehouse] = useState<string | null>(null);
   const [selectedClient, setSelectedClient] = useState<string | null>(null);
+
+  // Warehouse drilldown
+  const [drilldownWarehouse, setDrilldownWarehouse] = useState<string | null>(null);
 
   // Grid sorting
   const [sortCol, setSortCol] = useState<string>('clientName');
@@ -443,6 +453,7 @@ export default function DashboardPage() {
   const warehouses = stats?.warehouses ?? [];
 
   const filterOptions = useMemo(() => {
+    const clientNames = new Set<string>();
     const clients = new Set<string>();
     const reps = new Set<string>();
     const storeNames = new Set<string>();
@@ -451,6 +462,7 @@ export default function DashboardPage() {
     const products = new Set<string>();
 
     for (const r of allRows) {
+      clientNames.add(r.clientName);
       clients.add(`${r.clientName}${r.vendorNumber ? ` - ${r.vendorNumber}` : ''}`);
       if (r.repName) reps.add(r.repName);
       if (r.storeName) storeNames.add(r.storeName);
@@ -460,6 +472,7 @@ export default function DashboardPage() {
     }
 
     return {
+      clientNames: [...clientNames].sort(),
       clients: [...clients].sort(),
       reps: [...reps].sort(),
       stores: [...storeNames].sort(),
@@ -495,9 +508,14 @@ export default function DashboardPage() {
     return clientFilter.has(lbl);
   }
 
-  // 1. baseFiltered = rows filtered by 6 multi-select filters + date range
+  // 1. baseFiltered = rows filtered by multi-select filters + date range
   const baseFiltered = useMemo(() => {
     return allRows.filter(r => {
+      // Client name filter (distinct client names)
+      if (clientNameFilter.size > 0) {
+        if (clientNameFilter.has('__none__')) return false;
+        if (!clientNameFilter.has(r.clientName)) return false;
+      }
       if (!matchesClientFilter(r)) return false;
       if (!matchesSet(r.repName || '', repFilter) && repFilter.size > 0 && !r.repName) return false;
       if (repFilter.size > 0 && !repFilter.has('__none__') && r.repName && !repFilter.has(r.repName)) return false;
@@ -526,7 +544,7 @@ export default function DashboardPage() {
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allRows, clientFilter, repFilter, storeFilter, pickSlipFilter, warehouseFilter, productFilter, dateFrom, dateTo, typeFilter]);
+  }, [allRows, clientNameFilter, clientFilter, repFilter, storeFilter, pickSlipFilter, warehouseFilter, productFilter, dateFrom, dateTo, typeFilter]);
 
   // 2. cardTotals = baseFiltered filtered by BOTH cross-selects
   const cardTotals = useMemo(() => {
@@ -546,13 +564,24 @@ export default function DashboardPage() {
     const warehouse = { qty: 0, val: 0 };
     const transit = { qty: 0, val: 0 };
     const delivered = { qty: 0, val: 0 };
+    const losses = { qty: 0, val: 0 };
+    let grnVal = 0;
+    const grnSeen = new Set<string>();
     for (const r of subset) {
       if (r.category === 'aged') { aged.qty += r.qty; aged.val += r.val; }
       else if (r.category === 'warehouse') { warehouse.qty += r.qty; warehouse.val += r.val; }
       else if (r.category === 'transit') { transit.qty += r.qty; transit.val += r.val; }
       else if (r.category === 'delivered') { delivered.qty += r.qty; delivered.val += r.val; }
+      else if (r.category === 'display' || r.category === 'store-refused' || r.category === 'not-found' || r.category === 'damaged') {
+        losses.qty += r.qty; losses.val += r.val;
+      }
+      // GRN/GRV value — deduplicate by pick slip
+      if (r.receiptVal && r.pickSlipRef && !grnSeen.has(r.pickSlipRef)) {
+        grnSeen.add(r.pickSlipRef);
+        grnVal += r.receiptVal;
+      }
     }
-    return { aged, warehouse, transit, delivered };
+    return { aged, warehouse, transit, delivered, losses, grnVal };
   }, [baseFiltered, selectedWarehouse, selectedClient]);
 
   // 3. chartData = baseFiltered filtered by selectedClient, aggregated by warehouse
@@ -615,6 +644,7 @@ export default function DashboardPage() {
       );
     }
     const map = new Map<string, GridRow>();
+    const grnSeen = new Set<string>();
     for (const r of subset) {
       const groupKey = `${r.clientId}|${r.vendorNumber}`;
       if (!map.has(groupKey)) {
@@ -623,9 +653,11 @@ export default function DashboardPage() {
           clientName: r.clientName,
           vendorNumber: r.vendorNumber,
           agedQty: 0, agedVal: 0,
+          lossQty: 0, lossVal: 0,
           warehouseQty: {}, warehouseVal: {},
           transitQty: 0, transitVal: 0,
           deliveredQty: 0, deliveredVal: 0,
+          grnVal: 0,
         });
       }
       const g = map.get(groupKey)!;
@@ -641,6 +673,17 @@ export default function DashboardPage() {
       } else if (r.category === 'delivered') {
         g.deliveredQty += r.qty;
         g.deliveredVal += r.val;
+      } else if (r.category === 'display' || r.category === 'store-refused' || r.category === 'not-found' || r.category === 'damaged') {
+        g.lossQty += r.qty;
+        g.lossVal += r.val;
+      }
+      // GRN/GRV value — deduplicate by pick slip per group
+      if (r.receiptVal && r.pickSlipRef) {
+        const grnKey = `${groupKey}|${r.pickSlipRef}`;
+        if (!grnSeen.has(grnKey)) {
+          grnSeen.add(grnKey);
+          g.grnVal += r.receiptVal;
+        }
       }
     }
     return [...map.values()];
@@ -656,10 +699,13 @@ export default function DashboardPage() {
       else if (sortCol === 'vendorNumber') { va = a.vendorNumber.toLowerCase(); vb = b.vendorNumber.toLowerCase(); }
       else if (sortCol === 'agedQty') { va = a.agedQty; vb = b.agedQty; }
       else if (sortCol === 'agedVal') { va = a.agedVal; vb = b.agedVal; }
+      else if (sortCol === 'actualQty') { va = a.agedQty - a.lossQty; vb = b.agedQty - b.lossQty; }
+      else if (sortCol === 'actualVal') { va = a.agedVal - a.lossVal; vb = b.agedVal - b.lossVal; }
       else if (sortCol === 'transitQty') { va = a.transitQty; vb = b.transitQty; }
       else if (sortCol === 'transitVal') { va = a.transitVal; vb = b.transitVal; }
       else if (sortCol === 'deliveredQty') { va = a.deliveredQty; vb = b.deliveredQty; }
       else if (sortCol === 'deliveredVal') { va = a.deliveredVal; vb = b.deliveredVal; }
+      else if (sortCol === 'grnVal') { va = a.grnVal; vb = b.grnVal; }
       else if (sortCol.startsWith('wh-qty-')) {
         const k = sortCol.replace('wh-qty-', '');
         va = a.warehouseQty[k] ?? 0; vb = b.warehouseQty[k] ?? 0;
@@ -676,14 +722,17 @@ export default function DashboardPage() {
 
   // Grid totals
   const gridTotals = useMemo(() => {
-    const t = { agedQty: 0, agedVal: 0, transitQty: 0, transitVal: 0, deliveredQty: 0, deliveredVal: 0, warehouseQty: {} as Record<string, number>, warehouseVal: {} as Record<string, number> };
+    const t = { agedQty: 0, agedVal: 0, lossQty: 0, lossVal: 0, transitQty: 0, transitVal: 0, deliveredQty: 0, deliveredVal: 0, grnVal: 0, warehouseQty: {} as Record<string, number>, warehouseVal: {} as Record<string, number> };
     for (const g of gridRows) {
       t.agedQty += g.agedQty;
       t.agedVal += g.agedVal;
+      t.lossQty += g.lossQty;
+      t.lossVal += g.lossVal;
       t.transitQty += g.transitQty;
       t.transitVal += g.transitVal;
       t.deliveredQty += g.deliveredQty;
       t.deliveredVal += g.deliveredVal;
+      t.grnVal += g.grnVal;
       for (const [k, v] of Object.entries(g.warehouseQty)) {
         t.warehouseQty[k] = (t.warehouseQty[k] ?? 0) + v;
       }
@@ -869,12 +918,111 @@ export default function DashboardPage() {
     ...urCols.slice(1),
   ];
 
+  // ── Warehouse Summary Grid data ────────────────────────────────────────
+
+  const warehouseSummaryRows = useMemo(() => {
+    let subset = baseFiltered;
+    if (selectedClient) subset = subset.filter(r => r.clientId === selectedClient);
+    const whRows = subset.filter(r => r.category === 'warehouse' && r.warehouse);
+
+    // Group by warehouse
+    const map = new Map<string, { qty: number; val: number; stores: Set<string>; slips: Map<string, string | undefined> }>();
+    for (const r of whRows) {
+      if (!map.has(r.warehouse)) {
+        map.set(r.warehouse, { qty: 0, val: 0, stores: new Set(), slips: new Map() });
+      }
+      const g = map.get(r.warehouse)!;
+      g.qty += r.qty;
+      g.val += r.val;
+      if (r.storeCode) g.stores.add(r.storeCode);
+      if (r.pickSlipRef && !g.slips.has(r.pickSlipRef)) {
+        g.slips.set(r.pickSlipRef, r.bookedAt);
+      }
+    }
+
+    const now = Date.now();
+    return [...map.entries()].map(([wh, g]) => {
+      // Average days: across distinct pick slips with a bookedAt
+      let totalDays = 0;
+      let countWithDate = 0;
+      for (const bookedAt of g.slips.values()) {
+        if (bookedAt) {
+          totalDays += Math.floor((now - new Date(bookedAt).getTime()) / 86_400_000);
+          countWithDate++;
+        }
+      }
+      const avgDays = countWithDate > 0 ? Math.round(totalDays / countWithDate * 10) / 10 : null;
+      return {
+        warehouse: wh,
+        qty: g.qty,
+        val: g.val,
+        storeCount: g.stores.size,
+        slipCount: g.slips.size,
+        avgDays: avgDays ?? 0,
+        _hasAvgDays: avgDays !== null,
+      };
+    });
+  }, [baseFiltered, selectedClient]);
+
+  const warehouseSummaryCols: SummaryCol[] = [
+    { key: 'warehouse', label: 'Warehouse', align: 'left' },
+    { key: 'qty', label: 'Qty', align: 'right', format: 'number' },
+    { key: 'val', label: 'Value', align: 'right', format: 'rand' },
+    { key: 'storeCount', label: 'Stores', align: 'right', format: 'number' },
+    { key: 'slipCount', label: 'Pick Slips', align: 'right', format: 'number' },
+    { key: 'avgDays', label: 'Avg Days', align: 'right', format: 'number' },
+  ];
+
+  // Warehouse drilldown: store-level detail for the selected warehouse
+  const warehouseDrillRows = useMemo(() => {
+    if (!drilldownWarehouse) return [];
+    let subset = baseFiltered;
+    if (selectedClient) subset = subset.filter(r => r.clientId === selectedClient);
+    const whRows = subset.filter(r => r.category === 'warehouse' && r.warehouse === drilldownWarehouse);
+
+    // Group by storeCode|pickSlipRef
+    const map = new Map<string, { storeName: string; storeCode: string; pickSlipRef: string; qty: number; val: number; bookedAt?: string }>();
+    for (const r of whRows) {
+      const key = `${r.storeCode}|${r.pickSlipRef}`;
+      if (!map.has(key)) {
+        map.set(key, { storeName: r.storeName, storeCode: r.storeCode, pickSlipRef: r.pickSlipRef, qty: 0, val: 0, bookedAt: r.bookedAt });
+      }
+      const g = map.get(key)!;
+      g.qty += r.qty;
+      g.val += r.val;
+    }
+
+    const now = Date.now();
+    return [...map.values()].map(g => {
+      const days = g.bookedAt ? Math.floor((now - new Date(g.bookedAt).getTime()) / 86_400_000) : null;
+      return {
+        storeName: g.storeName,
+        storeCode: g.storeCode,
+        pickSlipRef: g.pickSlipRef,
+        qty: g.qty,
+        val: g.val,
+        days: days ?? 0,
+        daysDisplay: days !== null ? String(days) : '—',
+      };
+    });
+  }, [baseFiltered, selectedClient, drilldownWarehouse]);
+
+  const warehouseDrillCols: SummaryCol[] = [
+    { key: 'storeName', label: 'Store', align: 'left' },
+    { key: 'storeCode', label: 'Store Code', align: 'left' },
+    { key: 'pickSlipRef', label: 'Pick Slip', align: 'left' },
+    { key: 'qty', label: 'Qty', align: 'right', format: 'number' },
+    { key: 'val', label: 'Value', align: 'right', format: 'rand' },
+    { key: 'daysDisplay', label: 'Days in WH', align: 'right' },
+  ];
+
   // ── Helpers ─────────────────────────────────────────────────────────────
 
-  const hasAnyFilter = clientFilter.size > 0 || repFilter.size > 0 || storeFilter.size > 0 ||
+  const hasAnyFilter = clientNameFilter.size > 0 || clientFilter.size > 0 || repFilter.size > 0 || storeFilter.size > 0 ||
     pickSlipFilter.size > 0 || warehouseFilter.size > 0 || productFilter.size > 0 || dateFrom || dateTo || typeFilter;
 
   function clearAllFilters() {
+    setClientNameFilter(new Set());
     setClientFilter(new Set());
     setRepFilter(new Set());
     setStoreFilter(new Set());
@@ -886,6 +1034,7 @@ export default function DashboardPage() {
     setTypeFilter('');
     setSelectedWarehouse(null);
     setSelectedClient(null);
+    setDrilldownWarehouse(null);
   }
 
   function handleSort(col: string) {
@@ -926,6 +1075,8 @@ export default function DashboardPage() {
         'Vendor Number': c.vendorNumber,
         'Aged Stock Qty': c.agedQty,
         'Aged Stock Value': c.agedVal,
+        'Actual Qty': c.agedQty - c.lossQty,
+        'Actual Value': c.agedVal - c.lossVal,
       };
       for (const w of warehouses) {
         const whKey = w.code.toUpperCase().trim();
@@ -944,6 +1095,8 @@ export default function DashboardPage() {
       'Vendor Number': '',
       'Aged Stock Qty': gridTotals.agedQty,
       'Aged Stock Value': gridTotals.agedVal,
+      'Actual Qty': gridTotals.agedQty - gridTotals.lossQty,
+      'Actual Value': gridTotals.agedVal - gridTotals.lossVal,
     };
     for (const w of warehouses) {
       const whKey = w.code.toUpperCase().trim();
@@ -967,10 +1120,11 @@ export default function DashboardPage() {
 
   if (loading || !session) return null;
 
-  const counts = stats?.controlCounts ?? { clients: 0, stores: 0, products: 0, reps: 0, warehouses: 0 };
+  const counts = stats?.controlCounts ?? { clients: 0, distinctClients: 0, stores: 0, products: 0, reps: 0, warehouses: 0 };
 
   const allStatCards: StatCard[] = [
     { label: 'Clients / Suppliers', count: counts.clients, href: '/control-centre/clients', color: 'bg-green-500', perm: 'manage_clients' },
+    { label: 'Distinct Clients', count: counts.distinctClients, href: '/control-centre/clients', color: 'bg-emerald-500', perm: 'manage_clients' },
     { label: 'Stores', count: counts.stores, href: '/control-centre/stores', color: 'bg-blue-500', perm: 'manage_stores' },
     { label: 'Products', count: counts.products, href: '/control-centre/products', color: 'bg-purple-500', perm: 'manage_products' },
     { label: 'Reps', count: counts.reps, href: '/control-centre/reps', color: 'bg-orange-500', perm: 'manage_reps' },
@@ -983,7 +1137,7 @@ export default function DashboardPage() {
   // Column index counter for resize handles
   let ci = 0;
   const colIdx = () => ci++;
-  const totalCols = 4 + warehouses.length * 2 + 2 + 2; // +2 for delivered qty/val
+  const totalCols = 6 + warehouses.length * 2 + 2 + 2 + 1; // +2 for actual qty/val, +2 for delivered qty/val, +1 for GRN/GRV
 
   // Chart bar click handler
   function handleBarClick(data: { key: string }) {
@@ -1019,7 +1173,7 @@ export default function DashboardPage() {
 
         {/* Control Centre stat cards */}
         {has('view_dashboard') && visibleStats.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
             {visibleStats.map(stat => (
               <Link key={stat.href} href={stat.href}
                 className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-all group">
@@ -1059,7 +1213,8 @@ export default function DashboardPage() {
             {filtersOpen && (
               <div className="px-6 pb-4 border-t border-gray-100 pt-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <MultiFilter label="Client" options={filterOptions.clients} selected={clientFilter} onChange={setClientFilter} />
+                  <MultiFilter label="Client" options={filterOptions.clientNames} selected={clientNameFilter} onChange={setClientNameFilter} />
+                  <MultiFilter label="Vendor" options={filterOptions.clients} selected={clientFilter} onChange={setClientFilter} />
                   <MultiFilter label="Rep" options={filterOptions.reps} selected={repFilter} onChange={setRepFilter} />
                   <MultiFilter label="Store" options={filterOptions.stores} selected={storeFilter} onChange={setStoreFilter} />
                   <MultiFilter label="Pick Slip" options={filterOptions.pickSlips} selected={pickSlipFilter} onChange={setPickSlipFilter} />
@@ -1119,6 +1274,8 @@ export default function DashboardPage() {
               {[
                 { id: 'sec-kpi', label: 'KPI Cards' },
                 { id: 'sec-chart', label: 'Chart' },
+                { id: 'sec-warehouse', label: 'Warehouse' },
+                ...(drilldownWarehouse ? [{ id: 'sec-wh-drill', label: 'Store Detail' }] : []),
                 { id: 'sec-client', label: 'Client Summary' },
                 { id: 'sec-ur-vendor', label: 'By Vendor' },
                 { id: 'sec-ur-store', label: 'By Store' },
@@ -1139,7 +1296,7 @@ export default function DashboardPage() {
 
         {/* ── 3 Grouped KPI Cards ─────────────────────────────────────────── */}
         {hasAgedStock && (
-          <div id="sec-kpi" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 scroll-mt-28">
+          <div id="sec-kpi" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 scroll-mt-28">
             {/* Aged Stock */}
             <div className={`bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] p-5 transition-all ${
               selectedWarehouse === '__aged__' ? 'ring-2 ring-[var(--color-primary)]' : ''
@@ -1153,7 +1310,15 @@ export default function DashboardPage() {
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total Aged Stock</div>
                   <div className="text-2xl font-bold text-gray-900 mt-1">{fmtRand(cardTotals.aged.val)}</div>
-                  <div className="text-sm text-gray-500 mt-0.5">{fmtNum(cardTotals.aged.qty)} units</div>
+                  <div className="text-sm text-gray-500 mt-0.5">{fmtNum(cardTotals.aged.qty)} units loaded</div>
+                  {cardTotals.losses.qty > 0 && (
+                    <div className="mt-2 pt-2 border-t border-gray-100">
+                      <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Actual (Collected)</div>
+                      <div className="text-lg font-bold text-[var(--color-primary)] mt-0.5">{fmtRand(cardTotals.aged.val - cardTotals.losses.val)}</div>
+                      <div className="text-xs text-gray-500">{fmtNum(cardTotals.aged.qty - cardTotals.losses.qty)} units</div>
+                      <div className="text-[10px] text-red-400 mt-0.5">Losses: {fmtNum(cardTotals.losses.qty)} units ({fmtRand(cardTotals.losses.val)})</div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1209,6 +1374,24 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
+
+            {/* GRN/GRV Value */}
+            {cardTotals.grnVal > 0 && (
+              <div className="bg-white rounded-xl shadow-sm border-l-4 border-amber-500 p-5">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0">
+                    <svg className="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">GRN/GRV Value</div>
+                    <div className="text-2xl font-bold text-gray-900 mt-1">{fmtRand(cardTotals.grnVal)}</div>
+                    <div className="text-xs text-gray-400 mt-0.5">Captured receipt value</div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1255,6 +1438,84 @@ export default function DashboardPage() {
               </BarChart>
             </ResponsiveContainer>
           </div>
+        )}
+
+        {/* ── Warehouse Summary Grid ────────────────────────────────────── */}
+        {hasAgedStock && warehouseSummaryRows.length > 0 && (
+          <div id="sec-warehouse" className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 scroll-mt-28">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2.5">
+                <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Warehouse Summary</h2>
+                <span className="px-2 py-0.5 text-[10px] font-bold bg-gray-100 text-gray-500 rounded-full">
+                  {warehouseSummaryRows.length} {warehouseSummaryRows.length === 1 ? 'warehouse' : 'warehouses'}
+                </span>
+              </div>
+              {drilldownWarehouse && (
+                <button
+                  onClick={() => setDrilldownWarehouse(null)}
+                  className="text-xs text-gray-500 hover:text-gray-700 underline"
+                >
+                  Close drilldown
+                </button>
+              )}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-left">
+                    {warehouseSummaryCols.map(col => (
+                      <th key={col.key} className={`px-3 py-2 font-semibold text-gray-600 text-xs uppercase ${col.align === 'right' ? 'text-right' : ''}`}>
+                        {col.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {warehouseSummaryRows.map(r => (
+                    <tr
+                      key={r.warehouse}
+                      className={`border-t border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors ${
+                        drilldownWarehouse === r.warehouse ? 'bg-blue-50 ring-1 ring-blue-200' : ''
+                      }`}
+                      onClick={() => setDrilldownWarehouse(prev => prev === r.warehouse ? null : r.warehouse)}
+                    >
+                      <td className="px-3 py-2 font-medium text-[var(--color-primary)]">{r.warehouse}</td>
+                      <td className="px-3 py-2 text-right font-medium">{fmtNum(r.qty)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{fmtRand(r.val)}</td>
+                      <td className="px-3 py-2 text-right">{fmtNum(r.storeCount)}</td>
+                      <td className="px-3 py-2 text-right">{fmtNum(r.slipCount)}</td>
+                      <td className={`px-3 py-2 text-right font-medium ${r._hasAvgDays ? (r.avgDays > 14 ? 'text-red-600' : r.avgDays > 7 ? 'text-amber-600' : 'text-gray-900') : 'text-gray-400'}`}>
+                        {r._hasAvgDays ? r.avgDays.toFixed(1) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold">
+                    <td className="px-3 py-2">Total</td>
+                    <td className="px-3 py-2 text-right">{fmtNum(warehouseSummaryRows.reduce((s, r) => s + r.qty, 0))}</td>
+                    <td className="px-3 py-2 text-right">{fmtRand(warehouseSummaryRows.reduce((s, r) => s + r.val, 0))}</td>
+                    <td className="px-3 py-2 text-right">{fmtNum(warehouseSummaryRows.reduce((s, r) => s + r.storeCount, 0))}</td>
+                    <td className="px-3 py-2 text-right">{fmtNum(warehouseSummaryRows.reduce((s, r) => s + r.slipCount, 0))}</td>
+                    <td className="px-3 py-2 text-right">—</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Warehouse Drilldown (Store Detail) ─────────────────────────── */}
+        {hasAgedStock && drilldownWarehouse && (
+          <SummaryGrid
+            id="sec-wh-drill"
+            title={`Warehouse: ${drilldownWarehouse} — Store Detail`}
+            columns={warehouseDrillCols}
+            rows={warehouseDrillRows}
+            exportFileName={`iRamFlow Warehouse ${drilldownWarehouse} Detail - ${new Date().toISOString().slice(0, 10)}.xlsx`}
+            defaultCollapsed={false}
+            onBeforeExport={() => !checkProGate('export warehouse data to Excel', 'export_excel')}
+          />
         )}
 
         {/* ── Client Summary Grid ─────────────────────────────────────────── */}
@@ -1316,6 +1577,20 @@ export default function DashboardPage() {
                         Aged Value<SortArrow col="agedVal" /><ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
+                    {(() => { const i = colIdx(); return (
+                      <th key="actualQty" style={colWidths[i] ? { width: colWidths[i] } : undefined}
+                        className="px-3 py-2 font-semibold text-emerald-700 text-xs uppercase text-right relative cursor-pointer select-none hover:bg-gray-100"
+                        onClick={() => handleSort('actualQty')}>
+                        Actual Qty<SortArrow col="actualQty" /><ResizeHandle colIdx={i} />
+                      </th>
+                    ); })()}
+                    {(() => { const i = colIdx(); return (
+                      <th key="actualVal" style={colWidths[i] ? { width: colWidths[i] } : undefined}
+                        className="px-3 py-2 font-semibold text-emerald-700 text-xs uppercase text-right relative cursor-pointer select-none hover:bg-gray-100"
+                        onClick={() => handleSort('actualVal')}>
+                        Actual Value<SortArrow col="actualVal" /><ResizeHandle colIdx={i} />
+                      </th>
+                    ); })()}
                     {warehouses.map(w => {
                       const qi = colIdx();
                       const vi = colIdx();
@@ -1361,6 +1636,13 @@ export default function DashboardPage() {
                         Delivered Val<SortArrow col="deliveredVal" /><ResizeHandle colIdx={i} />
                       </th>
                     ); })()}
+                    {(() => { const i = colIdx(); return (
+                      <th key="grnVal" style={colWidths[i] ? { width: colWidths[i] } : undefined}
+                        className="px-3 py-2 font-semibold text-amber-700 text-xs uppercase text-right relative cursor-pointer select-none hover:bg-gray-100"
+                        onClick={() => handleSort('grnVal')}>
+                        GRN/GRV Val<SortArrow col="grnVal" /><ResizeHandle colIdx={i} />
+                      </th>
+                    ); })()}
                   </tr>
                 </thead>
                 <tbody>
@@ -1384,6 +1666,12 @@ export default function DashboardPage() {
                       <td className="px-3 py-2 text-gray-500">{c.vendorNumber}</td>
                       <td className="px-3 py-2 text-right font-medium">{fmtNum(c.agedQty)}</td>
                       <td className="px-3 py-2 text-right font-medium">{fmtRand(c.agedVal)}</td>
+                      <td className={`px-3 py-2 text-right ${(c.agedQty - c.lossQty) !== c.agedQty ? 'font-medium text-emerald-700' : 'text-gray-400'}`}>
+                        {fmtNum(c.agedQty - c.lossQty)}
+                      </td>
+                      <td className={`px-3 py-2 text-right ${(c.agedVal - c.lossVal) !== c.agedVal ? 'font-medium text-emerald-700' : 'text-gray-400'}`}>
+                        {fmtRand(c.agedVal - c.lossVal)}
+                      </td>
                       {warehouses.map(w => {
                         const whKey = w.code.toUpperCase().trim();
                         const whQty = c.warehouseQty[whKey] ?? 0;
@@ -1409,6 +1697,9 @@ export default function DashboardPage() {
                       <td className={`px-3 py-2 text-right ${c.deliveredVal > 0 ? 'font-medium text-emerald-700' : 'text-gray-400'}`}>
                         {fmtRand(c.deliveredVal)}
                       </td>
+                      <td className={`px-3 py-2 text-right ${c.grnVal > 0 ? 'font-medium text-amber-700' : 'text-gray-400'}`}>
+                        {fmtRand(c.grnVal)}
+                      </td>
                     </tr>
                   ))}
                   {sortedGrid.length === 0 && (
@@ -1422,6 +1713,12 @@ export default function DashboardPage() {
                       <td className="px-3 py-2"></td>
                       <td className="px-3 py-2 text-right">{fmtNum(gridTotals.agedQty)}</td>
                       <td className="px-3 py-2 text-right">{fmtRand(gridTotals.agedVal)}</td>
+                      <td className={`px-3 py-2 text-right ${gridTotals.lossQty > 0 ? 'text-emerald-700' : 'text-gray-400'}`}>
+                        {fmtNum(gridTotals.agedQty - gridTotals.lossQty)}
+                      </td>
+                      <td className={`px-3 py-2 text-right ${gridTotals.lossVal > 0 ? 'text-emerald-700' : 'text-gray-400'}`}>
+                        {fmtRand(gridTotals.agedVal - gridTotals.lossVal)}
+                      </td>
                       {warehouses.map(w => {
                         const whKey = w.code.toUpperCase().trim();
                         const whTotalQty = gridTotals.warehouseQty[whKey] ?? 0;
@@ -1446,6 +1743,9 @@ export default function DashboardPage() {
                       </td>
                       <td className={`px-3 py-2 text-right ${gridTotals.deliveredVal > 0 ? 'text-emerald-700' : 'text-gray-400'}`}>
                         {fmtRand(gridTotals.deliveredVal)}
+                      </td>
+                      <td className={`px-3 py-2 text-right ${gridTotals.grnVal > 0 ? 'text-amber-700' : 'text-gray-400'}`}>
+                        {fmtRand(gridTotals.grnVal)}
                       </td>
                     </tr>
                   </tfoot>

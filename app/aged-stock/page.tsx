@@ -53,6 +53,7 @@ export default function AgedStockDashboardPage() {
   const [toast, setToast] = useState<ToastData | null>(null);
   const [rows, setRows] = useState<RowDto[]>([]);
   const [loadsByClient, setLoadsByClient] = useState<Record<string, LoadDto[]>>({});
+  const [losses, setLosses] = useState<Record<string, { lossQty: number; lossVal: number }>>({});
   const [loading, setLoading] = useState(true);
 
   // Filters — seed from URL param (e.g. ?client=abc from dashboard link)
@@ -100,6 +101,7 @@ export default function AgedStockDashboardPage() {
         const json = await res.json();
         setRows(json.rows ?? []);
         setLoadsByClient(json.loadsByClient ?? {});
+        setLosses(json.losses ?? {});
       } finally {
         setLoading(false);
       }
@@ -157,9 +159,20 @@ export default function AgedStockDashboardPage() {
 
   const totals = useMemo(() => {
     let qty = 0, val = 0;
-    for (const r of filtered) { qty += r.qty; val += r.val; }
-    return { qty, val, count: filtered.length };
-  }, [filtered]);
+    let lossQty = 0, lossVal = 0;
+    const seenKeys = new Set<string>();
+    for (const r of filtered) {
+      qty += r.qty;
+      val += r.val;
+      const key = `${r.clientId}|${r.siteCode}|${r.articleCode}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        const loss = losses[key];
+        if (loss) { lossQty += loss.lossQty; lossVal += loss.lossVal; }
+      }
+    }
+    return { qty, val, count: filtered.length, lossQty, lossVal };
+  }, [filtered, losses]);
 
   // Pick slips: count unique stores in the filtered data (for modal)
   const psStoreCount = useMemo(() => {
@@ -470,13 +483,29 @@ export default function AgedStockDashboardPage() {
           <div className="font-semibold">{totals.count.toLocaleString()}</div>
         </div>
         <div>
-          <div className="text-xs text-gray-500">Total Qty</div>
+          <div className="text-xs text-gray-500">Loaded Qty</div>
           <div className="font-semibold">{totals.qty.toLocaleString()}</div>
         </div>
         <div>
-          <div className="text-xs text-gray-500">Total Value</div>
+          <div className="text-xs text-gray-500">Loaded Value</div>
           <div className="font-semibold">R{totals.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
         </div>
+        {totals.lossQty > 0 && (
+          <>
+            <div className="border-l border-gray-200 pl-6">
+              <div className="text-xs text-red-400">Losses</div>
+              <div className="font-semibold text-red-500">{totals.lossQty.toLocaleString()} units &middot; R{totals.lossVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            </div>
+            <div className="border-l border-gray-200 pl-6">
+              <div className="text-xs text-emerald-600">Actual Qty</div>
+              <div className="font-semibold text-emerald-700">{(totals.qty - totals.lossQty).toLocaleString()}</div>
+            </div>
+            <div>
+              <div className="text-xs text-emerald-600">Actual Value</div>
+              <div className="font-semibold text-emerald-700">R{(totals.val - totals.lossVal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Table */}

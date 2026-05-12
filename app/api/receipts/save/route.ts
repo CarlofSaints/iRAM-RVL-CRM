@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
   if (guard instanceof NextResponse) return guard;
 
   const body = await req.json();
-  const { slipId, clientId, loadId, qty, value, totalBoxes, upliftedById, upliftedByName, storeRef1, storeRef2, storeRef3, storeRef4, storeRefs, boxes } = body as {
+  const { slipId, clientId, loadId, qty, value, totalBoxes, upliftedById, upliftedByName, storeRef1, storeRef2, storeRef3, storeRef4, storeRefs, grnDate, boxes } = body as {
     slipId: string;
     clientId: string;
     loadId: string;
@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
     storeRef3?: string;
     storeRef4?: string;
     storeRefs?: string[];
+    grnDate?: string;
     boxes?: ReceiptBox[];
   };
 
@@ -80,6 +81,7 @@ export async function POST(req: NextRequest) {
     receiptStoreRef3: storeRef3,
     receiptStoreRef4: storeRef4,
     receiptStoreRefs: storeRefs ?? [],
+    receiptGrnDate: grnDate,
     receiptBoxes: boxes ?? [],
   });
 

@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     slipId?: string;
     clientId?: string;
     loadId?: string;
-    rows?: Array<{ articleCode: string; description: string; qty: number; val: number }>;
+    rows?: Array<{ articleCode: string; description: string; barcode?: string; vendorProductCode?: string; qty: number; val: number }>;
   };
   try { body = await req.json(); }
   catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
@@ -36,20 +36,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'slipId, clientId, loadId, and rows are required' }, { status: 400 });
   }
 
-  // Read existing slip to preserve barcode/vendorProductCode
+  // Read existing slip to preserve barcode/vendorProductCode (fallback for older slips that had rows)
   const run = await getPickSlipRun(clientId, loadId);
   const existingSlip = run?.slips.find(s => s.id === slipId);
   const existingRowMap = new Map(
     (existingSlip?.rows ?? []).map(r => [r.articleCode, r])
   );
 
-  // Build updated rows — preserve barcode + vendorProductCode from originals
+  // Build updated rows — use frontend-supplied barcode/vendorProductCode, fall back to originals
   const updatedRows = rows.map(r => {
     const orig = existingRowMap.get(r.articleCode);
     return {
-      barcode: orig?.barcode ?? '',
+      barcode: r.barcode || orig?.barcode || '',
       articleCode: r.articleCode,
-      vendorProductCode: orig?.vendorProductCode ?? '',
+      vendorProductCode: r.vendorProductCode || orig?.vendorProductCode || '',
       description: r.description,
       qty: Math.max(0, Number(r.qty) || 0),
       val: Math.max(0, Number(r.val) || 0),

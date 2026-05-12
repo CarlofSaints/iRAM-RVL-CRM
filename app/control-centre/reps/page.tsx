@@ -17,7 +17,7 @@ interface Rep {
 }
 
 export default function RepsPage() {
-  useAuth('manage_reps');
+  const { session } = useAuth('manage_reps');
   const [items, setItems] = useState<Rep[]>([]);
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState<ToastData | null>(null);
@@ -33,6 +33,13 @@ export default function RepsPage() {
   const [addLoading, setAddLoading] = useState(false);
 
   const DEFAULT_REP_PASSWORD = 'rvl2026';
+
+  // Release code visibility
+  const [codesRevealed, setCodesRevealed] = useState(false);
+  const [revealPromptOpen, setRevealPromptOpen] = useState(false);
+  const [revealPassword, setRevealPassword] = useState('');
+  const [revealError, setRevealError] = useState('');
+  const [revealLoading, setRevealLoading] = useState(false);
 
   const [editItem, setEditItem] = useState<Rep | null>(null);
   const [editName, setEditName] = useState('');
@@ -163,6 +170,40 @@ export default function RepsPage() {
     if (fileRef.current) fileRef.current.value = '';
   }
 
+  function handleDownloadTemplate() {
+    const headers = ['NAME', 'SURNAME', 'PHONE', 'EMAIL', 'REGION'];
+    const ws = XLSX.utils.aoa_to_sheet([headers]);
+    ws['!cols'] = headers.map(h => ({ wch: Math.max(14, h.length + 2) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Reps');
+    XLSX.writeFile(wb, 'iRamFlow_Rep_List_Template.xlsx');
+  }
+
+  async function handleRevealCodes(e: React.FormEvent) {
+    e.preventDefault();
+    if (!session) return;
+    setRevealLoading(true);
+    setRevealError('');
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: session.email, password: revealPassword }),
+      });
+      if (res.ok) {
+        setCodesRevealed(true);
+        setRevealPromptOpen(false);
+        setRevealPassword('');
+      } else {
+        setRevealError('Incorrect password');
+      }
+    } catch {
+      setRevealError('Verification failed');
+    } finally {
+      setRevealLoading(false);
+    }
+  }
+
   const filtered = items.filter(i =>
     `${i.name} ${i.surname}`.toLowerCase().includes(search.toLowerCase()) ||
     i.email.toLowerCase().includes(search.toLowerCase()) ||
@@ -178,10 +219,14 @@ export default function RepsPage() {
           <h1 className="text-xl font-bold text-gray-900">Reps</h1>
           <p className="text-sm text-gray-500 mt-0.5">{items.length} records</p>
         </div>
-        <div>
+        <div className="flex gap-2">
+          <button onClick={handleDownloadTemplate}
+            className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+            Download Template
+          </button>
           <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleExcelUpload} className="hidden" />
           <button onClick={() => fileRef.current?.click()}
-            className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+            className="px-4 py-2 text-sm bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white font-semibold rounded-lg transition-colors">
             Excel Upload
           </button>
         </div>
@@ -261,7 +306,35 @@ export default function RepsPage() {
                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Phone</th>
                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Region</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Release Code</th>
+                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  <span className="inline-flex items-center gap-2">
+                    Release Code
+                    {codesRevealed ? (
+                      <button
+                        type="button"
+                        onClick={() => setCodesRevealed(false)}
+                        title="Hide release codes"
+                        className="text-[var(--color-primary)] hover:text-[var(--color-primary-dark)]"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setRevealError(''); setRevealPassword(''); setRevealPromptOpen(true); }}
+                        title="Reveal release codes"
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                      </button>
+                    )}
+                  </span>
+                </th>
                 <th className="px-6 py-3" />
               </tr>
             </thead>
@@ -272,7 +345,9 @@ export default function RepsPage() {
                   <td className="px-6 py-3 text-gray-600">{item.phone}</td>
                   <td className="px-6 py-3 text-gray-600">{item.email}</td>
                   <td className="px-6 py-3 text-gray-600">{item.region}</td>
-                  <td className="px-6 py-3 font-mono tracking-widest text-gray-600">{item.releaseCode || '—'}</td>
+                  <td className="px-6 py-3 font-mono tracking-widest text-gray-600">
+                    {!item.releaseCode ? '—' : codesRevealed ? item.releaseCode : '****'}
+                  </td>
                   <td className="px-6 py-3">
                     <div className="flex gap-2 justify-end">
                       <button onClick={() => openEdit(item)} className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
@@ -288,6 +363,38 @@ export default function RepsPage() {
           </table>
         </div>
       </section>
+
+      {/* Reveal Release Codes Modal */}
+      {revealPromptOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6">
+            <h2 className="text-base font-bold text-gray-900 mb-1">Reveal Release Codes</h2>
+            <p className="text-sm text-gray-500 mb-4">Enter your login password to view release codes.</p>
+            <form onSubmit={handleRevealCodes} className="flex flex-col gap-3">
+              <input
+                type="password"
+                autoFocus
+                value={revealPassword}
+                onChange={e => setRevealPassword(e.target.value)}
+                placeholder="Your password"
+                required
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+              />
+              {revealError && <p className="text-xs text-red-600">{revealError}</p>}
+              <div className="flex gap-3 pt-1">
+                <button type="submit" disabled={revealLoading}
+                  className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-50 text-white text-sm font-bold px-5 py-2 rounded-lg transition-colors">
+                  {revealLoading ? 'Verifying...' : 'Reveal'}
+                </button>
+                <button type="button" onClick={() => setRevealPromptOpen(false)}
+                  className="text-sm text-gray-600 hover:text-gray-900 px-4 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Edit Modal */}
       {editItem && (

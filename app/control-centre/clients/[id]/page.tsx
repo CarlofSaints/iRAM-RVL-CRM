@@ -68,6 +68,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   const [addPickSlipFolder, setAddPickSlipFolder] = useState('');
   const [addDeliveryNoteFolder, setAddDeliveryNoteFolder] = useState('');
   const [addLoading, setAddLoading] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
   const [testLoading, setTestLoading] = useState(false);
 
   // Edit link
@@ -179,6 +180,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       if (!res.ok) { notify(data.error ?? 'Failed to add link', 'error'); return; }
       notify('SP link added');
       setAddChannelOther(''); setAddFolderUrl(''); setAddFileName(''); setAddPickSlipFolder(''); setAddDeliveryNoteFolder('');
+      setShowAddForm(false);
       await fetchAll();
     } finally {
       setAddLoading(false);
@@ -331,10 +333,26 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         </div>
       </div>
 
-      {/* Add link form */}
-      <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-        <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-4">Add SharePoint Link</h2>
-        <form onSubmit={handleAddLink} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Add link section */}
+      <section className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        {!showAddForm ? (
+          <div className="p-6 flex justify-center">
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-lg uppercase tracking-wide transition-colors"
+            >
+              ADD SHAREPOINT LINK
+            </button>
+          </div>
+        ) : (
+          <div className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Add SharePoint Link</h2>
+              <button onClick={() => setShowAddForm(false)} type="button" className="text-xs text-gray-500 hover:text-gray-700 underline">
+                Cancel
+              </button>
+            </div>
+            <form onSubmit={handleAddLink} className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="flex flex-col gap-1">
             <label className="text-xs text-gray-500 font-medium">Channel</label>
             <select value={addChannel} onChange={e => setAddChannel(e.target.value)} required
@@ -362,7 +380,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             )}
           </div>
           <div className="flex flex-col gap-1 md:col-span-2">
-            <label className="text-xs text-gray-500 font-medium">SharePoint Folder URL</label>
+            <label className="text-xs text-gray-500 font-medium">Control File SP Folder URL</label>
             <input value={addFolderUrl} onChange={e => setAddFolderUrl(e.target.value)} required
               placeholder="https://iramsa.sharepoint.com/sites/.../Shared%20Documents/..."
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
@@ -399,6 +417,8 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             </button>
           </div>
         </form>
+          </div>
+        )}
       </section>
 
       {/* Links table */}
@@ -563,7 +583,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
               </div>
               <div className="flex flex-col gap-1 col-span-2">
-                <label className="text-xs text-gray-500 font-medium">Folder URL</label>
+                <label className="text-xs text-gray-500 font-medium">Control File SP Folder URL</label>
                 <input value={editFolderUrl} onChange={e => setEditFolderUrl(e.target.value)}
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
               </div>

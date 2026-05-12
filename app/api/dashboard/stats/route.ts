@@ -27,8 +27,17 @@ export interface DashboardRow {
   qty: number;
   val: number;
   date: string;
+  bookedAt?: string;
+  receiptVal?: number;
   category: 'aged' | 'warehouse' | 'transit' | 'delivered' | 'display' | 'store-refused' | 'not-found' | 'damaged' | 'collected';
   manual: boolean;
+}
+
+function parseReceiptValue(raw?: string): number {
+  if (!raw) return 0;
+  const cleaned = raw.replace(/[^0-9.]/g, '');
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
 }
 
 /**
@@ -62,8 +71,11 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  const distinctClientNames = new Set(clients.map(c => c.name.trim().toLowerCase())).size;
+
   const controlCounts = {
     clients: clients.length,
+    distinctClients: distinctClientNames,
     stores: stores.length,
     products: productsCount,
     reps: reps.length,
@@ -168,6 +180,8 @@ export async function GET(req: NextRequest) {
           qty: pr.qty,
           val: pr.val,
           date: slip.generatedAt,
+          bookedAt: slip.bookedAt,
+          receiptVal: parseReceiptValue(slip.receiptValue) || undefined,
           category,
           manual: !!slip.manual,
         });
@@ -191,6 +205,7 @@ export async function GET(req: NextRequest) {
             repName: slip.bookedRepName || '',
             pickSlipRef: slip.id,
             date: slip.generatedAt,
+            bookedAt: slip.bookedAt,
             manual: !!slip.manual,
           };
           if (ur.display > 0) rows.push({ ...base, qty: ur.display, val: ur.display * unitCost, category: 'display' });

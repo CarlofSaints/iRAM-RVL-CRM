@@ -5,6 +5,7 @@ import { clientScopeFor, filterClientIdsByScope } from '@/lib/clientScope';
 import { loadControl } from '@/lib/controlData';
 import type { ClientWithLinks } from '@/lib/spLinkData';
 import { listLoads, getLoad } from '@/lib/agedStockData';
+import { listAllPickSlipRuns } from '@/lib/pickSlipData';
 
 export const dynamic = 'force-dynamic';
 
@@ -97,8 +98,29 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Build losses summary from pick slip unreturned stock ──────────────
+  const losses: Record<string, { lossQty: number; lossVal: number }> = {};
+
+  const pickSlipRuns = await listAllPickSlipRuns(clientIds, listLoads);
+  for (const run of pickSlipRuns) {
+    for (const slip of run.slips) {
+      if (!slip.unreturnedStock || slip.unreturnedSkipped) continue;
+      for (const ur of slip.unreturnedStock) {
+        const totalLoss = ur.display + ur.storeRefused + ur.notFound + ur.damaged;
+        if (totalLoss <= 0) continue;
+        const unitCost = ur.pickSlipQty > 0
+          ? (slip.rows.find(r => r.articleCode === ur.articleCode)?.val ?? 0) / ur.pickSlipQty
+          : 0;
+        const key = `${slip.clientId}|${slip.siteCode}|${ur.articleCode}`;
+        if (!losses[key]) losses[key] = { lossQty: 0, lossVal: 0 };
+        losses[key].lossQty += totalLoss;
+        losses[key].lossVal += totalLoss * unitCost;
+      }
+    }
+  }
+
   return NextResponse.json(
-    { ok: true, rows, loadsByClient },
+    { ok: true, rows, loadsByClient, losses },
     { headers: { 'Cache-Control': 'no-store' } }
   );
 }

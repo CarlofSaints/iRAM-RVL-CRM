@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
 import * as XLSX from 'xlsx';
@@ -15,6 +15,8 @@ interface Store {
   managerPhone: string;
   managerEmail: string;
   linkedWarehouse: string;
+  iramRepEmailPrimary?: string;
+  iramRepEmailSecondary?: string;
   createdAt: string;
 }
 
@@ -34,6 +36,8 @@ const TEMPLATE_HEADERS = [
   'MANAGER PHONE',
   'EMAIL',
   'LINKED WAREHOUSE',
+  'IRAM REP EMAIL PRIMARY',
+  'IRAM REP EMAIL SECONDARY',
 ] as const;
 
 /**
@@ -64,6 +68,8 @@ function rowToStore(row: Record<string, unknown>) {
     managerPhone: pick('MANAGER PHONE', 'MANAGERPHONE', 'Phone'),
     managerEmail: pick('EMAIL', 'Manager Email', 'MANAGEREMAIL'),
     linkedWarehouse: pick('LINKED WAREHOUSE', 'Warehouse'),
+    iramRepEmailPrimary: pick('IRAM REP EMAIL PRIMARY', 'iRam Rep Email Primary'),
+    iramRepEmailSecondary: pick('IRAM REP EMAIL SECONDARY', 'iRam Rep Email Secondary'),
   };
 }
 
@@ -84,6 +90,8 @@ export default function StoresPage() {
   const [addPhone, setAddPhone] = useState('');
   const [addEmail, setAddEmail] = useState('');
   const [addWarehouse, setAddWarehouse] = useState('');
+  const [addRepEmailPrimary, setAddRepEmailPrimary] = useState('');
+  const [addRepEmailSecondary, setAddRepEmailSecondary] = useState('');
   const [addLoading, setAddLoading] = useState(false);
 
   // Edit modal
@@ -96,6 +104,8 @@ export default function StoresPage() {
   const [editPhone, setEditPhone] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editWarehouse, setEditWarehouse] = useState('');
+  const [editRepEmailPrimary, setEditRepEmailPrimary] = useState('');
+  const [editRepEmailSecondary, setEditRepEmailSecondary] = useState('');
   const [editLoading, setEditLoading] = useState(false);
 
   // Import modal
@@ -110,6 +120,51 @@ export default function StoresPage() {
   const [newChannel, setNewChannel] = useState('');
   const [channelEditingId, setChannelEditingId] = useState<string | null>(null);
   const [channelEditValue, setChannelEditValue] = useState('');
+
+  // Sort state
+  const [sortCol, setSortCol] = useState<keyof Store | ''>('');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  // Column resize
+  const [colWidths, setColWidths] = useState<Record<number, number>>({});
+  const resizingCol = useRef<{ idx: number; startX: number; startW: number } | null>(null);
+
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      if (!resizingCol.current) return;
+      const diff = e.clientX - resizingCol.current.startX;
+      setColWidths(prev => ({ ...prev, [resizingCol.current!.idx]: Math.max(50, resizingCol.current!.startW + diff) }));
+    }
+    function onMouseUp() {
+      resizingCol.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
+
+  const handleSort = useCallback((col: keyof Store) => {
+    setSortCol(prev => {
+      if (prev === col) { setSortDir(d => d === 'asc' ? 'desc' : 'asc'); return col; }
+      setSortDir('asc');
+      return col;
+    });
+  }, []);
+
+  function startResize(colIdx: number, e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const th = (e.target as HTMLElement).closest('th');
+    if (!th) return;
+    resizingCol.current = { idx: colIdx, startX: e.clientX, startW: th.getBoundingClientRect().width };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
 
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
 
@@ -145,12 +200,15 @@ export default function StoresPage() {
           name: addName, siteCode: addSiteCode, region: addRegion,
           channel: addChannel, managerName: addManager, managerPhone: addPhone,
           managerEmail: addEmail, linkedWarehouse: addWarehouse,
+          iramRepEmailPrimary: addRepEmailPrimary || undefined,
+          iramRepEmailSecondary: addRepEmailSecondary || undefined,
         }),
       });
       if (!res.ok) { notify('Failed to add store', 'error'); return; }
       notify('Store added');
       setAddName(''); setAddSiteCode(''); setAddRegion('');
       setAddManager(''); setAddPhone(''); setAddEmail(''); setAddWarehouse('');
+      setAddRepEmailPrimary(''); setAddRepEmailSecondary('');
       fetchAll();
     } finally { setAddLoading(false); }
   }
@@ -165,6 +223,8 @@ export default function StoresPage() {
     setEditPhone(item.managerPhone);
     setEditEmail(item.managerEmail || '');
     setEditWarehouse(item.linkedWarehouse);
+    setEditRepEmailPrimary(item.iramRepEmailPrimary || '');
+    setEditRepEmailSecondary(item.iramRepEmailSecondary || '');
   }
 
   async function handleEdit(e: React.FormEvent) {
@@ -179,6 +239,8 @@ export default function StoresPage() {
           id: editItem.id, name: editName, siteCode: editSiteCode, region: editRegion,
           channel: editChannel, managerName: editManager, managerPhone: editPhone,
           managerEmail: editEmail, linkedWarehouse: editWarehouse,
+          iramRepEmailPrimary: editRepEmailPrimary || undefined,
+          iramRepEmailSecondary: editRepEmailSecondary || undefined,
         }),
       });
       if (!res.ok) { notify('Failed to update', 'error'); return; }
@@ -398,11 +460,24 @@ export default function StoresPage() {
     else notify('Failed to delete', 'error');
   }
 
-  const filtered = items.filter(i =>
-    i.name.toLowerCase().includes(search.toLowerCase()) ||
-    i.siteCode.toLowerCase().includes(search.toLowerCase()) ||
-    i.channel.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    let result = items.filter(i =>
+      i.name.toLowerCase().includes(q) ||
+      i.siteCode.toLowerCase().includes(q) ||
+      i.channel.toLowerCase().includes(q)
+    );
+    if (sortCol) {
+      result = [...result].sort((a, b) => {
+        const va = (a[sortCol] ?? '').toString().toLowerCase();
+        const vb = (b[sortCol] ?? '').toString().toLowerCase();
+        if (va < vb) return sortDir === 'asc' ? -1 : 1;
+        if (va > vb) return sortDir === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+    return result;
+  }, [items, search, sortCol, sortDir]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -477,6 +552,18 @@ export default function StoresPage() {
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
               placeholder="GAU, KZN, WC, PE" />
           </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-gray-500 font-medium">iRam Rep Email Primary</label>
+            <input type="email" value={addRepEmailPrimary} onChange={e => setAddRepEmailPrimary(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+              placeholder="rep@example.co.za" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-gray-500 font-medium">iRam Rep Email Secondary</label>
+            <input type="email" value={addRepEmailSecondary} onChange={e => setAddRepEmailSecondary(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+              placeholder="rep2@example.co.za" />
+          </div>
           <div className="flex items-end sm:col-span-2 lg:col-span-4">
             <button type="submit" disabled={addLoading}
               className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-50 text-white text-sm font-bold px-5 py-2 rounded-lg transition-colors">
@@ -493,43 +580,70 @@ export default function StoresPage() {
             placeholder="Search by name, code, or channel..."
             className="w-full max-w-sm border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
         </div>
-        <div className="overflow-x-auto mt-4">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Site Code</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Channel</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Region</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Manager</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Warehouse</th>
-                <th className="px-6 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(item => (
-                <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                  <td className="px-6 py-3 font-medium text-gray-900">{item.name}</td>
-                  <td className="px-6 py-3 text-gray-600 font-mono text-xs">{item.siteCode}</td>
-                  <td className="px-6 py-3 text-gray-600">{item.channel}</td>
-                  <td className="px-6 py-3 text-gray-600">{item.region}</td>
-                  <td className="px-6 py-3 text-gray-600">{item.managerName}</td>
-                  <td className="px-6 py-3 text-gray-600 text-xs">{item.managerEmail}</td>
-                  <td className="px-6 py-3 text-gray-600">{item.linkedWarehouse}</td>
-                  <td className="px-6 py-3">
-                    <div className="flex gap-2 justify-end">
-                      <button onClick={() => openEdit(item)} className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
-                      <button onClick={() => handleDelete(item)} className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr><td colSpan={8} className="px-6 py-8 text-center text-gray-400 text-sm">No records found</td></tr>
-              )}
-            </tbody>
-          </table>
+        <div className="overflow-x-auto overflow-y-auto mt-4 max-h-[600px]">
+          {(() => {
+            const cols: { key: keyof Store; label: string }[] = [
+              { key: 'channel', label: 'Channel' },
+              { key: 'name', label: 'Name' },
+              { key: 'siteCode', label: 'Site Code' },
+              { key: 'region', label: 'Region' },
+              { key: 'managerName', label: 'Manager' },
+              { key: 'managerEmail', label: 'Email' },
+              { key: 'linkedWarehouse', label: 'Warehouse' },
+              { key: 'iramRepEmailPrimary' as keyof Store, label: 'iRam Rep Primary' },
+              { key: 'iramRepEmailSecondary' as keyof Store, label: 'iRam Rep Secondary' },
+            ];
+            return (
+              <table className="w-full text-sm" style={Object.keys(colWidths).length > 0 ? { tableLayout: 'fixed', minWidth: (cols.length + 1) * 100 } : undefined}>
+                <thead className="sticky top-0 z-[1]">
+                  <tr className="border-b border-gray-100 bg-gray-50">
+                    {cols.map((col, ci) => (
+                      <th
+                        key={col.key}
+                        style={colWidths[ci] ? { width: colWidths[ci] } : undefined}
+                        className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer select-none hover:bg-gray-100 relative"
+                        onClick={() => handleSort(col.key)}
+                      >
+                        {col.label}
+                        {sortCol === col.key
+                          ? <span className="text-[var(--color-primary)] ml-1">{sortDir === 'asc' ? '\u25B2' : '\u25BC'}</span>
+                          : <span className="text-gray-300 ml-1">&#8597;</span>}
+                        <div
+                          onMouseDown={e => startResize(ci, e)}
+                          className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-[var(--color-primary)]/30 z-10"
+                        />
+                      </th>
+                    ))}
+                    <th className="px-6 py-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(item => (
+                    <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                      <td className="px-6 py-3 text-gray-600">{item.channel}</td>
+                      <td className="px-6 py-3 font-medium text-gray-900">{item.name}</td>
+                      <td className="px-6 py-3 text-gray-600 font-mono text-xs">{item.siteCode}</td>
+                      <td className="px-6 py-3 text-gray-600">{item.region}</td>
+                      <td className="px-6 py-3 text-gray-600">{item.managerName}</td>
+                      <td className="px-6 py-3 text-gray-600 text-xs">{item.managerEmail}</td>
+                      <td className="px-6 py-3 text-gray-600">{item.linkedWarehouse}</td>
+                      <td className="px-6 py-3 text-gray-600 text-xs">{item.iramRepEmailPrimary || ''}</td>
+                      <td className="px-6 py-3 text-gray-600 text-xs">{item.iramRepEmailSecondary || ''}</td>
+                      <td className="px-6 py-3">
+                        <div className="flex gap-2 justify-end">
+                          <button onClick={() => openEdit(item)} className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
+                          <button onClick={() => handleDelete(item)} className="text-xs text-red-500 hover:text-red-700 font-medium">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {filtered.length === 0 && (
+                    <tr><td colSpan={cols.length + 1} className="px-6 py-8 text-center text-gray-400 text-sm">No records found</td></tr>
+                  )}
+                </tbody>
+              </table>
+            );
+          })()}
         </div>
       </section>
 
@@ -658,6 +772,18 @@ export default function StoresPage() {
                 <label className="text-xs text-gray-500 font-medium">Linked Warehouse</label>
                 <input value={editWarehouse} onChange={e => setEditWarehouse(e.target.value)}
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-gray-500 font-medium">iRam Rep Email Primary</label>
+                <input type="email" value={editRepEmailPrimary} onChange={e => setEditRepEmailPrimary(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                  placeholder="rep@example.co.za" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-gray-500 font-medium">iRam Rep Email Secondary</label>
+                <input type="email" value={editRepEmailSecondary} onChange={e => setEditRepEmailSecondary(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                  placeholder="rep2@example.co.za" />
               </div>
               <div className="col-span-2 flex gap-3 pt-2">
                 <button type="submit" disabled={editLoading}

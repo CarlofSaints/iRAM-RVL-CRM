@@ -231,6 +231,111 @@ export async function sendDeliveryNoteEmail(opts: {
   });
 }
 
+export async function sendUnreturnedStockEmail(opts: {
+  to: string[];
+  cc?: string[];
+  storeName: string;
+  storeCode: string;
+  clientName: string;
+  vendorNumber: string;
+  repName: string;
+  grnDate: string;
+  captureDate: string;
+  totalUplifted: number;
+  totalUpliftedVal: number;
+  totalNotUplifted: number;
+  unreturnedSummary: Array<{
+    description: string;
+    pickSlipQty: number;
+    collected: number;
+    display: number;
+    storeRefused: number;
+    notFound: number;
+    damaged: number;
+  }>;
+  pickSlipRef: string;
+  storeRef1?: string;
+  attachment: { filename: string; content: Buffer };
+}) {
+  if (opts.to.length === 0) return;
+  const appUrl = getAppUrl();
+
+  // Build product breakdown rows for unreturned items
+  const unreturnedItems = opts.unreturnedSummary.filter(
+    r => r.display > 0 || r.storeRefused > 0 || r.notFound > 0 || r.damaged > 0,
+  );
+
+  const productRows = unreturnedItems.map(r => `
+    <tr>
+      <td style="padding:6px 10px;border-bottom:1px solid #eee;font-size:12px;">${r.description}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:center;">${r.pickSlipQty}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:center;color:#2E7D32;font-weight:bold;">${r.collected}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:center;">${r.display}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:center;">${r.storeRefused}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:center;">${r.notFound}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;text-align:center;">${r.damaged}</td>
+    </tr>
+  `).join('');
+
+  const body = `
+    <p style="margin:0 0 14px;">Dear Store Manager,</p>
+    <p style="margin:0 0 14px;font-size:14px;">
+      An iRam collecting rep visited <strong>${opts.storeName} (${opts.storeCode})</strong> on <strong>${opts.grnDate || 'N/A'}</strong>
+      to collect aged stock for <strong>${opts.clientName}</strong>.
+    </p>
+    ${opts.storeRef1 ? `<p style="margin:0 0 14px;font-size:14px;">GRN/GRV Number: <strong>${opts.storeRef1}</strong></p>` : ''}
+
+    <table style="background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:14px 16px;width:100%;margin-bottom:20px;">
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Pick Slip Ref</td><td style="font-size:13px;font-family:monospace;"><strong>${opts.pickSlipRef}</strong></td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Collecting Rep</td><td style="font-size:13px;">${opts.repName}</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Total Uplifted</td><td style="font-size:13px;"><strong>${opts.totalUplifted} units</strong> (R ${opts.totalUpliftedVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</td></tr>
+      <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Not Uplifted</td><td style="font-size:13px;">${opts.totalNotUplifted} units</td></tr>
+    </table>
+
+    ${unreturnedItems.length > 0 ? `
+    <p style="margin:0 0 10px;font-size:13px;font-weight:bold;color:#555;">Unreturned Items Breakdown:</p>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:12px;">
+      <thead>
+        <tr style="background:#f0f0f0;">
+          <th style="padding:6px 10px;text-align:left;font-size:11px;color:#666;">Product</th>
+          <th style="padding:6px 8px;text-align:center;font-size:11px;color:#666;">PS Qty</th>
+          <th style="padding:6px 8px;text-align:center;font-size:11px;color:#666;">Collected</th>
+          <th style="padding:6px 8px;text-align:center;font-size:11px;color:#666;">Display</th>
+          <th style="padding:6px 8px;text-align:center;font-size:11px;color:#666;">Refused</th>
+          <th style="padding:6px 8px;text-align:center;font-size:11px;color:#666;">Not Found</th>
+          <th style="padding:6px 8px;text-align:center;font-size:11px;color:#666;">Damaged</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${productRows}
+      </tbody>
+    </table>
+    ` : ''}
+
+    <p style="margin:0 0 14px;font-size:13px;color:#555;">
+      The full product-level breakdown is attached as an Excel file.
+    </p>
+    <p style="margin:0 0 20px;font-size:13px;color:#555;">
+      Please retain this email for your records. If you have any queries regarding this collection, please contact your account manager.
+    </p>
+    <a href="${appUrl}/aged-stock/receipts" style="background:${PRIMARY};color:#fff;text-decoration:none;padding:12px 24px;border-radius:4px;font-weight:bold;font-size:14px;display:inline-block;">View in iRamFlow</a>
+  `;
+
+  const attachments = [{
+    filename: opts.attachment.filename,
+    content: opts.attachment.content.toString('base64'),
+  }];
+
+  return getResend().emails.send({
+    from: FROM,
+    to: opts.to,
+    cc: opts.cc?.length ? opts.cc : undefined,
+    subject: `iRamFlow — Aged Stock Collection Confirmation: ${opts.pickSlipRef}`,
+    html: emailShell(body),
+    attachments,
+  });
+}
+
 export async function sendPasswordResetEmail(to: string, name: string, password: string) {
   const appUrl = getAppUrl();
   const body = `

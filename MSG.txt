@@ -1,17 +1,1 @@
-Fix Send DN bug that corrupted slip status + guard all status transitions
-
-Root cause: "Send DN" reused the pick slip send modal which called
-/api/pick-slips/send — this always overwrote status to 'sent',
-regressing in-transit/delivered slips back to 'sent' and breaking
-the delivery confirmation QR link.
-
-Fixes:
-- New /api/pick-slips/send-dn route re-generates DN PDF and emails it
-- Separate Send DN modal on Picking Slips page (not reusing PS modal)
-- Pick slip send route only sets 'sent' from 'generated' (no regression)
-- Receipt/complete endpoint guards against non-booked slips
-- Delivery page shows actual status in "Not Available" for debugging
-- One-time /api/delivery/repair endpoint to restore corrupted slips
-- StatusBadge tooltip text wrapping fix
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
+Add missing files for vendor splitting fix 

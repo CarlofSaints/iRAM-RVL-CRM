@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
@@ -116,13 +116,16 @@ export default function PickingSlipsPage() {
   const [loading, setLoading] = useState(true);
 
   // Filters
-  const [clientFilter, setClientFilter] = useState('');
+  const [clientFilter, setClientFilter] = useState<Set<string>>(new Set());
   const [storeQuery, setStoreQuery] = useState('');
   const [refQuery, setRefQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [vendorFilter, setVendorFilter] = useState('');
   const [channelFilter, setChannelFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState<'' | 'manual' | 'loaded'>('');
+  const [vendorDropOpen, setVendorDropOpen] = useState(false);
+  const [clientNameFilter, setClientNameFilter] = useState('');
+  const vendorDropRef = useRef<HTMLDivElement>(null);
 
   // Sort
   const [sortCol, setSortCol] = useState<SortCol>('generatedAt');
@@ -207,6 +210,12 @@ export default function PickingSlipsPage() {
     return Array.from(set).sort();
   }, [slips]);
 
+  const clientNameOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of slips) { if (s.clientName) set.add(s.clientName); }
+    return Array.from(set).sort();
+  }, [slips]);
+
   // siteCode → channel lookup from stores control data
   const channelBySiteCode = useMemo(() => {
     const map = new Map<string, string>();
@@ -229,7 +238,8 @@ export default function PickingSlipsPage() {
     const sq = storeQuery.trim().toLowerCase();
     const rq = refQuery.trim().toLowerCase();
     return slips.filter(s => {
-      if (clientFilter && s.clientId !== clientFilter) return false;
+      if (clientFilter.size > 0 && !clientFilter.has(s.clientId)) return false;
+      if (clientNameFilter && s.clientName !== clientNameFilter) return false;
       if (vendorFilter && s.vendorNumber !== vendorFilter) return false;
       if (channelFilter) {
         const ch = channelBySiteCode.get(s.siteCode.trim().toLowerCase());
@@ -245,7 +255,7 @@ export default function PickingSlipsPage() {
       if (typeFilter === 'loaded' && s.manual) return false;
       return true;
     });
-  }, [slips, clientFilter, vendorFilter, channelFilter, channelBySiteCode, storeQuery, refQuery, statusFilter, typeFilter]);
+  }, [slips, clientFilter, clientNameFilter, vendorFilter, channelFilter, channelBySiteCode, storeQuery, refQuery, statusFilter, typeFilter]);
 
   const sorted = useMemo(() => {
     const list = [...filtered];
@@ -279,6 +289,17 @@ export default function PickingSlipsPage() {
       return next.size !== prev.size ? next : prev;
     });
   }, [filtered]);
+
+  // Close vendor dropdown on click outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (vendorDropRef.current && !vendorDropRef.current.contains(e.target as Node)) {
+        setVendorDropOpen(false);
+      }
+    }
+    if (vendorDropOpen) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [vendorDropOpen]);
 
   const allSelected = sorted.length > 0 && selected.size === sorted.length;
 
@@ -478,21 +499,65 @@ export default function PickingSlipsPage() {
       </div>
 
       {/* Filters */}
-      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-3">
+      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 grid grid-cols-1 md:grid-cols-4 lg:grid-cols-8 gap-3">
         <div>
           <label className="block text-xs text-gray-600 mb-1">Client</label>
           <select
-            value={clientFilter}
-            onChange={e => setClientFilter(e.target.value)}
+            value={clientNameFilter}
+            onChange={e => setClientNameFilter(e.target.value)}
             className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
           >
             <option value="">All clients</option>
-            {clientOptions.map(c => (
-              <option key={c.id} value={c.id}>
-                {c.vendorNumber ? `${c.name} - ${c.vendorNumber}` : c.name}
-              </option>
+            {clientNameOptions.map(name => (
+              <option key={name} value={name}>{name}</option>
             ))}
           </select>
+        </div>
+        <div className="relative" ref={vendorDropRef}>
+          <label className="block text-xs text-gray-600 mb-1">Vendor</label>
+          <button
+            type="button"
+            onClick={() => setVendorDropOpen(o => !o)}
+            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm text-left bg-white flex items-center justify-between"
+          >
+            <span className={clientFilter.size > 0 ? 'text-gray-900' : 'text-gray-500'}>
+              {clientFilter.size > 0 ? `${clientFilter.size} selected` : 'All vendors'}
+            </span>
+            <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {vendorDropOpen && (
+            <div className="absolute z-30 mt-1 w-72 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto">
+              {clientFilter.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setClientFilter(new Set())}
+                  className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 border-b border-gray-100"
+                >
+                  Clear all
+                </button>
+              )}
+              {clientOptions.map(c => (
+                <label key={c.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm">
+                  <input
+                    type="checkbox"
+                    checked={clientFilter.has(c.id)}
+                    onChange={() => {
+                      setClientFilter(prev => {
+                        const next = new Set(prev);
+                        if (next.has(c.id)) next.delete(c.id);
+                        else next.add(c.id);
+                        return next;
+                      });
+                    }}
+                    className="rounded border-gray-300"
+                  />
+                  {c.vendorNumber ? `${c.name} - ${c.vendorNumber}` : c.name}
+                </label>
+              ))}
+            </div>
+          )}
         </div>
         <div>
           <label className="block text-xs text-gray-600 mb-1">Channel</label>

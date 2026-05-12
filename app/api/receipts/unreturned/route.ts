@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requirePermission } from '@/lib/rolesData';
+import { requirePermission, loadRoles } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { updateSlipInRun, getPickSlipRun, type UnreturnedStockRow } from '@/lib/pickSlipData';
+import { loadControl } from '@/lib/controlData';
 import { logAudit } from '@/lib/auditLog';
-import { sendUnreturnedSkipEmail } from '@/lib/email';
+import { sendUnreturnedSkipEmail, sendUnreturnedStockEmail } from '@/lib/email';
+import { generateUnreturnedStockExcel } from '@/lib/unreturnedStockExcel';
 
 export const dynamic = 'force-dynamic';
 
@@ -102,7 +104,11 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Normal capture flow ──
-  const { rows } = body as { rows: UnreturnedStockRow[] };
+  const { rows, sendEmail, ccSecondary } = body as {
+    rows: UnreturnedStockRow[];
+    sendEmail?: boolean;
+    ccSecondary?: boolean;
+  };
   if (!Array.isArray(rows) || rows.length === 0) {
     return NextResponse.json({ error: 'rows are required' }, { status: 400 });
   }
@@ -133,6 +139,117 @@ export async function POST(req: NextRequest) {
     clientId,
     detail: `Unreturned stock captured for ${slipId} — ${rows.length} products`,
   });
+
+  // ── Send confirmation email (best-effort) ──
+  if (sendEmail) {
+    try {
+      // Load stores to find store details
+      interface StoreRecord {
+        siteCode: string;
+        managerEmail?: string;
+        iramRepEmailPrimary?: string;
+        iramRepEmailSecondary?: string;
+        [key: string]: unknown;
+      }
+      const stores = await loadControl<StoreRecord>('stores');
+      const store = stores.find(s => s.siteCode === slip.siteCode);
+
+      // Find the collecting rep's email
+      const bookedRep = users.find(u => u.id === slip.bookedRepId);
+
+      // Find CAM users — users whose role contains 'cam' and who are assigned to this client
+      const roles = await loadRoles();
+      const camRoleIds = roles.filter(r => r.id.toLowerCase().includes('cam')).map(r => r.id);
+      const camUsers = users.filter(u =>
+        camRoleIds.includes(u.role) &&
+        (u.assignedClientIds ?? []).includes(slip.clientId),
+      );
+
+      // Find RVL managers
+      const rvlManagers = users.filter(u => u.role === 'rvl-manager');
+
+      // Build recipient list
+      const toEmails: string[] = [];
+      if (store?.managerEmail) toEmails.push(store.managerEmail);
+      if (bookedRep?.email) toEmails.push(bookedRep.email);
+      if (store?.iramRepEmailPrimary) toEmails.push(store.iramRepEmailPrimary);
+      for (const u of rvlManagers) {
+        if (u.email && !toEmails.includes(u.email)) toEmails.push(u.email);
+      }
+      for (const u of camUsers) {
+        if (u.email && !toEmails.includes(u.email)) toEmails.push(u.email);
+      }
+
+      const ccEmails: string[] = [];
+      if (ccSecondary && store?.iramRepEmailSecondary) {
+        ccEmails.push(store.iramRepEmailSecondary);
+      }
+
+      if (toEmails.length > 0) {
+        // Calculate totals
+        let totalUplifted = 0;
+        let totalNotUplifted = 0;
+        const summary = rows.map(r => {
+          const collected = r.pickSlipQty - ((r.display || 0) + (r.storeRefused || 0) + (r.notFound || 0) + (r.damaged || 0));
+          totalUplifted += Math.max(0, collected);
+          totalNotUplifted += (r.display || 0) + (r.storeRefused || 0) + (r.notFound || 0) + (r.damaged || 0);
+          return {
+            description: r.description,
+            pickSlipQty: r.pickSlipQty,
+            collected: Math.max(0, collected),
+            display: r.display || 0,
+            storeRefused: r.storeRefused || 0,
+            notFound: r.notFound || 0,
+            damaged: r.damaged || 0,
+          };
+        });
+
+        // Estimate uplifted value proportionally
+        const totalUpliftedVal = slip.totalVal > 0 && slip.totalQty > 0
+          ? (totalUplifted / slip.totalQty) * slip.totalVal
+          : 0;
+
+        const captureDate = new Date().toLocaleDateString('en-GB', {
+          day: '2-digit', month: '2-digit', year: 'numeric',
+          timeZone: 'Africa/Johannesburg',
+        });
+
+        const { buffer, filename } = await generateUnreturnedStockExcel({
+          pickSlipRef: slip.id,
+          storeName: slip.siteName,
+          storeCode: slip.siteCode,
+          clientName: slip.clientName,
+          vendorNumber: slip.vendorNumber,
+          repName: bookedRep ? `${bookedRep.name} ${bookedRep.surname}` : (slip.bookedRepName ?? '—'),
+          grnDate: slip.receiptGrnDate || '—',
+          captureDate,
+          rows,
+        });
+
+        await sendUnreturnedStockEmail({
+          to: toEmails,
+          cc: ccEmails.length > 0 ? ccEmails : undefined,
+          storeName: slip.siteName,
+          storeCode: slip.siteCode,
+          clientName: slip.clientName,
+          vendorNumber: slip.vendorNumber,
+          repName: bookedRep ? `${bookedRep.name} ${bookedRep.surname}` : (slip.bookedRepName ?? '—'),
+          grnDate: slip.receiptGrnDate || '—',
+          captureDate,
+          totalUplifted,
+          totalUpliftedVal,
+          totalNotUplifted,
+          unreturnedSummary: summary,
+          pickSlipRef: slip.id,
+          storeRef1: (slip.receiptStoreRefs ?? [])[0] || slip.receiptStoreRef1,
+          attachment: { filename, content: buffer },
+        });
+      }
+    } catch (err) {
+      console.error('[unreturned] Failed to send confirmation email:', err);
+      // Best-effort — don't fail the save
+    }
+  }
 
   return NextResponse.json(
     { ok: true, slip: updated },

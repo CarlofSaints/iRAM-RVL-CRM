@@ -3,10 +3,10 @@ import { randomUUID } from 'crypto';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { clientScopeFor } from '@/lib/clientScope';
-import { getClient, listSpLinks, loadLinkProducts } from '@/lib/spLinkData';
+import { getClient, listSpLinks } from '@/lib/spLinkData';
 import { loadControl } from '@/lib/controlData';
 import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
-import { generatePickSlipPdf, type PickSlipPdfRow } from '@/lib/pickSlipPdf';
+import { generatePickSlipPdf } from '@/lib/pickSlipPdf';
 import {
   getPickSlipRun,
   savePickSlipRun,
@@ -30,15 +30,11 @@ interface StoreRecord {
   linkedWarehouse: string;
 }
 
-function normArticle(s: string): string {
-  return s.replace(/[^A-Za-z0-9]/g, '').replace(/^0+/, '').toLowerCase();
-}
-
 /**
  * POST /api/pick-slips/manual
  *
  * Generates manual pick slips (one per store) for a vendor+channel combo.
- * All products from the vendor's SP links are included with qty=0, val=0.
+ * No product rows — just store info and barcode. Products are captured later.
  *
  * Body: { clientId, storeIds: string[], channel: string }
  */
@@ -84,38 +80,6 @@ export async function POST(req: NextRequest) {
       error: 'No SP links have a Pick Slip Folder URL configured.',
     }, { status: 422 });
   }
-
-  // Merge all products from all SP links (dedup by articleNumber)
-  const productMap = new Map<string, { barcode: string; articleCode: string; vendorProductCode: string; description: string }>();
-  for (const link of spLinks) {
-    const products = await loadLinkProducts(clientId, link.id);
-    for (const p of products) {
-      const key = normArticle(p.articleNumber);
-      if (!key || productMap.has(key)) continue;
-      productMap.set(key, {
-        barcode: p.barcode || '',
-        articleCode: p.articleNumber,
-        vendorProductCode: p.vendorProductCode || '',
-        description: p.description || '',
-      });
-    }
-  }
-
-  if (productMap.size === 0) {
-    return NextResponse.json({
-      error: 'No products found in SP product files. Refresh the product control files first.',
-    }, { status: 422 });
-  }
-
-  // Build product rows (all qty=0, val=0 for manual)
-  const allProductRows: PickSlipPdfRow[] = [...productMap.values()].map(p => ({
-    barcode: p.barcode,
-    articleCode: p.articleCode,
-    vendorProductCode: p.vendorProductCode,
-    description: p.description,
-    qty: 0,
-    val: 0,
-  }));
 
   // Load store records
   const stores = await loadControl<StoreRecord>('stores');
@@ -186,7 +150,7 @@ export async function POST(req: NextRequest) {
         siteCode,
         warehouse,
         loadDate: dateDash,
-        rows: allProductRows,
+        rows: [],
         manual: true,
       });
     } catch (err) {
@@ -226,13 +190,13 @@ export async function POST(req: NextRequest) {
       warehouseCode: toWhCode(warehouse),
       totalQty: 0,
       totalVal: 0,
-      rowCount: allProductRows.length,
+      rowCount: 0,
       fileName,
       spWebUrl,
       generatedAt: now.toISOString(),
       status: 'generated',
       clientName: client.name,
-      rows: allProductRows,
+      rows: [],
       manual: true,
       channel,
       spDriveId: dateFolder?.driveId,

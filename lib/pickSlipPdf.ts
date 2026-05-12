@@ -111,6 +111,9 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
     });
   } catch { /* skip barcode if generation fails */ }
 
+  // Manual slips with no products — single page, no table
+  const isEmptyManual = manual && rows.length === 0;
+
   // Calculate pagination — how many data rows fit per page
   const barcodeH = barcodeBuffer ? 50 : 0; // space for barcode + gap
   const headerBlockH = 100 + barcodeH; // title + header info + barcode
@@ -125,7 +128,7 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
   const rowsPerNextPage = Math.max(1, Math.floor(contentAreaNextPage / rowH));
 
   let totalPages = 1;
-  if (rows.length > rowsPerFirstPage) {
+  if (!isEmptyManual && rows.length > rowsPerFirstPage) {
     totalPages = 1 + Math.ceil((rows.length - rowsPerFirstPage) / rowsPerNextPage);
   }
 
@@ -244,6 +247,60 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
       doc.font('Helvetica-Bold').fontSize(10);
       doc.text(`${pickSlipId} — ${siteName} - ${siteCode}`, marginL, y);
       y += 18;
+    }
+
+    // ── Empty manual slip: skip table, go straight to signature ──
+    if (isEmptyManual) {
+      y += 10;
+
+      // Instruction text
+      doc.font('Helvetica').fontSize(10).fillColor('#555555');
+      doc.text(
+        'Products collected will be captured digitally after receipt.',
+        marginL, y, { width: usableW, align: 'center' }
+      );
+      doc.fillColor('#000000');
+      y += 30;
+
+      // No. Boxes row
+      doc.font('Helvetica-Bold').fontSize(10);
+      doc.text('No. Boxes:', marginL, y);
+      doc.rect(marginL + 80, y - 2, 100, 20).stroke();
+      y += 30;
+
+      // Signature block
+      const sigW = usableW * 0.6;
+      const dateW = usableW * 0.35;
+      const tableX = marginL;
+      doc.rect(tableX, y, sigW, 30).stroke();
+      doc.font('Helvetica').fontSize(8);
+      doc.text('Store Employee Name & Sign', tableX + 4, y + 10);
+      doc.rect(tableX + usableW - dateW, y, dateW, 30).stroke();
+      doc.text('Date', tableX + usableW - dateW + 4, y + 10);
+      y += 40;
+
+      // Branding footer
+      const brandY = pageH - marginB - 30;
+      doc.font('Helvetica').fontSize(8).fillColor('#888888');
+      if (ojLogoBuffer) {
+        try {
+          const logoH = 40;
+          const logoW = logoH * 2;
+          const poweredText = 'Powered by';
+          const textW = doc.widthOfString(poweredText);
+          const gap = 6;
+          const totalW = textW + gap + logoW;
+          const startX = marginL + (totalW > usableW ? 0 : (usableW - totalW) / 2);
+          doc.text(poweredText, startX, brandY + (logoH / 2) - 4);
+          doc.image(ojLogoBuffer, startX + textW + gap, brandY, { height: logoH });
+        } catch {
+          doc.text('Powered by OuterJoin', marginL, brandY, { width: usableW, align: 'center' });
+        }
+      } else {
+        doc.text('Powered by OuterJoin', marginL, brandY, { width: usableW, align: 'center' });
+      }
+      doc.fillColor('#000000');
+      return; // Done — no table to draw
     }
 
     // ── Table header ──
