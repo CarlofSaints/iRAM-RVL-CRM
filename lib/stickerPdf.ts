@@ -20,8 +20,20 @@ const bwipjs = require('bwip-js') as {
   toBuffer(opts: { bcid: string; text: string; scale: number; height: number; includetext: boolean }): Promise<Buffer>;
 };
 
+export interface StickerFieldData {
+  siteCode?: string;
+  date?: string;
+  storeName?: string;
+  referenceNumber?: string;
+  vendorName?: string;
+  vendorCode?: string;
+  repName?: string;
+  boxNumber?: number;
+  totalBoxes?: number;
+}
+
 export interface StickerPdfParams {
-  stickers: Array<{ barcodeValue: string }>;
+  stickers: Array<{ barcodeValue: string; fields?: StickerFieldData }>;
   warehouseName: string;
 }
 
@@ -54,7 +66,6 @@ const FIELD_ROWS: FieldRow[] = [
   { type: 'full', label: 'Store Name' },
   { type: 'full', label: 'Reference Number' },
   { type: 'split', left: 'Vendor Name', right: 'Vendor Code' },
-  { type: 'split', left: 'Total QTY', right: 'Total Value' },
   { type: 'full', label: 'Rep Name' },
   { type: 'box-of' },
 ];
@@ -128,6 +139,7 @@ export async function generateStickerPdf(params: StickerPdfParams): Promise<Buff
         barcodeValue: stickers[idx].barcodeValue,
         barcodePng: barcodePngs.get(stickers[idx].barcodeValue) ?? null,
         logoBuffer,
+        fields: stickers[idx].fields,
       });
     }
   }
@@ -150,11 +162,23 @@ interface StickerDrawParams {
   barcodeValue: string;
   barcodePng: Buffer | null;
   logoBuffer: Buffer | null;
+  fields?: StickerFieldData;
 }
 
 function drawSticker(doc: InstanceType<typeof PDFDocument>, p: StickerDrawParams) {
-  const { x, y, w, h, barcodeValue, barcodePng, logoBuffer } = p;
+  const { x, y, w, h, barcodeValue, barcodePng, logoBuffer, fields } = p;
   const pad = 10; // inner padding
+
+  // Map field labels → pre-filled values (if provided)
+  const fieldValues: Record<string, string | undefined> = fields ? {
+    'Site Number': fields.siteCode,
+    'Date': fields.date,
+    'Store Name': fields.storeName,
+    'Reference Number': fields.referenceNumber,
+    'Vendor Name': fields.vendorName,
+    'Vendor Code': fields.vendorCode,
+    'Rep Name': fields.repName,
+  } : {};
 
   // Border
   doc.save();
@@ -201,13 +225,13 @@ function drawSticker(doc: InstanceType<typeof PDFDocument>, p: StickerDrawParams
 
   for (const fieldRow of FIELD_ROWS) {
     if (fieldRow.type === 'full') {
-      drawField(doc, x + pad, cy, fieldW, rowH, fieldRow.label);
+      drawField(doc, x + pad, cy, fieldW, rowH, fieldRow.label, fieldValues[fieldRow.label]);
     } else if (fieldRow.type === 'split') {
       const halfW = (fieldW - colGap) / 2;
-      drawField(doc, x + pad, cy, halfW, rowH, fieldRow.left);
-      drawField(doc, x + pad + halfW + colGap, cy, halfW, rowH, fieldRow.right);
+      drawField(doc, x + pad, cy, halfW, rowH, fieldRow.left, fieldValues[fieldRow.left]);
+      drawField(doc, x + pad + halfW + colGap, cy, halfW, rowH, fieldRow.right, fieldValues[fieldRow.right]);
     } else if (fieldRow.type === 'box-of') {
-      drawBoxOfField(doc, x + pad, cy, fieldW, rowH);
+      drawBoxOfField(doc, x + pad, cy, fieldW, rowH, fields?.boxNumber, fields?.totalBoxes);
     }
     cy += rowH;
   }
@@ -215,7 +239,7 @@ function drawSticker(doc: InstanceType<typeof PDFDocument>, p: StickerDrawParams
   doc.restore();
 }
 
-/** Standard ruled field: bold label with underline for writing. */
+/** Standard ruled field: bold label with underline. If value is provided, print it. */
 function drawField(
   doc: InstanceType<typeof PDFDocument>,
   x: number,
@@ -223,9 +247,18 @@ function drawField(
   w: number,
   h: number,
   label: string,
+  value?: string,
 ) {
   doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#000000');
-  doc.text(`${label}:`, x, y + 2, { width: w, align: 'left' });
+  const labelText = `${label}:`;
+  doc.text(labelText, x, y + 2, { width: w, align: 'left' });
+
+  // If a value is provided, print it next to the label
+  if (value) {
+    const labelW = doc.widthOfString(labelText) + 4;
+    doc.font('Helvetica').fontSize(7.5).fillColor('#000000');
+    doc.text(value, x + labelW, y + 2, { width: w - labelW, align: 'left' });
+  }
 
   const lineY = y + h - 3;
   doc.lineWidth(0.5).strokeColor('#999999')
@@ -234,13 +267,15 @@ function drawField(
     .stroke();
 }
 
-/** Special "Box ___ of ___" field with two inline underline blanks. */
+/** Special "Box ___ of ___" field with two inline underline blanks or pre-filled numbers. */
 function drawBoxOfField(
   doc: InstanceType<typeof PDFDocument>,
   x: number,
   y: number,
   w: number,
   h: number,
+  boxNumber?: number,
+  totalBoxes?: number,
 ) {
   doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#000000');
 
@@ -254,6 +289,23 @@ function drawBoxOfField(
   doc.text('of', ofX, y + 2);
 
   const lineY = y + h - 3;
+
+  if (boxNumber != null && totalBoxes != null) {
+    // Pre-filled: print the numbers between "Box" and "of", and after "of"
+    doc.font('Helvetica').fontSize(7.5).fillColor('#000000');
+    const numStr = String(boxNumber);
+    const totalStr = String(totalBoxes);
+    // Centre the number between "Box" and "of"
+    const gap1Start = x + boxTextW + 4;
+    const gap1End = ofX - 4;
+    const numW = doc.widthOfString(numStr);
+    doc.text(numStr, gap1Start + (gap1End - gap1Start - numW) / 2, y + 2);
+    // Centre the total after "of"
+    const gap2Start = ofX + ofTextW + 4;
+    const gap2End = x + w;
+    const totalW = doc.widthOfString(totalStr);
+    doc.text(totalStr, gap2Start + (gap2End - gap2Start - totalW) / 2, y + 2);
+  }
 
   // Underline after "Box" → before "of"
   doc.lineWidth(0.5).strokeColor('#999999')

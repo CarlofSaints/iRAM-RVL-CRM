@@ -36,22 +36,32 @@ interface UserDto {
   role: string;
 }
 
-interface ScannedBox {
-  id: string;
-  stickerBarcode: string;
-  scannedAt: string;
-  valid: boolean;
-  error?: string;
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function uuid(): string {
-  return crypto.randomUUID();
-}
 
 function fmtCurrency(v: number): string {
   return `R ${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Decode base64 PDF string and trigger browser download + print dialog */
+function downloadAndPrintPdf(base64: string, filename: string) {
+  const byteChars = atob(base64);
+  const byteNums = new Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) {
+    byteNums[i] = byteChars.charCodeAt(i);
+  }
+  const blob = new Blob([new Uint8Array(byteNums)], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+
+  // Trigger download
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  // Also open in new tab for printing
+  window.open(url, '_blank');
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -63,25 +73,21 @@ export default function ScanPage() {
   const notify = (message: string, type: 'success' | 'error' = 'success') =>
     setToast({ message, type });
 
-  // Step 1: Pick slip lookup — multi-slip
+  // Step 1: Pick slip lookup — multi-slip with per-slip box count
   const [slipQuery, setSlipQuery] = useState('');
   const [slipLoading, setSlipLoading] = useState(false);
   const [slips, setSlips] = useState<SlipSummary[]>([]);
   const [slipError, setSlipError] = useState('');
   const slipInputRef = useRef<HTMLInputElement>(null);
 
-  // Step 2: Rep, security code, box count
+  // Per-slip box counts: slipId → number
+  const [boxCounts, setBoxCounts] = useState<Record<string, number>>({});
+
+  // Step 2: Rep, security code
   const [reps, setReps] = useState<RepDto[]>([]);
   const [users, setUsers] = useState<UserDto[]>([]);
   const [selectedRepId, setSelectedRepId] = useState('');
   const [securityCode, setSecurityCode] = useState('');
-  const [boxCount, setBoxCount] = useState('');
-
-  // Step 3: Box scanning
-  const [boxes, setBoxes] = useState<ScannedBox[]>([]);
-  const [boxScanBarcode, setBoxScanBarcode] = useState('');
-  const [boxScanLoading, setBoxScanLoading] = useState(false);
-  const boxScanRef = useRef<HTMLInputElement>(null);
 
   // Submit
   const [booking, setBooking] = useState(false);
@@ -140,6 +146,7 @@ export default function ScanPage() {
       } else {
         const newSlip = data.slip as SlipSummary;
         setSlips(prev => [...prev, newSlip]);
+        setBoxCounts(prev => ({ ...prev, [newSlip.id]: 1 }));
         setSlipQuery('');
         setSlipError('');
         // Focus back on input for next scan
@@ -154,16 +161,20 @@ export default function ScanPage() {
 
   function removeSlip(slipId: string) {
     setSlips(prev => prev.filter(s => s.id !== slipId));
+    setBoxCounts(prev => {
+      const next = { ...prev };
+      delete next[slipId];
+      return next;
+    });
   }
 
   function clearAll() {
     setSlips([]);
     setSlipQuery('');
     setSlipError('');
-    setBoxes([]);
+    setBoxCounts({});
     setSelectedRepId('');
     setSecurityCode('');
-    setBoxCount('');
   }
 
   function onSlipKeyDown(e: React.KeyboardEvent) {
@@ -173,109 +184,18 @@ export default function ScanPage() {
     }
   }
 
-  // ── Box scanning ──
-  async function handleBoxScan() {
-    const barcode = boxScanBarcode.trim().toUpperCase();
-    if (!barcode || slips.length === 0) return;
-
-    // Client-side duplicate check
-    if (boxes.some(b => b.stickerBarcode === barcode && b.valid)) {
-      notify('This barcode is already scanned', 'error');
-      setBoxScanBarcode('');
-      boxScanRef.current?.focus();
-      return;
-    }
-
-    setBoxScanLoading(true);
-    try {
-      const res = await authFetch(`/api/receipts/lookup?barcode=${encodeURIComponent(barcode)}`, { cache: 'no-store' });
-      const data = await res.json();
-
-      if (!data.found) {
-        const box: ScannedBox = {
-          id: uuid(),
-          stickerBarcode: barcode,
-          scannedAt: new Date().toISOString(),
-          valid: false,
-          error: 'Barcode not found in the system',
-        };
-        setBoxes(prev => [...prev, box]);
-        notify(`Barcode "${barcode}" not found`, 'error');
-      } else {
-        // Check if linked to a slip that's NOT one of our currently selected slips
-        const currentSlipIds = new Set(slips.map(s => s.id));
-        const linkedIds: string[] = data.linkedPickSlipIds ?? (data.linkedPickSlipId ? [data.linkedPickSlipId] : []);
-        const foreignLinks = linkedIds.filter(id => !currentSlipIds.has(id));
-
-        if (foreignLinks.length > 0) {
-          const box: ScannedBox = {
-            id: uuid(),
-            stickerBarcode: barcode,
-            scannedAt: new Date().toISOString(),
-            valid: false,
-            error: `Already linked to ${foreignLinks.join(', ')}`,
-          };
-          setBoxes(prev => [...prev, box]);
-          notify(`Barcode already linked to ${foreignLinks.join(', ')}`, 'error');
-        } else {
-          // Check warehouse match against ALL slips
-          const stickerWh = (data.warehouseCode || '').toUpperCase().trim();
-          const warehouseWarnings: string[] = [];
-          for (const slip of slips) {
-            const slipWh = (slip.warehouseCode || '').toUpperCase().trim();
-            if (stickerWh && slipWh && stickerWh !== slipWh) {
-              warehouseWarnings.push(`${slip.id}: sticker=${data.warehouseCode}, slip=${slip.warehouse}`);
-            }
-          }
-
-          const warehouseWarning = warehouseWarnings.length > 0
-            ? `Warehouse mismatch: ${warehouseWarnings.join('; ')}`
-            : undefined;
-
-          const box: ScannedBox = {
-            id: uuid(),
-            stickerBarcode: barcode,
-            scannedAt: new Date().toISOString(),
-            valid: true,
-            error: warehouseWarning,
-          };
-          setBoxes(prev => [...prev, box]);
-          if (warehouseWarning) {
-            notify(`Box ${barcode} added (warehouse mismatch warning)`, 'error');
-          } else {
-            notify(`Box ${barcode} added`);
-          }
-        }
-      }
-    } catch {
-      notify('Network error scanning barcode', 'error');
-    } finally {
-      setBoxScanBarcode('');
-      setBoxScanLoading(false);
-      boxScanRef.current?.focus();
-    }
+  function updateBoxCount(slipId: string, value: string) {
+    const num = parseInt(value, 10);
+    setBoxCounts(prev => ({
+      ...prev,
+      [slipId]: isNaN(num) || num < 1 ? 1 : num,
+    }));
   }
 
-  function onBoxScanKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleBoxScan();
-    }
-  }
-
-  function removeBox(boxId: string) {
-    setBoxes(prev => prev.filter(b => b.id !== boxId));
-  }
-
-  // ── Book stock ──
+  // ── Book stock + print stickers ──
   async function handleBook() {
     if (slips.length === 0) return;
 
-    const validBoxes = boxes.filter(b => b.valid);
-    if (validBoxes.length === 0) {
-      notify('Scan at least one valid box before booking', 'error');
-      return;
-    }
     if (!selectedRepId) {
       notify('Select a rep', 'error');
       return;
@@ -285,12 +205,13 @@ export default function ScanPage() {
       return;
     }
 
-    const expectedCount = boxCount ? Number(boxCount) : 0;
-    if (expectedCount > 0 && expectedCount !== validBoxes.length) {
-      const proceed = confirm(
-        `You entered ${boxCount} boxes expected but scanned ${validBoxes.length} valid box${validBoxes.length !== 1 ? 'es' : ''}. Book anyway?`
-      );
-      if (!proceed) return;
+    // Validate all slips have box counts
+    for (const slip of slips) {
+      const count = boxCounts[slip.id] || 0;
+      if (count < 1) {
+        notify(`Enter a box count for ${slip.id}`, 'error');
+        return;
+      }
     }
 
     setBooking(true);
@@ -303,20 +224,28 @@ export default function ScanPage() {
             slipId: s.id,
             clientId: s.clientId,
             loadId: s.loadId,
+            boxCount: boxCounts[s.id] || 1,
           })),
           repId: selectedRepId,
           securityCode: securityCode.trim(),
-          boxes: validBoxes.map(b => ({
-            id: b.id,
-            stickerBarcode: b.stickerBarcode,
-            scannedAt: b.scannedAt,
-          })),
         }),
       });
       const data = await res.json();
       if (res.ok && data.ok) {
         const slipCount = slips.length;
-        notify(slipCount === 1 ? 'Stock booked successfully' : `${slipCount} pick slips booked successfully`);
+        const totalBoxes = slips.reduce((sum, s) => sum + (boxCounts[s.id] || 1), 0);
+        notify(
+          slipCount === 1
+            ? `Stock booked — ${totalBoxes} sticker${totalBoxes !== 1 ? 's' : ''} generated`
+            : `${slipCount} pick slips booked — ${totalBoxes} stickers generated`
+        );
+
+        // Download + print the sticker PDF
+        if (data.pdfBase64) {
+          const filename = `Stickers-${new Date().toISOString().slice(0, 10)}-${totalBoxes}pcs.pdf`;
+          downloadAndPrintPdf(data.pdfBase64, filename);
+        }
+
         clearAll();
         setTimeout(() => slipInputRef.current?.focus(), 100);
       } else {
@@ -351,10 +280,10 @@ export default function ScanPage() {
             slipId: s.id,
             clientId: s.clientId,
             loadId: s.loadId,
+            boxCount: 0,
           })),
           repId: ntrRepId,
           securityCode: ntrSecurityCode.trim(),
-          boxes: [],
           nothingToReturn: true,
         }),
       });
@@ -389,12 +318,13 @@ export default function ScanPage() {
     })),
   ];
 
-  const validBoxCount = boxes.filter(b => b.valid).length;
-  const canBook = slips.length > 0 && selectedRepId && securityCode.trim().length === 4 && validBoxCount > 0;
+  const allBoxCountsValid = slips.length > 0 && slips.every(s => (boxCounts[s.id] || 0) >= 1);
+  const canBook = slips.length > 0 && selectedRepId && securityCode.trim().length === 4 && allBoxCountsValid;
 
   // Totals across all slips
   const totalQty = slips.reduce((sum, s) => sum + s.totalQty, 0);
   const totalVal = slips.reduce((sum, s) => sum + s.totalVal, 0);
+  const totalBoxes = slips.reduce((sum, s) => sum + (boxCounts[s.id] || 1), 0);
 
   if (!session) return null;
 
@@ -406,7 +336,7 @@ export default function ScanPage() {
       <div className="mb-6">
         <h1 className="text-3xl font-bold text-gray-900">Book Stock into WH</h1>
         <p className="text-sm text-gray-600 mt-1">
-          Scan picking slip barcodes, link sticker boxes, and book stock into the warehouse
+          Scan picking slips, enter box counts, and print pre-filled sticker labels
         </p>
       </div>
 
@@ -461,7 +391,7 @@ export default function ScanPage() {
           </div>
         )}
 
-        {/* List of added slips */}
+        {/* List of added slips with per-slip box count */}
         {slips.length > 0 && (
           <div className="mt-4">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
@@ -475,6 +405,16 @@ export default function ScanPage() {
                     <span className="text-xs text-gray-500 ml-2">{s.clientName} &middot; {s.siteName}</span>
                   </div>
                   <span className="text-xs text-gray-500 shrink-0">{s.totalQty.toLocaleString()} units</span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <label className="text-xs text-gray-500">Boxes:</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={boxCounts[s.id] || ''}
+                      onChange={e => updateBoxCount(s.id, e.target.value)}
+                      className="w-16 px-1.5 py-0.5 border border-gray-300 rounded text-sm text-center"
+                    />
+                  </div>
                   <button
                     onClick={() => removeSlip(s.id)}
                     title="Remove slip"
@@ -487,6 +427,11 @@ export default function ScanPage() {
                 </div>
               ))}
             </div>
+            {slips.length > 0 && (
+              <div className="mt-2 text-xs text-gray-500 text-right">
+                Total stickers to print: <span className="font-semibold text-gray-700">{totalBoxes}</span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -572,10 +517,10 @@ export default function ScanPage() {
             )}
           </div>
 
-          {/* Step 2: Rep, Security Code, Box Count */}
+          {/* Step 2: Rep, Security Code */}
           <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
             <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-3">Step 2: Verify Identity</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Select Rep <span className="text-red-500">*</span></label>
                 <select
@@ -602,118 +547,10 @@ export default function ScanPage() {
                 />
                 <span className="text-[10px] text-gray-400 mt-0.5 block">The rep must provide their 4-character release code</span>
               </div>
-              <div>
-                <label className="block text-xs text-gray-600 mb-1">Number of Boxes</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={boxCount}
-                  onChange={e => setBoxCount(e.target.value)}
-                  placeholder="Expected box count"
-                  className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm"
-                />
-                <span className="text-[10px] text-gray-400 mt-0.5 block">Optional — warns if scanned count differs</span>
-              </div>
             </div>
           </div>
 
-          {/* Step 3: Box Scanning */}
-          <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Step 3: Scan Boxes</h2>
-                <p className="text-xs text-gray-500 mt-0.5">Scan each sticker barcode on the boxes</p>
-              </div>
-              <span className="text-sm text-gray-500">
-                {validBoxCount} valid
-                {boxes.length > validBoxCount && (
-                  <span className="text-red-500 ml-1">({boxes.length - validBoxCount} error{boxes.length - validBoxCount !== 1 ? 's' : ''})</span>
-                )}
-                {boxCount && Number(boxCount) > 0 && (
-                  <> / {boxCount} expected</>
-                )}
-              </span>
-            </div>
-
-            <div className="flex gap-3 mb-4 items-end">
-              <div className="flex-1">
-                <label className="block text-xs text-gray-600 mb-1">Scan Box Sticker Barcode</label>
-                <input
-                  ref={boxScanRef}
-                  type="text"
-                  value={boxScanBarcode}
-                  onChange={e => setBoxScanBarcode(e.target.value)}
-                  onKeyDown={onBoxScanKeyDown}
-                  placeholder="STK-GAU-0001"
-                  className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm font-mono"
-                />
-              </div>
-              <button
-                onClick={handleBoxScan}
-                disabled={boxScanLoading || !boxScanBarcode.trim()}
-                className="px-4 py-1.5 bg-[var(--color-primary)] text-white rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
-              >
-                {boxScanLoading && <div className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-                Scan
-              </button>
-            </div>
-
-            {boxes.length > 0 ? (
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs font-semibold text-gray-600 uppercase tracking-wide border-b border-gray-200">
-                    <th className="pb-2">#</th>
-                    <th className="pb-2">Box Number</th>
-                    <th className="pb-2">Status</th>
-                    <th className="pb-2 w-10"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {boxes.map((b, i) => (
-                    <tr key={b.id} className={`border-t border-gray-100 ${!b.valid ? 'bg-red-50' : ''}`}>
-                      <td className="py-1.5 text-gray-400">{i + 1}</td>
-                      <td className="py-1.5 font-mono font-medium">{b.stickerBarcode}</td>
-                      <td className="py-1.5">
-                        {b.valid ? (
-                          <span className="inline-flex items-center gap-1 text-green-600 text-xs font-medium">
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                            </svg>
-                            Valid
-                            {b.error && <span className="text-amber-600 ml-1">({b.error})</span>}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-red-600 text-xs font-medium">
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                            {b.error || 'Invalid'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-1.5 text-center">
-                        <button
-                          onClick={() => removeBox(b.id)}
-                          title="Remove"
-                          className="text-red-400 hover:text-red-600"
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p className="text-center text-gray-400 text-sm py-6">
-                No boxes scanned yet — use the input above to scan sticker barcodes
-              </p>
-            )}
-          </div>
-
-          {/* Book Stock button */}
+          {/* Print Stickers & Book button */}
           <div className="flex gap-3">
             <button
               onClick={handleBook}
@@ -721,7 +558,10 @@ export default function ScanPage() {
               className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {booking && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-              Book Stock{slips.length > 1 ? ` (${slips.length} Slips)` : ''}
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18m0 0l.229 2.523a1.125 1.125 0 01-1.12 1.227H7.231c-.662 0-1.18-.568-1.12-1.227L6.34 18m11.318 0h1.091A2.25 2.25 0 0021 15.75V9.456c0-1.081-.768-2.015-1.837-2.175a48.055 48.055 0 00-1.913-.247M6.34 18H5.25A2.25 2.25 0 013 15.75V9.456c0-1.081.768-2.015 1.837-2.175a48.041 48.041 0 011.913-.247m10.5 0a48.536 48.536 0 00-10.5 0m10.5 0V3.375c0-.621-.504-1.125-1.125-1.125h-8.25c-.621 0-1.125.504-1.125 1.125v3.659M18.75 12h.008v.008h-.008V12zm-2.25 0h.008v.008H16.5V12z" />
+              </svg>
+              Print Stickers &amp; Book{slips.length > 1 ? ` (${slips.length} Slips)` : ''}
             </button>
             <button
               onClick={clearAll}

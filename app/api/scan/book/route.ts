@@ -3,7 +3,13 @@ import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { loadControl } from '@/lib/controlData';
 import { getPickSlipRun, updateSlipInRun, type ReceiptBox } from '@/lib/pickSlipData';
-import { findAndLinkSticker } from '@/lib/stickerData';
+import {
+  saveBatch,
+  nextStickerSequence,
+  type StickerBatch,
+  type Sticker,
+} from '@/lib/stickerData';
+import { generateStickerPdf, type StickerFieldData } from '@/lib/stickerPdf';
 import { logAudit } from '@/lib/auditLog';
 
 export const dynamic = 'force-dynamic';
@@ -15,39 +21,51 @@ interface RepRecord {
   releaseCode?: string;
 }
 
+interface Warehouse {
+  id: string;
+  name: string;
+  code: string;
+}
+
 interface SlipRef {
   slipId: string;
   clientId: string;
   loadId: string;
+  boxCount: number;
 }
 
 /**
  * POST /api/scan/book
  *
  * Book stock into a warehouse via the scan screen.
- * Links sticker barcodes to pick slip(s) and sets status to 'booked'.
+ * Generates pre-filled sticker labels on the fly, creates a batch,
+ * links them to the pick slip(s), books the stock, and returns a
+ * base64 PDF for printing.
  *
- * Accepts either:
- *   - Legacy single-slip: { slipId, clientId, loadId, repId, securityCode, boxes }
- *   - Multi-slip: { slips: [{ slipId, clientId, loadId }], repId, securityCode, boxes }
+ * Body: { slips: [{ slipId, clientId, loadId, boxCount }], repId, securityCode }
+ *       OR nothingToReturn mode: { slips: [...], repId, securityCode, nothingToReturn: true }
  */
 export async function POST(req: NextRequest) {
   const guard = await requirePermission(req, 'scan_stock');
   if (guard instanceof NextResponse) return guard;
 
   const body = await req.json();
-  const { repId, securityCode, boxes } = body as {
+  const { repId, securityCode } = body as {
     repId: string;
     securityCode: string;
-    boxes: ReceiptBox[];
   };
 
-  // Normalize to slips array — backward compat with single-slip format
+  // Normalize to slips array
   let slips: SlipRef[];
   if (body.slips && Array.isArray(body.slips)) {
     slips = body.slips;
   } else if (body.slipId && body.clientId && body.loadId) {
-    slips = [{ slipId: body.slipId, clientId: body.clientId, loadId: body.loadId }];
+    slips = [{
+      slipId: body.slipId,
+      clientId: body.clientId,
+      loadId: body.loadId,
+      boxCount: typeof body.boxCount === 'number' ? body.boxCount : 0,
+    }];
   } else {
     return NextResponse.json({ error: 'slips array or slipId/clientId/loadId are required' }, { status: 400 });
   }
@@ -61,14 +79,30 @@ export async function POST(req: NextRequest) {
   if (!securityCode) {
     return NextResponse.json({ error: 'securityCode is required' }, { status: 400 });
   }
+
   const nothingToReturn = body.nothingToReturn === true;
 
-  if (!nothingToReturn && (!boxes || boxes.length === 0)) {
-    return NextResponse.json({ error: 'At least one box is required' }, { status: 400 });
+  if (!nothingToReturn) {
+    for (const ref of slips) {
+      if (!ref.boxCount || ref.boxCount < 1) {
+        return NextResponse.json({ error: `Box count is required for slip ${ref.slipId}` }, { status: 400 });
+      }
+    }
   }
 
   // Validate all slips exist and are bookable BEFORE making changes
   const bookableStatuses = ['generated', 'sent'];
+  interface SlipDetail {
+    ref: SlipRef;
+    clientName: string;
+    vendorNumber: string;
+    siteCode: string;
+    siteName: string;
+    warehouseCode: string;
+    warehouseName: string;
+  }
+  const slipDetails: SlipDetail[] = [];
+
   for (const ref of slips) {
     const run = await getPickSlipRun(ref.clientId, ref.loadId);
     if (!run) {
@@ -84,6 +118,15 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
+    slipDetails.push({
+      ref,
+      clientName: slip.clientName || '',
+      vendorNumber: slip.vendorNumber || '',
+      siteCode: slip.siteCode || '',
+      siteName: slip.siteName || '',
+      warehouseCode: slip.warehouseCode || '',
+      warehouseName: slip.warehouse || '',
+    });
   }
 
   // Validate rep/user exists and has a release code
@@ -107,46 +150,127 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Security code does not match' }, { status: 403 });
   }
 
-  // Link stickers to ALL pick slips (multi-link) — skip when nothing to return
-  const allSlipIds = slips.map(s => s.slipId);
-  const linkErrors: string[] = [];
-  const effectiveBoxes = nothingToReturn ? [] : (boxes ?? []);
-  for (const box of effectiveBoxes) {
-    for (const slipId of allSlipIds) {
-      const result = await findAndLinkSticker(box.stickerBarcode, slipId);
-      if (!result) {
-        // Only report "not found" once per barcode, not per slip
-        if (!linkErrors.some(e => e.includes(box.stickerBarcode))) {
-          linkErrors.push(`Barcode ${box.stickerBarcode} not found`);
-        }
-      }
-    }
-  }
-
   // Get booking user info
   const bookingUser = users.find(u => u.id === guard.userId);
   const bookingUserName = bookingUser ? `${bookingUser.name} ${bookingUser.surname}`.trim() : guard.userId;
   const repName = match ? `${match.name} ${match.surname}`.trim() : repId;
 
+  const todayStr = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+  // ── Generate stickers (skip when nothing to return) ──
+
+  let pdfBase64: string | undefined;
+  const allGeneratedBoxes: ReceiptBox[] = [];
+
+  if (!nothingToReturn) {
+    // Determine warehouse code for barcode prefix — use first slip's warehouse
+    const primaryWh = slipDetails[0].warehouseCode || 'WH';
+
+    // Resolve warehouse name for batch metadata
+    const warehouses = await loadControl<Warehouse>('warehouses');
+    const whRecord = warehouses.find(w => w.code === primaryWh);
+    const whName = whRecord?.name || slipDetails[0].warehouseName || primaryWh;
+
+    // Get the next sequence number for this warehouse
+    let seq = await nextStickerSequence(primaryWh);
+
+    const allStickers: Sticker[] = [];
+    const pdfStickers: Array<{ barcodeValue: string; fields?: StickerFieldData }> = [];
+
+    for (const detail of slipDetails) {
+      const boxCount = detail.ref.boxCount;
+
+      for (let box = 1; box <= boxCount; box++) {
+        const seqStr = String(seq).padStart(4, '0');
+        const barcodeValue = `STK-${primaryWh}-${seqStr}`;
+        const stickerId = crypto.randomUUID();
+
+        // Create sticker with pre-linked slip
+        allStickers.push({
+          id: stickerId,
+          barcodeValue,
+          linkedPickSlipIds: [detail.ref.slipId],
+          linkedPickSlipId: detail.ref.slipId,
+          linkedAt: new Date().toISOString(),
+        });
+
+        // PDF sticker with pre-filled fields
+        pdfStickers.push({
+          barcodeValue,
+          fields: {
+            siteCode: detail.siteCode,
+            date: todayStr,
+            storeName: detail.siteName,
+            referenceNumber: detail.ref.slipId,
+            vendorName: detail.clientName,
+            vendorCode: detail.vendorNumber,
+            repName,
+            boxNumber: box,
+            totalBoxes: boxCount,
+          },
+        });
+
+        // Build receipt box entries for the slip update
+        allGeneratedBoxes.push({
+          id: stickerId,
+          stickerBarcode: barcodeValue,
+          scannedAt: new Date().toISOString(),
+        });
+
+        seq++;
+      }
+    }
+
+    // Save sticker batch
+    const batchId = crypto.randomUUID();
+    const batch: StickerBatch = {
+      id: batchId,
+      warehouseCode: primaryWh,
+      warehouseName: whName,
+      quantity: allStickers.length,
+      createdAt: new Date().toISOString(),
+      createdBy: guard.userId,
+      createdByName: bookingUserName,
+      stickers: allStickers,
+    };
+    await saveBatch(batch);
+
+    // Generate PDF
+    const pdfBuffer = await generateStickerPdf({
+      stickers: pdfStickers,
+      warehouseName: whName,
+    });
+    pdfBase64 = pdfBuffer.toString('base64');
+  }
+
+  // ── Update each slip with booking data ──
+
   const isMulti = slips.length > 1;
+  const allSlipIds = slips.map(s => s.slipId);
   const slipIdsList = allSlipIds.join(', ');
   const updatedSlips = [];
 
-  // Update each slip with booking data
-  for (const ref of slips) {
-    const updated = await updateSlipInRun(ref.clientId, ref.loadId, ref.slipId, {
+  // Track which boxes belong to which slip for per-slip receiptBoxes
+  let boxOffset = 0;
+
+  for (const detail of slipDetails) {
+    const boxCount = nothingToReturn ? 0 : detail.ref.boxCount;
+    const slipBoxes = allGeneratedBoxes.slice(boxOffset, boxOffset + boxCount);
+    boxOffset += boxCount;
+
+    const updated = await updateSlipInRun(detail.ref.clientId, detail.ref.loadId, detail.ref.slipId, {
       status: 'booked',
       bookedAt: new Date().toISOString(),
       bookedBy: guard.userId,
       bookedByName: bookingUserName,
       bookedRepId: repId,
       bookedRepName: repName,
-      receiptBoxes: effectiveBoxes,
-      receiptTotalBoxes: effectiveBoxes.length,
+      receiptBoxes: slipBoxes,
+      receiptTotalBoxes: boxCount,
     });
 
     if (!updated) {
-      return NextResponse.json({ error: `Failed to update pick slip ${ref.slipId}` }, { status: 500 });
+      return NextResponse.json({ error: `Failed to update pick slip ${detail.ref.slipId}` }, { status: 500 });
     }
 
     updatedSlips.push(updated);
@@ -156,13 +280,13 @@ export async function POST(req: NextRequest) {
       action: 'scan_book',
       userId: guard.userId,
       userName: bookingUserName,
-      slipId: ref.slipId,
-      clientId: ref.clientId,
+      slipId: detail.ref.slipId,
+      clientId: detail.ref.clientId,
       detail: nothingToReturn
-        ? `Stock booked (nothing to return) for ${ref.slipId}. Rep: ${repName}`
+        ? `Stock booked (nothing to return) for ${detail.ref.slipId}. Rep: ${repName}`
         : isMulti
-        ? `Multi-slip booking — ${effectiveBoxes.length} box${effectiveBoxes.length !== 1 ? 'es' : ''} scanned for ${ref.slipId} (booked with: ${slipIdsList}). Rep: ${repName}`
-        : `Stock booked — ${effectiveBoxes.length} box${effectiveBoxes.length !== 1 ? 'es' : ''} scanned for ${ref.slipId}. Rep: ${repName}`,
+        ? `Multi-slip booking — ${boxCount} sticker${boxCount !== 1 ? 's' : ''} generated for ${detail.ref.slipId} (booked with: ${slipIdsList}). Rep: ${repName}`
+        : `Stock booked — ${boxCount} sticker${boxCount !== 1 ? 's' : ''} generated for ${detail.ref.slipId}. Rep: ${repName}`,
     });
   }
 
@@ -171,7 +295,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       slip: updatedSlips[0],  // backward compat
       slips: updatedSlips,
-      linkErrors,
+      ...(pdfBase64 ? { pdfBase64 } : {}),
     },
     { headers: { 'Cache-Control': 'no-store' } },
   );
