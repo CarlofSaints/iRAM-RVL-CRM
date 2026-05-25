@@ -31,6 +31,7 @@ export async function GET(
     warehouseName: batch.warehouseName,
     stickerWidthMm: settings.sticker.widthMm,
     stickerHeightMm: settings.sticker.heightMm,
+    layout: settings.sticker.layout,
   });
 
   const dateStr = batch.createdAt.slice(0, 10); // YYYY-MM-DD

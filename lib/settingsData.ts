@@ -13,11 +13,15 @@ import { put, get } from '@vercel/blob';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+export type StickerLayout = 'roll' | 'a4sheet';
+
 export interface StickerSettings {
   /** Sticker width in millimetres */
   widthMm: number;
   /** Sticker height in millimetres */
   heightMm: number;
+  /** Layout mode: 'roll' = one sticker per page (page = sticker size), 'a4sheet' = grid on A4 */
+  layout: StickerLayout;
 }
 
 export interface AppSettings {
@@ -29,6 +33,7 @@ export interface AppSettings {
 export const DEFAULT_STICKER: StickerSettings = {
   widthMm: 74,
   heightMm: 50,
+  layout: 'roll',
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {

@@ -38,6 +38,8 @@ export interface StickerPdfParams {
   stickerWidthMm?: number;
   /** Sticker height in mm. Defaults to 50. */
   stickerHeightMm?: number;
+  /** Layout mode: 'roll' = one sticker per page sized to sticker, 'a4sheet' = grid on A4. Defaults to 'roll'. */
+  layout?: 'roll' | 'a4sheet';
 }
 
 // ── Layout constants ─────────────────────────────────────────────────────────
@@ -68,23 +70,16 @@ const FIELD_ROWS: FieldRow[] = [
  */
 export async function generateStickerPdf(params: StickerPdfParams): Promise<Buffer> {
   const { stickers, warehouseName } = params;
+  const layout = params.layout ?? 'roll';
   const stickerW = (params.stickerWidthMm ?? 74) * MM;
   const stickerH = (params.stickerHeightMm ?? 50) * MM;
 
-  // Calculate grid from dimensions
-  const cols = Math.max(1, Math.floor((PAGE_W + GAP) / (stickerW + GAP)));
-  const rows = Math.max(1, Math.floor((PAGE_H + GAP) / (stickerH + GAP)));
-  const stickersPerPage = cols * rows;
-
-  const marginX = (PAGE_W - cols * stickerW - (cols - 1) * GAP) / 2;
-  const marginY = (PAGE_H - rows * stickerH - (rows - 1) * GAP) / 2;
-
-  // Decide layout mode: compact (height < 80mm) vs standard
+  // Decide visual mode: compact (height < 80mm) vs standard
   const compact = (params.stickerHeightMm ?? 50) < 80;
 
-  // Load logo only for standard (tall) stickers
+  // Load logo only for standard (tall) stickers on A4 sheets
   let logoBuffer: Buffer | null = null;
-  if (!compact) {
+  if (!compact && layout === 'a4sheet') {
     try {
       const logoPath = path.join(process.cwd(), 'public', 'iram-logo.png');
       if (fs.existsSync(logoPath)) logoBuffer = fs.readFileSync(logoPath);
@@ -110,7 +105,83 @@ export async function generateStickerPdf(params: StickerPdfParams): Promise<Buff
     }
   }
 
-  // Create PDF
+  if (layout === 'roll') {
+    return generateRollPdf(stickers, warehouseName, stickerW, stickerH, compact, barcodePngs);
+  } else {
+    return generateA4SheetPdf(stickers, warehouseName, stickerW, stickerH, compact, logoBuffer, barcodePngs);
+  }
+}
+
+// ── Roll mode: one sticker per page, page = sticker size ─────────────────────
+
+function generateRollPdf(
+  stickers: StickerPdfParams['stickers'],
+  warehouseName: string,
+  stickerW: number,
+  stickerH: number,
+  compact: boolean,
+  barcodePngs: Map<string, Buffer>,
+): Promise<Buffer> {
+  const doc = new PDFDocument({
+    size: [stickerW, stickerH],
+    margins: { top: 0, bottom: 0, left: 0, right: 0 },
+    bufferPages: true,
+    info: {
+      Title: `Sticker Labels - ${warehouseName}`,
+      Author: 'iRamFlow — OuterJoin',
+    },
+  });
+
+  const chunks: Buffer[] = [];
+  doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+  for (let i = 0; i < stickers.length; i++) {
+    if (i > 0) doc.addPage({ size: [stickerW, stickerH], margins: { top: 0, bottom: 0, left: 0, right: 0 } });
+
+    if (compact) {
+      drawCompactSticker(doc, {
+        x: 0, y: 0, w: stickerW, h: stickerH,
+        barcodeValue: stickers[i].barcodeValue,
+        barcodePng: barcodePngs.get(stickers[i].barcodeValue) ?? null,
+        fields: stickers[i].fields,
+      });
+    } else {
+      drawSticker(doc, {
+        x: 0, y: 0, w: stickerW, h: stickerH,
+        barcodeValue: stickers[i].barcodeValue,
+        barcodePng: barcodePngs.get(stickers[i].barcodeValue) ?? null,
+        logoBuffer: null,
+        fields: stickers[i].fields,
+      });
+    }
+  }
+
+  doc.end();
+
+  return new Promise<Buffer>((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+  });
+}
+
+// ── A4 Sheet mode: grid of stickers on A4 pages ─────────────────────────────
+
+function generateA4SheetPdf(
+  stickers: StickerPdfParams['stickers'],
+  warehouseName: string,
+  stickerW: number,
+  stickerH: number,
+  compact: boolean,
+  logoBuffer: Buffer | null,
+  barcodePngs: Map<string, Buffer>,
+): Promise<Buffer> {
+  const cols = Math.max(1, Math.floor((PAGE_W + GAP) / (stickerW + GAP)));
+  const rows = Math.max(1, Math.floor((PAGE_H + GAP) / (stickerH + GAP)));
+  const stickersPerPage = cols * rows;
+
+  const marginX = (PAGE_W - cols * stickerW - (cols - 1) * GAP) / 2;
+  const marginY = (PAGE_H - rows * stickerH - (rows - 1) * GAP) / 2;
+
   const doc = new PDFDocument({
     size: 'A4',
     margins: { top: marginY, bottom: marginY, left: marginX, right: marginX },

@@ -4,16 +4,19 @@ import { useEffect, useState } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
 
+type StickerLayout = 'roll' | 'a4sheet';
+
 interface StickerSettings {
   widthMm: number;
   heightMm: number;
+  layout: StickerLayout;
 }
 
 interface AppSettings {
   sticker: StickerSettings;
 }
 
-export default function SettingsPage() {
+export default function StickersPage() {
   useAuth('manage_warehouses');
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [toast, setToast] = useState<ToastData | null>(null);
@@ -22,6 +25,7 @@ export default function SettingsPage() {
   // Sticker form fields
   const [stickerW, setStickerW] = useState('');
   const [stickerH, setStickerH] = useState('');
+  const [layout, setLayout] = useState<StickerLayout>('roll');
 
   const notify = (message: string, type: 'success' | 'error' = 'success') =>
     setToast({ message, type });
@@ -35,6 +39,7 @@ export default function SettingsPage() {
           setSettings(data);
           setStickerW(String(data.sticker.widthMm));
           setStickerH(String(data.sticker.heightMm));
+          setLayout(data.sticker.layout ?? 'roll');
         }
       } catch { /* ignore */ }
     })();
@@ -58,7 +63,7 @@ export default function SettingsPage() {
       const res = await authFetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sticker: { widthMm: w, heightMm: h } }),
+        body: JSON.stringify({ sticker: { widthMm: w, heightMm: h, layout } }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Unknown error' }));
@@ -73,7 +78,7 @@ export default function SettingsPage() {
     }
   }
 
-  // Calculate preview info
+  // Calculate A4 preview info
   const MM = 72 / 25.4;
   const previewW = parseFloat(stickerW) || 0;
   const previewH = parseFloat(stickerH) || 0;
@@ -95,19 +100,37 @@ export default function SettingsPage() {
 
       <div className="bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] px-6 py-4">
         <h1 className="text-xl font-bold text-gray-900">Sticker Dimensions</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Configure sticker label size for PDF generation</p>
+        <p className="text-sm text-gray-500 mt-0.5">Configure sticker label size and layout for PDF generation</p>
       </div>
 
-      {/* Sticker Dimensions */}
       <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
         <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-1">
           Sticker Label Size
         </h2>
         <p className="text-xs text-gray-500 mb-5">
-          Set the physical sticker dimensions. This affects the PDF layout when printing sticker batches.
+          Set the physical sticker dimensions and print layout.
         </p>
 
         <form onSubmit={handleSave} className="flex flex-col gap-5">
+          {/* Layout mode */}
+          <div className="flex flex-col gap-1 max-w-md">
+            <label className="text-xs text-gray-500 font-medium">Print Layout</label>
+            <select
+              value={layout}
+              onChange={e => setLayout(e.target.value as StickerLayout)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+            >
+              <option value="roll">Roll (one sticker per page)</option>
+              <option value="a4sheet">A4 Sheet (grid layout)</option>
+            </select>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {layout === 'roll'
+                ? 'Each PDF page is sized to the sticker — for roll/thermal label printers.'
+                : 'Stickers arranged in a grid on A4 pages — for sheet label printers.'}
+            </p>
+          </div>
+
+          {/* Dimensions */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-md">
             <div className="flex flex-col gap-1">
               <label className="text-xs text-gray-500 font-medium">Width (mm)</label>
@@ -137,12 +160,21 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {/* Live preview */}
-          {previewW > 0 && previewH > 0 && (
+          {/* Live preview — only relevant for A4 sheet mode */}
+          {layout === 'a4sheet' && previewW > 0 && previewH > 0 && (
             <div className="bg-gray-50 rounded-lg border border-gray-200 px-4 py-3 max-w-md">
               <p className="text-xs font-semibold text-gray-600 mb-1">A4 Sheet Preview</p>
               <p className="text-xs text-gray-500">
                 {cols} columns &times; {rows} rows = <span className="font-bold text-[var(--color-primary)]">{perPage} stickers per page</span>
+              </p>
+            </div>
+          )}
+
+          {layout === 'roll' && previewW > 0 && previewH > 0 && (
+            <div className="bg-gray-50 rounded-lg border border-gray-200 px-4 py-3 max-w-md">
+              <p className="text-xs font-semibold text-gray-600 mb-1">Roll Preview</p>
+              <p className="text-xs text-gray-500">
+                Each PDF page = <span className="font-bold text-[var(--color-primary)]">{previewW}mm &times; {previewH}mm</span> — one sticker per page
               </p>
             </div>
           )}

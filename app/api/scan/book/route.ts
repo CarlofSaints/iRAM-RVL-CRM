@@ -243,6 +243,7 @@ export async function POST(req: NextRequest) {
       warehouseName: whName,
       stickerWidthMm: stickerSettings.sticker.widthMm,
       stickerHeightMm: stickerSettings.sticker.heightMm,
+      layout: stickerSettings.sticker.layout,
     });
     pdfBase64 = pdfBuffer.toString('base64');
   }

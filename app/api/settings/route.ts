@@ -32,6 +32,9 @@ export async function PUT(req: NextRequest) {
   if (body.sticker) {
     const w = typeof body.sticker.widthMm === 'number' ? body.sticker.widthMm : current.sticker.widthMm;
     const h = typeof body.sticker.heightMm === 'number' ? body.sticker.heightMm : current.sticker.heightMm;
+    const layout = body.sticker.layout === 'roll' || body.sticker.layout === 'a4sheet'
+      ? body.sticker.layout
+      : current.sticker.layout;
 
     if (w < 20 || w > 210 || h < 20 || h > 297) {
       return NextResponse.json(
@@ -40,7 +43,7 @@ export async function PUT(req: NextRequest) {
       );
     }
 
-    current.sticker = { widthMm: w, heightMm: h };
+    current.sticker = { widthMm: w, heightMm: h, layout };
   }
 
   await saveSettings(current);
