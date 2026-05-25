@@ -10,6 +10,7 @@ import {
   type Sticker,
 } from '@/lib/stickerData';
 import { generateStickerPdf, type StickerFieldData } from '@/lib/stickerPdf';
+import { loadSettings } from '@/lib/settingsData';
 import { logAudit } from '@/lib/auditLog';
 
 export const dynamic = 'force-dynamic';
@@ -236,9 +237,12 @@ export async function POST(req: NextRequest) {
     await saveBatch(batch);
 
     // Generate PDF
+    const stickerSettings = await loadSettings();
     const pdfBuffer = await generateStickerPdf({
       stickers: pdfStickers,
       warehouseName: whName,
+      stickerWidthMm: stickerSettings.sticker.widthMm,
+      stickerHeightMm: stickerSettings.sticker.heightMm,
     });
     pdfBase64 = pdfBuffer.toString('base64');
   }

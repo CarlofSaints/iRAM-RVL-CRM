@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
 import { getBatch } from '@/lib/stickerData';
 import { generateStickerPdf } from '@/lib/stickerPdf';
+import { loadSettings } from '@/lib/settingsData';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,9 +24,13 @@ export async function GET(
     return NextResponse.json({ error: 'Batch not found' }, { status: 404 });
   }
 
+  const settings = await loadSettings();
+
   const pdfBuffer = await generateStickerPdf({
     stickers: batch.stickers.map(s => ({ barcodeValue: s.barcodeValue })),
     warehouseName: batch.warehouseName,
+    stickerWidthMm: settings.sticker.widthMm,
+    stickerHeightMm: settings.sticker.heightMm,
   });
 
   const dateStr = batch.createdAt.slice(0, 10); // YYYY-MM-DD
