@@ -94,8 +94,8 @@ export default function SettingsPage() {
       {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
 
       <div className="bg-white rounded-xl shadow-sm border-l-4 border-[var(--color-primary)] px-6 py-4">
-        <h1 className="text-xl font-bold text-gray-900">Settings</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Configure system-wide options</p>
+        <h1 className="text-xl font-bold text-gray-900">Sticker Dimensions</h1>
+        <p className="text-sm text-gray-500 mt-0.5">Configure sticker label size for PDF generation</p>
       </div>
 
       {/* Sticker Dimensions */}

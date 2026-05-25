@@ -178,7 +178,7 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
             </button>
             {controlOpen && (
               <div className="flex flex-col gap-0.5 mt-0.5">
-                <SubNavLink href="/control-centre" label="Overview" active={pathname === '/control-centre'} />
+                <SubNavLink href="/control-centre" label="Settings" active={pathname === '/control-centre'} />
                 {visibleControlLinks.map(l => (
                   <SubNavLink key={l.href} href={l.href} label={l.label} active={pathname === l.href} />
                 ))}
