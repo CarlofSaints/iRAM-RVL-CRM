@@ -34,7 +34,7 @@ export default function ControlCentreOverview() {
     { label: 'Reps', href: '/control-centre/reps', count: counts.reps ?? 0, description: 'Field representatives' },
     { label: 'Warehouses', href: '/control-centre/warehouses', count: counts.warehouses ?? 0, description: 'Regional warehouse locations' },
     { label: 'Channels', href: '/control-centre/channels', count: counts.channels ?? 0, description: 'Retail channels (e.g. Massbuild, Game, Builders)' },
-    { label: 'Settings', href: '/control-centre/settings', count: -1, description: 'Sticker label dimensions and system configuration' },
+    { label: 'Stickers', href: '/control-centre/settings', count: -1, description: 'Sticker label dimensions and system configuration' },
   ];
 
   return (
