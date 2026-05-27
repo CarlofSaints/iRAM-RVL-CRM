@@ -28,6 +28,10 @@ interface Client {
   type: 'ASL' | 'NSL';
   createdAt: string;
   sharepointLinks?: SpLink[];
+  sharepointStatus?: 'pending' | 'done' | 'error';
+  sharepointError?: string;
+  dropboxStatus?: 'pending' | 'done' | 'error';
+  dropboxError?: string;
 }
 
 interface ClientContact {
@@ -92,6 +96,10 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   const [addContactRole, setAddContactRole] = useState('');
   const [addContactDN, setAddContactDN] = useState(true);
   const [addContactLoading, setAddContactLoading] = useState(false);
+
+  // Infrastructure provisioning
+  const [spLoading, setSpLoading] = useState(false);
+  const [dbxLoading, setDbxLoading] = useState(false);
 
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
 
@@ -304,6 +312,42 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     } else notify('Failed to delete', 'error');
   }
 
+  async function handleCreateSP() {
+    setSpLoading(true);
+    try {
+      const res = await authFetch(`/api/clients/${id}/sharepoint`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        notify(data.error ?? 'SharePoint folder creation failed', 'error');
+      } else {
+        notify(`SharePoint folder created: ${data.folder}`);
+      }
+      await fetchAll();
+    } catch (err) {
+      notify(String(err), 'error');
+    } finally {
+      setSpLoading(false);
+    }
+  }
+
+  async function handleCreateDropbox() {
+    setDbxLoading(true);
+    try {
+      const res = await authFetch(`/api/clients/${id}/dropbox`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        notify(data.error ?? 'Dropbox folder creation failed', 'error');
+      } else {
+        notify(`Dropbox folder created. ${data.filesCopied} template file(s) copied.`);
+      }
+      await fetchAll();
+    } catch (err) {
+      notify(String(err), 'error');
+    } finally {
+      setDbxLoading(false);
+    }
+  }
+
   if (loadingPage) return <p className="text-sm text-gray-500">Loading client…</p>;
   if (!client) return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
@@ -332,6 +376,78 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           </div>
         </div>
       </div>
+
+      {/* Infrastructure provisioning */}
+      <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-4">Infrastructure</h2>
+        <div className="space-y-3">
+          {/* SharePoint row */}
+          <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-gray-50">
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-gray-700">SharePoint Folder</span>
+              {client.sharepointStatus === 'done' && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  Created
+                </span>
+              )}
+              {client.sharepointStatus === 'error' && (
+                <span className="text-xs text-red-600 max-w-xs truncate" title={client.sharepointError}>
+                  Error: {client.sharepointError}
+                </span>
+              )}
+              {spLoading && (
+                <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+                  <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                  Creating…
+                </span>
+              )}
+            </div>
+            {client.sharepointStatus !== 'done' && (
+              <button
+                onClick={handleCreateSP}
+                disabled={spLoading}
+                className="px-4 py-1.5 text-xs font-bold rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white disabled:opacity-50 transition-colors"
+              >
+                {client.sharepointStatus === 'error' ? 'Retry' : 'Create SharePoint Folder'}
+              </button>
+            )}
+          </div>
+
+          {/* Dropbox row */}
+          <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-gray-50">
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-gray-700">Dropbox Folder</span>
+              {client.dropboxStatus === 'done' && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  Created
+                </span>
+              )}
+              {client.dropboxStatus === 'error' && (
+                <span className="text-xs text-red-600 max-w-xs truncate" title={client.dropboxError}>
+                  Error: {client.dropboxError}
+                </span>
+              )}
+              {dbxLoading && (
+                <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+                  <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                  Creating…
+                </span>
+              )}
+            </div>
+            {client.dropboxStatus !== 'done' && (
+              <button
+                onClick={handleCreateDropbox}
+                disabled={dbxLoading}
+                className="px-4 py-1.5 text-xs font-bold rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] text-white disabled:opacity-50 transition-colors"
+              >
+                {client.dropboxStatus === 'error' ? 'Retry' : 'Create Dropbox Folder'}
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
 
       {/* Add link section */}
       <section className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">

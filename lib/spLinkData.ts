@@ -49,6 +49,11 @@ export interface ClientWithLinks {
   createdAt: string;
   sharepointLinks?: SpLink[];
   contacts?: ClientContact[];
+  // Infrastructure provisioning status
+  sharepointStatus?: 'pending' | 'done' | 'error';
+  sharepointError?: string;
+  dropboxStatus?: 'pending' | 'done' | 'error';
+  dropboxError?: string;
 }
 
 // ── Client record helpers ────────────────────────────────────────────────────
@@ -76,6 +81,14 @@ async function mutateClient(clientId: string, mutator: (c: ClientWithLinks) => v
   mutator(items[idx]);
   await saveControl('clients', items);
   return items[idx];
+}
+
+/**
+ * Public version of mutateClient — used by infrastructure routes
+ * to update status fields on a client record.
+ */
+export async function mutateClientById(clientId: string, mutator: (c: ClientWithLinks) => void): Promise<ClientWithLinks> {
+  return mutateClient(clientId, mutator);
 }
 
 export async function addSpLink(clientId: string, link: SpLink): Promise<SpLink> {
