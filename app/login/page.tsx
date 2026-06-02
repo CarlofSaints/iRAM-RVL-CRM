@@ -1,11 +1,15 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Logo from '@/components/Logo';
+import { Suspense } from 'react';
 
-export default function LoginPage() {
+function LoginInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const isLocal = searchParams.get('local') === 'true';
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
@@ -18,6 +22,46 @@ export default function LoginPage() {
   const [forgotSent, setForgotSent] = useState(false);
   const [forgotError, setForgotError] = useState('');
 
+  // SSO auto-redirect (unless ?local=true)
+  useEffect(() => {
+    if (isLocal) return;
+
+    // Check if already has a session — redirect home
+    const raw = localStorage.getItem('rvl_session');
+    if (raw) {
+      try {
+        const s = JSON.parse(raw);
+        if (s?.id) { router.replace('/dashboard'); return; }
+      } catch { /* ignore */ }
+    }
+
+    const hubUrl = process.env.NEXT_PUBLIC_IRAM_HUB_URL || 'https://iram-hub.vercel.app';
+    const callback = `${window.location.origin}/sso/callback`;
+    window.location.href = `${hubUrl}/login?redirect=${encodeURIComponent(callback)}&module=rvl`;
+  }, [isLocal, router]);
+
+  // If SSO mode, show redirect message
+  if (!isLocal) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="text-gray-400 text-sm mb-4">Redirecting to iRam Hub...</div>
+          <button
+            onClick={() => {
+              const hubUrl = process.env.NEXT_PUBLIC_IRAM_HUB_URL || 'https://iram-hub.vercel.app';
+              const callback = `${window.location.origin}/sso/callback`;
+              window.location.href = `${hubUrl}/login?redirect=${encodeURIComponent(callback)}&module=rvl`;
+            }}
+            className="text-sm text-[var(--color-primary)] hover:underline"
+          >
+            Click here if not redirected
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Local login form (emergency backdoor via ?local=true)
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
@@ -87,6 +131,11 @@ export default function LoginPage() {
           <p className="text-xs opacity-70 mt-1">Powered by OuterJoin</p>
         </div>
 
+        {/* Emergency local login notice */}
+        <div className="bg-amber-50 border-x border-amber-200 px-4 py-2 text-xs text-amber-700 text-center">
+          Emergency local login — normal access is via iRam Hub
+        </div>
+
         {/* Form */}
         <form
           onSubmit={handleSubmit}
@@ -147,24 +196,6 @@ export default function LoginPage() {
             className="text-xs text-gray-400 hover:text-[var(--color-primary)] transition-colors text-center"
           >
             Forgot Password?
-          </button>
-
-          <div className="relative flex items-center gap-3 my-1">
-            <div className="flex-1 h-px bg-gray-200" />
-            <span className="text-xs text-gray-400">or</span>
-            <div className="flex-1 h-px bg-gray-200" />
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              const hubUrl = process.env.NEXT_PUBLIC_IRAM_HUB_URL || 'https://iram-hub.vercel.app';
-              const callback = `${window.location.origin}/sso/callback`;
-              window.location.href = `${hubUrl}/login?redirect=${encodeURIComponent(callback)}&module=rvl`;
-            }}
-            className="w-full py-2.5 rounded-lg text-sm font-bold border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
-          >
-            Sign in with iRam Hub
           </button>
         </form>
 
@@ -230,5 +261,13 @@ export default function LoginPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="text-gray-400 text-sm">Loading...</div></div>}>
+      <LoginInner />
+    </Suspense>
   );
 }
