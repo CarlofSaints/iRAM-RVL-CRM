@@ -244,6 +244,7 @@ export async function POST(req: NextRequest) {
       stickerWidthMm: stickerSettings.sticker.widthMm,
       stickerHeightMm: stickerSettings.sticker.heightMm,
       layout: stickerSettings.sticker.layout,
+      gapMm: stickerSettings.sticker.gapMm,
       marginTopMm: stickerSettings.sticker.marginTop,
       marginBottomMm: stickerSettings.sticker.marginBottom,
       marginLeftMm: stickerSettings.sticker.marginLeft,

@@ -22,6 +22,8 @@ export interface StickerSettings {
   heightMm: number;
   /** Layout mode: 'roll' = one sticker per page (page = sticker size), 'a4sheet' = grid on A4 */
   layout: StickerLayout;
+  /** Gap between labels on the roll in mm (added to page height so pages align with label pitch) */
+  gapMm: number;
   /** Content margins in millimetres (fine-tune print alignment) */
   marginTop: number;
   marginBottom: number;
@@ -39,6 +41,7 @@ export const DEFAULT_STICKER: StickerSettings = {
   widthMm: 74,
   heightMm: 50,
   layout: 'roll',
+  gapMm: 0,
   marginTop: 0,
   marginBottom: 0,
   marginLeft: 0,

@@ -40,6 +40,8 @@ export interface StickerPdfParams {
   stickerHeightMm?: number;
   /** Layout mode: 'roll' = one sticker per page sized to sticker, 'a4sheet' = grid on A4. Defaults to 'roll'. */
   layout?: 'roll' | 'a4sheet';
+  /** Gap between labels on the roll in mm (added to page height). */
+  gapMm?: number;
   /** Content margins in mm. */
   marginTopMm?: number;
   marginBottomMm?: number;
@@ -78,6 +80,9 @@ export async function generateStickerPdf(params: StickerPdfParams): Promise<Buff
   const layout = params.layout ?? 'roll';
   const stickerW = (params.stickerWidthMm ?? 74) * MM;
   const stickerH = (params.stickerHeightMm ?? 50) * MM;
+
+  // Inter-label gap (roll mode only — added to page height)
+  const gapPt = (params.gapMm ?? 0) * MM;
 
   // Content margins (converted from mm to pt)
   const mTop = (params.marginTopMm ?? 0) * MM;
@@ -119,7 +124,7 @@ export async function generateStickerPdf(params: StickerPdfParams): Promise<Buff
   const margins = { top: mTop, bottom: mBottom, left: mLeft, right: mRight };
 
   if (layout === 'roll') {
-    return generateRollPdf(stickers, warehouseName, stickerW, stickerH, compact, barcodePngs, margins);
+    return generateRollPdf(stickers, warehouseName, stickerW, stickerH, compact, barcodePngs, margins, gapPt);
   } else {
     return generateA4SheetPdf(stickers, warehouseName, stickerW, stickerH, compact, logoBuffer, barcodePngs, margins);
   }
@@ -137,9 +142,14 @@ function generateRollPdf(
   compact: boolean,
   barcodePngs: Map<string, Buffer>,
   margins: ContentMargins,
+  gapPt: number,
 ): Promise<Buffer> {
+  // Page height = label height + inter-label gap (so each page matches the full label pitch)
+  // Content is drawn within stickerH only; the gap is blank space at the bottom
+  const pageH = stickerH + gapPt;
+
   const doc = new PDFDocument({
-    size: [stickerW, stickerH],
+    size: [stickerW, pageH],
     margins: { top: 0, bottom: 0, left: 0, right: 0 },
     bufferPages: true,
     info: {
@@ -151,14 +161,14 @@ function generateRollPdf(
   const chunks: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => chunks.push(chunk));
 
-  // Content area after margins
+  // Content area after margins (within the label area, not the gap)
   const cx = margins.left;
   const cy = margins.top;
   const cw = stickerW - margins.left - margins.right;
   const ch = stickerH - margins.top - margins.bottom;
 
   for (let i = 0; i < stickers.length; i++) {
-    if (i > 0) doc.addPage({ size: [stickerW, stickerH], margins: { top: 0, bottom: 0, left: 0, right: 0 } });
+    if (i > 0) doc.addPage({ size: [stickerW, pageH], margins: { top: 0, bottom: 0, left: 0, right: 0 } });
 
     if (compact) {
       drawCompactSticker(doc, {

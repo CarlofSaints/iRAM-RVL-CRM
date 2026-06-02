@@ -10,6 +10,7 @@ interface StickerSettings {
   widthMm: number;
   heightMm: number;
   layout: StickerLayout;
+  gapMm: number;
   marginTop: number;
   marginBottom: number;
   marginLeft: number;
@@ -31,6 +32,7 @@ export default function StickersPage() {
   const [stickerW, setStickerW] = useState('');
   const [stickerH, setStickerH] = useState('');
   const [layout, setLayout] = useState<StickerLayout>('roll');
+  const [gap, setGap] = useState('0');
   const [mTop, setMTop] = useState('0');
   const [mBottom, setMBottom] = useState('0');
   const [mLeft, setMLeft] = useState('0');
@@ -49,6 +51,7 @@ export default function StickersPage() {
           setStickerW(String(data.sticker.widthMm));
           setStickerH(String(data.sticker.heightMm));
           setLayout(data.sticker.layout ?? 'roll');
+          setGap(String(data.sticker.gapMm ?? 0));
           setMTop(String(data.sticker.marginTop ?? 0));
           setMBottom(String(data.sticker.marginBottom ?? 0));
           setMLeft(String(data.sticker.marginLeft ?? 0));
@@ -71,6 +74,7 @@ export default function StickersPage() {
       return;
     }
 
+    const g = parseFloat(gap) || 0;
     const mt = parseFloat(mTop) || 0;
     const mb = parseFloat(mBottom) || 0;
     const ml = parseFloat(mLeft) || 0;
@@ -86,6 +90,7 @@ export default function StickersPage() {
             widthMm: w,
             heightMm: h,
             layout,
+            gapMm: g,
             marginTop: mt,
             marginBottom: mb,
             marginLeft: ml,
@@ -158,6 +163,7 @@ export default function StickersPage() {
           <li>Click <strong>Print Test Label</strong> &mdash; it prints one page with a border and dimensions.</li>
           <li>Print the test PDF to your label printer. Select <strong>&quot;Actual Size&quot;</strong> (not &quot;Fit to Page&quot;).</li>
           <li>The border should align exactly with the label edges. If it overflows onto a second label, the height is too large. If there&rsquo;s blank space, the height is too small.</li>
+          <li>If label 1 is fine but labels 2 &amp; 3 drift, set the <strong>Label Gap</strong> &mdash; measure the space between labels on the roll (usually 2&ndash;3 mm).</li>
           <li>Use <strong>margins</strong> to nudge content inward if it&rsquo;s clipped at the edges.</li>
         </ol>
       </section>
@@ -218,6 +224,25 @@ export default function StickersPage() {
               />
             </div>
           </div>
+
+          {/* Label gap (roll mode only) */}
+          {layout === 'roll' && (
+            <div className="flex flex-col gap-1 max-w-[200px]">
+              <label className="text-xs text-gray-500 font-medium">Label Gap (mm)</label>
+              <input
+                type="number"
+                min={0}
+                max={20}
+                step={0.5}
+                value={gap}
+                onChange={e => setGap(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+              />
+              <p className="text-xs text-gray-400 mt-0.5">
+                Distance between labels on the roll. Measure the gap between the bottom of one label and the top of the next. Usually 2–3 mm.
+              </p>
+            </div>
+          )}
 
           {/* Margins */}
           <div>
