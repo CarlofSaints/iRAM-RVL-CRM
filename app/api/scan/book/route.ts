@@ -244,6 +244,10 @@ export async function POST(req: NextRequest) {
       stickerWidthMm: stickerSettings.sticker.widthMm,
       stickerHeightMm: stickerSettings.sticker.heightMm,
       layout: stickerSettings.sticker.layout,
+      marginTopMm: stickerSettings.sticker.marginTop,
+      marginBottomMm: stickerSettings.sticker.marginBottom,
+      marginLeftMm: stickerSettings.sticker.marginLeft,
+      marginRightMm: stickerSettings.sticker.marginRight,
     });
     pdfBase64 = pdfBuffer.toString('base64');
   }

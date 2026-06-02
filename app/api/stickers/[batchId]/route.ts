@@ -32,6 +32,10 @@ export async function GET(
     stickerWidthMm: settings.sticker.widthMm,
     stickerHeightMm: settings.sticker.heightMm,
     layout: settings.sticker.layout,
+    marginTopMm: settings.sticker.marginTop,
+    marginBottomMm: settings.sticker.marginBottom,
+    marginLeftMm: settings.sticker.marginLeft,
+    marginRightMm: settings.sticker.marginRight,
   });
 
   const dateStr = batch.createdAt.slice(0, 10); // YYYY-MM-DD

@@ -43,7 +43,12 @@ export async function PUT(req: NextRequest) {
       );
     }
 
-    current.sticker = { widthMm: w, heightMm: h, layout };
+    const marginTop = typeof body.sticker.marginTop === 'number' ? Math.max(0, body.sticker.marginTop) : current.sticker.marginTop;
+    const marginBottom = typeof body.sticker.marginBottom === 'number' ? Math.max(0, body.sticker.marginBottom) : current.sticker.marginBottom;
+    const marginLeft = typeof body.sticker.marginLeft === 'number' ? Math.max(0, body.sticker.marginLeft) : current.sticker.marginLeft;
+    const marginRight = typeof body.sticker.marginRight === 'number' ? Math.max(0, body.sticker.marginRight) : current.sticker.marginRight;
+
+    current.sticker = { widthMm: w, heightMm: h, layout, marginTop, marginBottom, marginLeft, marginRight };
   }
 
   await saveSettings(current);

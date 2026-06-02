@@ -22,6 +22,11 @@ export interface StickerSettings {
   heightMm: number;
   /** Layout mode: 'roll' = one sticker per page (page = sticker size), 'a4sheet' = grid on A4 */
   layout: StickerLayout;
+  /** Content margins in millimetres (fine-tune print alignment) */
+  marginTop: number;
+  marginBottom: number;
+  marginLeft: number;
+  marginRight: number;
 }
 
 export interface AppSettings {
@@ -34,6 +39,10 @@ export const DEFAULT_STICKER: StickerSettings = {
   widthMm: 74,
   heightMm: 50,
   layout: 'roll',
+  marginTop: 0,
+  marginBottom: 0,
+  marginLeft: 0,
+  marginRight: 0,
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {

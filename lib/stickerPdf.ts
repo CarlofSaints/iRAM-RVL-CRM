@@ -40,6 +40,11 @@ export interface StickerPdfParams {
   stickerHeightMm?: number;
   /** Layout mode: 'roll' = one sticker per page sized to sticker, 'a4sheet' = grid on A4. Defaults to 'roll'. */
   layout?: 'roll' | 'a4sheet';
+  /** Content margins in mm. */
+  marginTopMm?: number;
+  marginBottomMm?: number;
+  marginLeftMm?: number;
+  marginRightMm?: number;
 }
 
 // ── Layout constants ─────────────────────────────────────────────────────────
@@ -74,6 +79,12 @@ export async function generateStickerPdf(params: StickerPdfParams): Promise<Buff
   const stickerW = (params.stickerWidthMm ?? 74) * MM;
   const stickerH = (params.stickerHeightMm ?? 50) * MM;
 
+  // Content margins (converted from mm to pt)
+  const mTop = (params.marginTopMm ?? 0) * MM;
+  const mBottom = (params.marginBottomMm ?? 0) * MM;
+  const mLeft = (params.marginLeftMm ?? 0) * MM;
+  const mRight = (params.marginRightMm ?? 0) * MM;
+
   // Decide visual mode: compact (height < 80mm) vs standard
   const compact = (params.stickerHeightMm ?? 50) < 80;
 
@@ -105,14 +116,18 @@ export async function generateStickerPdf(params: StickerPdfParams): Promise<Buff
     }
   }
 
+  const margins = { top: mTop, bottom: mBottom, left: mLeft, right: mRight };
+
   if (layout === 'roll') {
-    return generateRollPdf(stickers, warehouseName, stickerW, stickerH, compact, barcodePngs);
+    return generateRollPdf(stickers, warehouseName, stickerW, stickerH, compact, barcodePngs, margins);
   } else {
-    return generateA4SheetPdf(stickers, warehouseName, stickerW, stickerH, compact, logoBuffer, barcodePngs);
+    return generateA4SheetPdf(stickers, warehouseName, stickerW, stickerH, compact, logoBuffer, barcodePngs, margins);
   }
 }
 
 // ── Roll mode: one sticker per page, page = sticker size ─────────────────────
+
+interface ContentMargins { top: number; bottom: number; left: number; right: number }
 
 function generateRollPdf(
   stickers: StickerPdfParams['stickers'],
@@ -121,6 +136,7 @@ function generateRollPdf(
   stickerH: number,
   compact: boolean,
   barcodePngs: Map<string, Buffer>,
+  margins: ContentMargins,
 ): Promise<Buffer> {
   const doc = new PDFDocument({
     size: [stickerW, stickerH],
@@ -135,19 +151,25 @@ function generateRollPdf(
   const chunks: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => chunks.push(chunk));
 
+  // Content area after margins
+  const cx = margins.left;
+  const cy = margins.top;
+  const cw = stickerW - margins.left - margins.right;
+  const ch = stickerH - margins.top - margins.bottom;
+
   for (let i = 0; i < stickers.length; i++) {
     if (i > 0) doc.addPage({ size: [stickerW, stickerH], margins: { top: 0, bottom: 0, left: 0, right: 0 } });
 
     if (compact) {
       drawCompactSticker(doc, {
-        x: 0, y: 0, w: stickerW, h: stickerH,
+        x: cx, y: cy, w: cw, h: ch,
         barcodeValue: stickers[i].barcodeValue,
         barcodePng: barcodePngs.get(stickers[i].barcodeValue) ?? null,
         fields: stickers[i].fields,
       });
     } else {
       drawSticker(doc, {
-        x: 0, y: 0, w: stickerW, h: stickerH,
+        x: cx, y: cy, w: cw, h: ch,
         barcodeValue: stickers[i].barcodeValue,
         barcodePng: barcodePngs.get(stickers[i].barcodeValue) ?? null,
         logoBuffer: null,
@@ -174,6 +196,7 @@ function generateA4SheetPdf(
   compact: boolean,
   logoBuffer: Buffer | null,
   barcodePngs: Map<string, Buffer>,
+  margins: ContentMargins,
 ): Promise<Buffer> {
   const cols = Math.max(1, Math.floor((PAGE_W + GAP) / (stickerW + GAP)));
   const rows = Math.max(1, Math.floor((PAGE_H + GAP) / (stickerH + GAP)));
@@ -210,16 +233,22 @@ function generateA4SheetPdf(
       const x = marginX + col * (stickerW + GAP);
       const y = marginY + row * (stickerH + GAP);
 
+      // Apply content margins within each sticker cell
+      const cx = x + margins.left;
+      const cy = y + margins.top;
+      const cw = stickerW - margins.left - margins.right;
+      const ch = stickerH - margins.top - margins.bottom;
+
       if (compact) {
         drawCompactSticker(doc, {
-          x, y, w: stickerW, h: stickerH,
+          x: cx, y: cy, w: cw, h: ch,
           barcodeValue: stickers[idx].barcodeValue,
           barcodePng: barcodePngs.get(stickers[idx].barcodeValue) ?? null,
           fields: stickers[idx].fields,
         });
       } else {
         drawSticker(doc, {
-          x, y, w: stickerW, h: stickerH,
+          x: cx, y: cy, w: cw, h: ch,
           barcodeValue: stickers[idx].barcodeValue,
           barcodePng: barcodePngs.get(stickers[idx].barcodeValue) ?? null,
           logoBuffer,
@@ -251,7 +280,9 @@ interface CompactDrawParams {
 
 function drawCompactSticker(doc: InstanceType<typeof PDFDocument>, p: CompactDrawParams) {
   const { x, y, w, h, barcodeValue, barcodePng, fields } = p;
-  const pad = 6;
+
+  // Scale padding proportionally — 6pt at 50mm height, minimum 2pt
+  const pad = Math.max(2, Math.min(6, h * 0.04));
 
   const fieldValues: Record<string, string | undefined> = fields ? {
     'Site Number': fields.siteCode,
@@ -270,39 +301,49 @@ function drawCompactSticker(doc: InstanceType<typeof PDFDocument>, p: CompactDra
   let cy = y + pad;
   const fieldW = w - 2 * pad;
 
+  // ── Allocate vertical space proportionally ──
+  // Budget: barcode section ~30% of height, fields ~65%, padding ~5%
+  const contentH = h - 2 * pad;
+  const barcodeSection = contentH * 0.30;
+  const bcMaxH = Math.max(8, barcodeSection * 0.7);   // barcode image
+  const bcTextH = Math.max(6, barcodeSection * 0.25);  // barcode text + separator
+
   // ── Barcode (top, centred) ──
-  const bcMaxH = 22;
   if (barcodePng) {
     try {
       const bcW = Math.min(fieldW, 180);
       const bcX = x + (w - bcW) / 2;
       doc.image(barcodePng, bcX, cy, { fit: [bcW, bcMaxH] });
-      cy += bcMaxH + 2;
+      cy += bcMaxH + 1;
     } catch {
-      cy += 6;
+      cy += 4;
     }
   } else {
-    cy += 6;
+    cy += 4;
   }
 
-  // Barcode text
-  doc.font('Helvetica').fontSize(6).fillColor('#000000');
+  // Barcode text — scale font to available space
+  const bcFontSize = Math.min(6, Math.max(3, bcTextH * 0.5));
+  doc.font('Helvetica').fontSize(bcFontSize).fillColor('#000000');
   doc.text(barcodeValue, x + pad, cy, { width: fieldW, align: 'center' });
-  cy += 10;
+  cy += bcFontSize + 2;
 
   // Thin separator
-  doc.lineWidth(0.5).strokeColor('#cccccc')
+  doc.lineWidth(0.3).strokeColor('#cccccc')
     .moveTo(x + pad, cy).lineTo(x + w - pad, cy).stroke();
-  cy += 3;
+  cy += 2;
 
-  // ── Field rows ──
+  // ── Field rows — fit all into remaining space ──
   const bottomPad = pad;
   const availH = (y + h - bottomPad) - cy;
-  const rowH = Math.min(availH / FIELD_ROWS.length, 20);
-  const colGap = 6;
-  const fontSize = Math.min(6, Math.max(4.5, rowH * 0.4));
+  const rowH = Math.max(4, availH / FIELD_ROWS.length);
+  const colGap = Math.min(6, w * 0.03);
+  const fontSize = Math.min(6, Math.max(3, rowH * 0.45));
 
   for (const fieldRow of FIELD_ROWS) {
+    // Skip row if it would overflow the sticker
+    if (cy + rowH > y + h - 1) break;
+
     if (fieldRow.type === 'full') {
       drawCompactField(doc, x + pad, cy, fieldW, rowH, fieldRow.label, fontSize, fieldValues[fieldRow.label]);
     } else if (fieldRow.type === 'split') {
