@@ -27,6 +27,12 @@ interface SlipDto {
   receiptGrnDate?: string;
   manual?: boolean;
   rows?: Array<{ articleCode: string; description: string; qty: number; val: number }>;
+  // Release fields — populated once stock has been released
+  deliveryToken?: string;
+  releaseRepId?: string;
+  releaseRepName?: string;
+  releaseBoxes?: ReceiptBox[];
+  releasedAt?: string;
 }
 
 interface RepDto {
@@ -70,9 +76,17 @@ export default function ReleasePage() {
 
   // Data
   const [allSlips, setAllSlips] = useState<SlipDto[]>([]);
+  const [releasedSlips, setReleasedSlips] = useState<SlipDto[]>([]);
   const [reps, setReps] = useState<RepDto[]>([]);
   const [releaseUsers, setReleaseUsers] = useState<UserDto[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Reassign-rep modal state
+  const [reassignToken, setReassignToken] = useState<string | null>(null);
+  const [reassignRepId, setReassignRepId] = useState('');
+  const [reassignRepName, setReassignRepName] = useState('');
+  const [reassignCode, setReassignCode] = useState('');
+  const [reassigning, setReassigning] = useState(false);
 
   // Barcode index: stickerBarcode → slipId
   const barcodeIndex = useMemo<BarcodeIndex>(() => {
@@ -155,6 +169,47 @@ export default function ReleasePage() {
     return releaseUsers.filter(u => u.releaseCode && u.role !== 'rep');
   }, [releaseUsers]);
 
+  // Group released slips by delivery token (a "release" = one DN + one QR).
+  // Slips with no token (legacy) fall back to their own id as a standalone group.
+  interface ReleaseGroup {
+    token: string;
+    slips: SlipDto[];
+    repName: string;
+    clientName: string;
+    status: string;
+    releasedAt?: string;
+    totalBoxes: number;
+  }
+  const releaseGroups = useMemo<ReleaseGroup[]>(() => {
+    const map = new Map<string, SlipDto[]>();
+    for (const s of releasedSlips) {
+      const key = s.deliveryToken || `__notoken__${s.id}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(s);
+    }
+    const groups: ReleaseGroup[] = [];
+    for (const [token, slips] of map) {
+      const first = slips[0];
+      groups.push({
+        token,
+        slips,
+        repName: first.releaseRepName || '(unassigned)',
+        clientName: first.clientName,
+        status: first.status,
+        releasedAt: first.releasedAt,
+        totalBoxes: slips.reduce((n, s) => n + (s.releaseBoxes ?? []).length, 0),
+      });
+    }
+    // Newest released first
+    groups.sort((a, b) => ((a.releasedAt || '') < (b.releasedAt || '') ? 1 : -1));
+    return groups;
+  }, [releasedSlips]);
+
+  const reassignTarget = useMemo(
+    () => releaseGroups.find(g => g.token === reassignToken) ?? null,
+    [releaseGroups, reassignToken],
+  );
+
   // ── Load data ──
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -168,11 +223,11 @@ export default function ReleasePage() {
 
       if (slipsRes.ok) {
         const data = await slipsRes.json();
-        // Only releasable slips
-        const releasable = (data.slips ?? []).filter(
-          (s: SlipDto) => s.status === 'captured' || s.status === 'failed-release'
-        );
-        setAllSlips(releasable);
+        const all = (data.slips ?? []) as SlipDto[];
+        // Releasable slips (for scanning)
+        setAllSlips(all.filter(s => s.status === 'captured' || s.status === 'failed-release'));
+        // Already-released slips (for rep reassignment)
+        setReleasedSlips(all.filter(s => s.status === 'in-transit' || s.status === 'partial-release'));
       }
 
       if (repsRes.ok) {
@@ -304,6 +359,66 @@ export default function ReleasePage() {
     }
   }
 
+  // ── Reassign rep handler ──
+  function openReassign(group: ReleaseGroup) {
+    setReassignToken(group.token);
+    setReassignRepId('');
+    setReassignRepName('');
+    setReassignCode('');
+  }
+
+  function closeReassign() {
+    setReassignToken(null);
+    setReassignRepId('');
+    setReassignRepName('');
+    setReassignCode('');
+  }
+
+  async function handleReassign() {
+    if (!reassignTarget) return;
+    if (!reassignRepId || !reassignCode.trim()) {
+      notify('Select a rep and enter their release code', 'error');
+      return;
+    }
+    setReassigning(true);
+    try {
+      const res = await authFetch('/api/receipts/reassign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deliveryToken: reassignTarget.token,
+          slips: reassignTarget.slips.map(s => ({
+            slipId: s.id,
+            clientId: s.clientId,
+            loadId: s.loadId,
+          })),
+          newRepId: reassignRepId,
+          newRepName: reassignRepName,
+          releaseCode: reassignCode.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        if (data.emailSent) {
+          notify(`Reassigned to ${reassignRepName} — delivery note resent`, 'success');
+        } else {
+          notify(
+            `Reassigned to ${reassignRepName}, but email not sent: ${data.emailError || data.dnError || 'unknown error'}`,
+            'error',
+          );
+        }
+        closeReassign();
+        await loadData();
+      } else {
+        notify(data.error || 'Reassignment failed', 'error');
+      }
+    } catch {
+      notify('Network error during reassignment', 'error');
+    } finally {
+      setReassigning(false);
+    }
+  }
+
   if (!session) return null;
 
   return (
@@ -327,6 +442,7 @@ export default function ReleasePage() {
           <div className="h-8 w-8 border-4 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin" />
         </div>
       ) : (
+        <>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left column: Scanner + scanned list */}
           <div className="lg:col-span-2 space-y-4">
@@ -557,6 +673,60 @@ export default function ReleasePage() {
             </div>
           </div>
         </div>
+
+        {/* Released — In Transit (rep reassignment) */}
+        {releaseGroups.length > 0 && (
+          <div className="bg-white border border-gray-200 rounded-lg p-4 mt-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                Released — In Transit
+              </h2>
+              <span className="text-xs text-gray-400">
+                {releaseGroups.length} release{releaseGroups.length !== 1 ? 's' : ''} — reassign rep or resend the delivery note
+              </span>
+            </div>
+            <div className="space-y-2">
+              {releaseGroups.map(g => (
+                <div
+                  key={g.token}
+                  className="flex items-start justify-between gap-3 border border-gray-200 rounded-lg p-3"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-gray-900">{g.repName}</span>
+                      {g.status === 'partial-release' ? (
+                        <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">Partial</span>
+                      ) : (
+                        <span className="text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">In Transit</span>
+                      )}
+                      <span className="text-xs text-gray-400">
+                        {g.slips.length} slip{g.slips.length !== 1 ? 's' : ''} · {g.totalBoxes} box{g.totalBoxes !== 1 ? 'es' : ''}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-600 mt-0.5">{g.clientName}</p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {g.slips.map(s => `${s.siteName} (${s.siteCode})`).join(', ')}
+                    </p>
+                    {g.releasedAt && (
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        Released {new Date(g.releasedAt).toLocaleString('en-GB', {
+                          day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                        })}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => openReassign(g)}
+                    className="shrink-0 px-3 py-1.5 border border-[var(--color-primary)] text-[var(--color-primary)] rounded-md text-xs font-medium hover:bg-[var(--color-primary)] hover:text-white transition-colors"
+                  >
+                    Reassign Rep
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        </>
       )}
 
       {/* Partial release manager override modal */}
@@ -615,6 +785,76 @@ export default function ReleasePage() {
               >
                 {releasing && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 Authorise Release
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reassign rep modal */}
+      {reassignTarget && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-bold text-gray-900 mb-1">Reassign Collecting Rep</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Reassign this release to a different rep. The delivery note will be regenerated and re-sent to the new rep.
+            </p>
+
+            <div className="bg-gray-50 rounded-md p-3 mb-4 text-sm">
+              <div className="flex justify-between mb-1">
+                <span className="text-gray-600">Current rep:</span>
+                <span className="font-medium">{reassignTarget.repName}</span>
+              </div>
+              <div className="flex justify-between mb-1">
+                <span className="text-gray-600">Client:</span>
+                <span className="font-medium">{reassignTarget.clientName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Slips / boxes:</span>
+                <span className="font-medium">{reassignTarget.slips.length} / {reassignTarget.totalBoxes}</span>
+              </div>
+            </div>
+
+            <label className="block text-xs text-gray-600 mb-1">New Collecting Rep</label>
+            <select
+              value={reassignRepId}
+              onChange={e => {
+                setReassignRepId(e.target.value);
+                const opt = releaseRepOptions.find(o => o.id === e.target.value);
+                setReassignRepName(opt?.label ?? '');
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm mb-3"
+            >
+              <option value="">Select rep...</option>
+              {releaseRepOptions.map(o => (
+                <option key={o.id} value={o.id}>{o.label}</option>
+              ))}
+            </select>
+
+            <label className="block text-xs text-gray-600 mb-1">New Rep&apos;s Release Code</label>
+            <input
+              value={reassignCode}
+              onChange={e => setReassignCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
+              maxLength={4}
+              placeholder="4-char code"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-4"
+              autoComplete="off"
+            />
+
+            <div className="flex gap-2">
+              <button
+                onClick={closeReassign}
+                className="flex-1 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReassign}
+                disabled={reassigning || !reassignRepId || !reassignCode.trim()}
+                className="flex-1 py-2 bg-[var(--color-primary)] text-white rounded-md text-sm font-bold hover:bg-[#5a9a2e] disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {reassigning && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Reassign &amp; Resend
               </button>
             </div>
           </div>
