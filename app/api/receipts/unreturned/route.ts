@@ -140,7 +140,9 @@ export async function POST(req: NextRequest) {
     detail: `Unreturned stock captured for ${slipId} — ${rows.length} products`,
   });
 
-  // ── Send confirmation email (best-effort) ──
+  // ── Send confirmation email ──
+  let emailSent = false;
+  let emailError = '';
   if (sendEmail) {
     try {
       // Load stores to find store details
@@ -185,7 +187,9 @@ export async function POST(req: NextRequest) {
         ccEmails.push(store.iramRepEmailSecondary);
       }
 
-      if (toEmails.length > 0) {
+      if (toEmails.length === 0) {
+        emailError = 'No recipients found — check store manager email, rep emails, and RVL manager accounts';
+      } else {
         // Calculate totals
         let totalUplifted = 0;
         let totalNotUplifted = 0;
@@ -244,15 +248,16 @@ export async function POST(req: NextRequest) {
           storeRef1: (slip.receiptStoreRefs ?? [])[0] || slip.receiptStoreRef1,
           attachment: { filename, content: buffer },
         });
+        emailSent = true;
       }
     } catch (err) {
       console.error('[unreturned] Failed to send confirmation email:', err);
-      // Best-effort — don't fail the save
+      emailError = err instanceof Error ? err.message : 'Failed to send email';
     }
   }
 
   return NextResponse.json(
-    { ok: true, slip: updated },
+    { ok: true, slip: updated, emailSent, emailError: emailError || undefined },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 }

@@ -600,7 +600,13 @@ export default function ReceiptCapturePage() {
       });
       const data = await res.json();
       if (res.ok) {
-        notify(sendEmail ? 'Unreturned stock capture saved — confirmation email sent' : 'Unreturned stock capture saved');
+        if (sendEmail && data.emailSent) {
+          notify('Unreturned stock capture saved — confirmation email sent');
+        } else if (sendEmail && data.emailError) {
+          notify(`Saved but email failed: ${data.emailError}`, 'error');
+        } else {
+          notify('Unreturned stock capture saved');
+        }
         router.push('/aged-stock/receipts');
       } else {
         notify(data.error || 'Save failed', 'error');
