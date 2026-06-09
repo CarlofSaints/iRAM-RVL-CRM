@@ -53,6 +53,19 @@ interface RepDto {
   email: string;
 }
 
+interface ClientContactDto {
+  email?: string;
+  name?: string;
+  surname?: string;
+  receiveDeliveryNotes?: boolean;
+}
+
+interface ClientDto {
+  id: string;
+  name: string;
+  contacts?: ClientContactDto[];
+}
+
 interface StoreDto {
   id: string;
   siteCode: string;
@@ -113,6 +126,7 @@ export default function PickingSlipsPage() {
   const [slips, setSlips] = useState<SlipDto[]>([]);
   const [reps, setReps] = useState<RepDto[]>([]);
   const [stores, setStores] = useState<StoreDto[]>([]);
+  const [clients, setClients] = useState<ClientDto[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Filters
@@ -200,6 +214,10 @@ export default function PickingSlipsPage() {
         .then(r => r.ok ? r.json() : [])
         .then(data => setStores(Array.isArray(data) ? data : []))
         .catch(() => {}),
+      authFetch('/api/control/clients', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : [])
+        .then(data => setClients(Array.isArray(data) ? data : []))
+        .catch(() => {}),
     ]).finally(() => setLoading(false));
   }, [session, fetchSlips]);
 
@@ -220,6 +238,16 @@ export default function PickingSlipsPage() {
     for (const s of slips) { if (s.vendorNumber) set.add(s.vendorNumber); }
     return Array.from(set).sort();
   }, [slips]);
+
+  // Client delivery-note contact emails for the slip being resent
+  const dnClientEmails = useMemo(() => {
+    if (!dnSlip) return [];
+    const client = clients.find(c => c.id === dnSlip.clientId);
+    return (client?.contacts ?? [])
+      .filter(c => c.receiveDeliveryNotes && c.email)
+      .map(c => c.email!.trim())
+      .filter(Boolean);
+  }, [dnSlip, clients]);
 
   const clientNameOptions = useMemo(() => {
     const set = new Set<string>();
@@ -473,7 +501,7 @@ export default function PickingSlipsPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notify('Delivery note sent');
+        notify('Delivery note resent');
         setDnSlip(null);
       } else {
         notify(data.error || 'Failed to send delivery note', 'error');
@@ -916,7 +944,7 @@ export default function PickingSlipsPage() {
                             {s.status === 'failed-release' ? 'Retry Release' : 'Release'}
                           </button>
                         )}
-                        {/* in-transit/partial-release/delivered: View, Send DN */}
+                        {/* in-transit/partial-release/delivered: View, Resend */}
                         {(s.status === 'in-transit' || s.status === 'partial-release' || s.status === 'delivered') && (
                           <>
                             <button
@@ -925,14 +953,12 @@ export default function PickingSlipsPage() {
                             >
                               View
                             </button>
-                            {s.deliveryNoteSpWebUrl && (
-                              <button
-                                onClick={() => openSendDn(s)}
-                                className="px-2 py-1 text-xs font-medium text-emerald-600 border border-emerald-200 rounded hover:bg-emerald-50"
-                              >
-                                Send DN
-                              </button>
-                            )}
+                            <button
+                              onClick={() => openSendDn(s)}
+                              className="px-2 py-1 text-xs font-medium text-emerald-600 border border-emerald-200 rounded hover:bg-emerald-50"
+                            >
+                              Resend
+                            </button>
                           </>
                         )}
                       </div>
@@ -1175,7 +1201,7 @@ export default function PickingSlipsPage() {
       {dnSlip && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-4">Send Delivery Note</h2>
+            <h2 className="text-lg font-bold text-gray-900 mb-4">Resend Delivery Note</h2>
 
             {dnSending ? (
               <div className="flex flex-col items-center py-8 gap-3">
@@ -1190,9 +1216,9 @@ export default function PickingSlipsPage() {
                     <div className="mt-1 text-gray-400">{dnSlip.clientName} — {dnSlip.vendorNumber}</div>
                   </div>
 
-                  {/* Rep dropdown */}
+                  {/* Send to Rep */}
                   <div>
-                    <label className="block text-xs text-gray-600 mb-1">Rep</label>
+                    <label className="block text-xs text-gray-600 mb-1">Send to Rep</label>
                     <select
                       onChange={e => {
                         const rep = reps.find(r => r.id === e.target.value);
@@ -1209,14 +1235,35 @@ export default function PickingSlipsPage() {
                     </select>
                   </div>
 
+                  {/* Send to Client */}
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Send to Client</label>
+                    {dnClientEmails.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setDnTo(dnClientEmails.join(', '))}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm text-left hover:bg-gray-50"
+                      >
+                        Use client delivery-note contacts ({dnClientEmails.length})
+                      </button>
+                    ) : (
+                      <p className="text-xs text-gray-400 px-1 py-1.5">
+                        No client contacts are flagged to receive delivery notes — enter an address below.
+                      </p>
+                    )}
+                  </div>
+
                   <div>
                     <label className="block text-xs text-gray-600 mb-1">TO</label>
                     <input
                       value={dnTo}
                       onChange={e => setDnTo(e.target.value)}
-                      placeholder="email@example.com"
+                      placeholder="email@example.com, another@example.com"
                       className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
                     />
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      Comma-separate multiple addresses. Pre-fill from rep or client above, then edit if needed.
+                    </p>
                   </div>
                 </div>
 
@@ -1226,7 +1273,7 @@ export default function PickingSlipsPage() {
                     disabled={!dnTo.trim()}
                     className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Send Delivery Note
+                    Resend Delivery Note
                   </button>
                   <button
                     onClick={() => setDnSlip(null)}
