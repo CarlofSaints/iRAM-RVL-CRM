@@ -131,8 +131,12 @@ export default function PickingSlipsPage() {
   const [channelFilter, setChannelFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState<'' | 'manual' | 'loaded'>('');
   const [vendorDropOpen, setVendorDropOpen] = useState(false);
+  const [vendorSearch, setVendorSearch] = useState('');
   const [clientNameFilter, setClientNameFilter] = useState('');
+  const [clientDropOpen, setClientDropOpen] = useState(false);
+  const [clientSearch, setClientSearch] = useState('');
   const vendorDropRef = useRef<HTMLDivElement>(null);
+  const clientDropRef = useRef<HTMLDivElement>(null);
 
   // Sort
   const [sortCol, setSortCol] = useState<SortCol>('generatedAt');
@@ -307,6 +311,17 @@ export default function PickingSlipsPage() {
     if (vendorDropOpen) document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [vendorDropOpen]);
+
+  // Close client dropdown on click outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (clientDropRef.current && !clientDropRef.current.contains(e.target as Node)) {
+        setClientDropOpen(false);
+      }
+    }
+    if (clientDropOpen) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [clientDropOpen]);
 
   // Close status dropdown on click outside
   useEffect(() => {
@@ -518,24 +533,62 @@ export default function PickingSlipsPage() {
 
       {/* Filters */}
       <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 grid grid-cols-1 md:grid-cols-4 lg:grid-cols-8 gap-3">
-        <div>
+        <div className="relative" ref={clientDropRef}>
           <label className="block text-xs text-gray-600 mb-1">Client</label>
-          <select
-            value={clientNameFilter}
-            onChange={e => setClientNameFilter(e.target.value)}
-            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+          <button
+            type="button"
+            onClick={() => { setClientDropOpen(o => !o); setClientSearch(''); }}
+            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm text-left bg-white flex items-center justify-between"
           >
-            <option value="">All clients</option>
-            {clientNameOptions.map(name => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
+            <span className={clientNameFilter ? 'text-gray-900 truncate' : 'text-gray-500'}>
+              {clientNameFilter || 'All clients'}
+            </span>
+            <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {clientDropOpen && (
+            <div className="absolute z-30 mt-1 w-72 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 flex flex-col">
+              <div className="p-2 border-b border-gray-100">
+                <input
+                  autoFocus
+                  value={clientSearch}
+                  onChange={e => setClientSearch(e.target.value)}
+                  placeholder="Search clients..."
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div className="overflow-auto">
+                {clientNameFilter && (
+                  <button
+                    type="button"
+                    onClick={() => { setClientNameFilter(''); setClientDropOpen(false); }}
+                    className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 border-b border-gray-100"
+                  >
+                    Clear selection
+                  </button>
+                )}
+                {clientNameOptions
+                  .filter(name => !clientSearch || name.toLowerCase().includes(clientSearch.toLowerCase()))
+                  .map(name => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => { setClientNameFilter(name); setClientDropOpen(false); }}
+                      className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 ${clientNameFilter === name ? 'bg-[var(--color-primary)]/10 font-medium' : ''}`}
+                    >
+                      {name}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
         </div>
         <div className="relative" ref={vendorDropRef}>
           <label className="block text-xs text-gray-600 mb-1">Vendor</label>
           <button
             type="button"
-            onClick={() => setVendorDropOpen(o => !o)}
+            onClick={() => { setVendorDropOpen(o => !o); setVendorSearch(''); }}
             className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm text-left bg-white flex items-center justify-between"
           >
             <span className={clientFilter.size > 0 ? 'text-gray-900' : 'text-gray-500'}>
@@ -546,34 +599,51 @@ export default function PickingSlipsPage() {
             </svg>
           </button>
           {vendorDropOpen && (
-            <div className="absolute z-30 mt-1 w-72 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto">
-              {clientFilter.size > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setClientFilter(new Set())}
-                  className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 border-b border-gray-100"
-                >
-                  Clear all
-                </button>
-              )}
-              {clientOptions.map(c => (
-                <label key={c.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm">
-                  <input
-                    type="checkbox"
-                    checked={clientFilter.has(c.id)}
-                    onChange={() => {
-                      setClientFilter(prev => {
-                        const next = new Set(prev);
-                        if (next.has(c.id)) next.delete(c.id);
-                        else next.add(c.id);
-                        return next;
-                      });
-                    }}
-                    className="rounded border-gray-300"
-                  />
-                  {c.vendorNumber ? `${c.name} - ${c.vendorNumber}` : c.name}
-                </label>
-              ))}
+            <div className="absolute z-30 mt-1 w-72 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 flex flex-col">
+              <div className="p-2 border-b border-gray-100">
+                <input
+                  autoFocus
+                  value={vendorSearch}
+                  onChange={e => setVendorSearch(e.target.value)}
+                  placeholder="Search vendors..."
+                  className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+                />
+              </div>
+              <div className="overflow-auto">
+                {clientFilter.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setClientFilter(new Set())}
+                    className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 border-b border-gray-100"
+                  >
+                    Clear all
+                  </button>
+                )}
+                {clientOptions
+                  .filter(c => {
+                    if (!vendorSearch) return true;
+                    const q = vendorSearch.toLowerCase();
+                    return c.name.toLowerCase().includes(q) || c.vendorNumber.toLowerCase().includes(q);
+                  })
+                  .map(c => (
+                    <label key={c.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm">
+                      <input
+                        type="checkbox"
+                        checked={clientFilter.has(c.id)}
+                        onChange={() => {
+                          setClientFilter(prev => {
+                            const next = new Set(prev);
+                            if (next.has(c.id)) next.delete(c.id);
+                            else next.add(c.id);
+                            return next;
+                          });
+                        }}
+                        className="rounded border-gray-300"
+                      />
+                      {c.vendorNumber ? `${c.name} - ${c.vendorNumber}` : c.name}
+                    </label>
+                  ))}
+              </div>
             </div>
           )}
         </div>
