@@ -88,6 +88,13 @@ export default function ReleasePage() {
   const [reassignCode, setReassignCode] = useState('');
   const [reassigning, setReassigning] = useState(false);
 
+  // Cancel-release modal state
+  const [cancelToken, setCancelToken] = useState<string | null>(null);
+  const [cancelManagerId, setCancelManagerId] = useState('');
+  const [cancelManagerName, setCancelManagerName] = useState('');
+  const [cancelCode, setCancelCode] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+
   // Barcode index: stickerBarcode → slipId
   const barcodeIndex = useMemo<BarcodeIndex>(() => {
     const idx: BarcodeIndex = {};
@@ -208,6 +215,11 @@ export default function ReleasePage() {
   const reassignTarget = useMemo(
     () => releaseGroups.find(g => g.token === reassignToken) ?? null,
     [releaseGroups, reassignToken],
+  );
+
+  const cancelTarget = useMemo(
+    () => releaseGroups.find(g => g.token === cancelToken) ?? null,
+    [releaseGroups, cancelToken],
   );
 
   // ── Load data ──
@@ -416,6 +428,59 @@ export default function ReleasePage() {
       notify('Network error during reassignment', 'error');
     } finally {
       setReassigning(false);
+    }
+  }
+
+  // ── Cancel release handler ──
+  function openCancel(group: ReleaseGroup) {
+    setCancelToken(group.token);
+    setCancelManagerId('');
+    setCancelManagerName('');
+    setCancelCode('');
+  }
+
+  function closeCancel() {
+    setCancelToken(null);
+    setCancelManagerId('');
+    setCancelManagerName('');
+    setCancelCode('');
+  }
+
+  async function handleCancelRelease() {
+    if (!cancelTarget) return;
+    if (!cancelManagerId || !cancelCode.trim()) {
+      notify('Select a manager and enter their security code', 'error');
+      return;
+    }
+    setCancelling(true);
+    try {
+      const res = await authFetch('/api/receipts/cancel-release', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deliveryToken: cancelTarget.token,
+          slips: cancelTarget.slips.map(s => ({
+            slipId: s.id,
+            clientId: s.clientId,
+            loadId: s.loadId,
+          })),
+          managerId: cancelManagerId,
+          managerName: cancelManagerName,
+          securityCode: cancelCode.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        notify(`Release cancelled — ${cancelTarget.slips.length} slip(s) back in the warehouse`, 'success');
+        closeCancel();
+        await loadData();
+      } else {
+        notify(data.error || 'Cancellation failed', 'error');
+      }
+    } catch {
+      notify('Network error during cancellation', 'error');
+    } finally {
+      setCancelling(false);
     }
   }
 
@@ -715,12 +780,20 @@ export default function ReleasePage() {
                       </p>
                     )}
                   </div>
-                  <button
-                    onClick={() => openReassign(g)}
-                    className="shrink-0 px-3 py-1.5 border border-[var(--color-primary)] text-[var(--color-primary)] rounded-md text-xs font-medium hover:bg-[var(--color-primary)] hover:text-white transition-colors"
-                  >
-                    Reassign Rep
-                  </button>
+                  <div className="shrink-0 flex flex-col gap-2">
+                    <button
+                      onClick={() => openReassign(g)}
+                      className="px-3 py-1.5 border border-[var(--color-primary)] text-[var(--color-primary)] rounded-md text-xs font-medium hover:bg-[var(--color-primary)] hover:text-white transition-colors"
+                    >
+                      Reassign Rep
+                    </button>
+                    <button
+                      onClick={() => openCancel(g)}
+                      className="px-3 py-1.5 border border-red-400 text-red-600 rounded-md text-xs font-medium hover:bg-red-500 hover:text-white transition-colors"
+                    >
+                      Cancel Release
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -855,6 +928,81 @@ export default function ReleasePage() {
               >
                 {reassigning && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 Reassign &amp; Resend
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel release modal */}
+      {cancelTarget && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-bold text-gray-900 mb-1">Cancel Release</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Reverts this release back to <strong>Captured</strong> (in the warehouse, ready to release again)
+              and invalidates the delivery note&apos;s QR link. Use this when the rep can no longer do the return.
+            </p>
+
+            <div className="bg-red-50 border border-red-200 rounded-md p-3 mb-4 text-xs text-red-700">
+              A manager or admin must authorise this — it is recorded in the activity log.
+            </div>
+
+            <div className="bg-gray-50 rounded-md p-3 mb-4 text-sm">
+              <div className="flex justify-between mb-1">
+                <span className="text-gray-600">Current rep:</span>
+                <span className="font-medium">{cancelTarget.repName}</span>
+              </div>
+              <div className="flex justify-between mb-1">
+                <span className="text-gray-600">Client:</span>
+                <span className="font-medium">{cancelTarget.clientName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Slips / boxes:</span>
+                <span className="font-medium">{cancelTarget.slips.length} / {cancelTarget.totalBoxes}</span>
+              </div>
+            </div>
+
+            <label className="block text-xs text-gray-600 mb-1">Authorising Manager</label>
+            <select
+              value={cancelManagerId}
+              onChange={e => {
+                setCancelManagerId(e.target.value);
+                const m = managerOptions.find(o => o.id === e.target.value);
+                setCancelManagerName(m ? `${m.name} ${m.surname}` : '');
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm mb-3"
+            >
+              <option value="">Select manager...</option>
+              {managerOptions.map(m => (
+                <option key={m.id} value={m.id}>{m.name} {m.surname}</option>
+              ))}
+            </select>
+
+            <label className="block text-xs text-gray-600 mb-1">Manager Security Code</label>
+            <input
+              value={cancelCode}
+              onChange={e => setCancelCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
+              maxLength={4}
+              placeholder="4-char code"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-4"
+              autoComplete="off"
+            />
+
+            <div className="flex gap-2">
+              <button
+                onClick={closeCancel}
+                className="flex-1 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Keep Release
+              </button>
+              <button
+                onClick={handleCancelRelease}
+                disabled={cancelling || !cancelManagerId || !cancelCode.trim()}
+                className="flex-1 py-2 bg-red-500 text-white rounded-md text-sm font-bold hover:bg-red-600 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {cancelling && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Cancel Release
               </button>
             </div>
           </div>
