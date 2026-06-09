@@ -87,6 +87,20 @@ export async function POST(req: NextRequest) {
     resolvedSlips.push({ payload: sp, slip });
   }
 
+  // Vendor lock — a delivery note must never mix vendors/clients.
+  // Stock is only ever returned to a single vendor at a time.
+  const firstVendor = resolvedSlips[0].slip.vendorNumber;
+  const firstClient = resolvedSlips[0].payload.clientId;
+  const mixedVendors = resolvedSlips.some(
+    r => r.slip.vendorNumber !== firstVendor || r.payload.clientId !== firstClient,
+  );
+  if (mixedVendors) {
+    return NextResponse.json(
+      { error: 'Cannot release stock from multiple vendors on one delivery note' },
+      { status: 400 },
+    );
+  }
+
   // Load users — needed for rep lookup AND audit
   const users = await loadUsers();
   const me = users.find(u => u.id === guard.userId);

@@ -289,6 +289,22 @@ export default function ReleasePage() {
       return;
     }
 
+    // Vendor lock — a delivery note may only contain one vendor's stock.
+    // Stock is never returned to one vendor from multiple vendors.
+    const newSlip = slipMap.get(slipId);
+    if (newSlip && discoveredSlips.length > 0) {
+      const current = discoveredSlips[0].slip;
+      if (newSlip.vendorNumber !== current.vendorNumber || newSlip.clientId !== current.clientId) {
+        setScanError(
+          `This box is ${newSlip.clientName} (vendor ${newSlip.vendorNumber}). ` +
+          `The current release is for ${current.clientName} (vendor ${current.vendorNumber}). ` +
+          `Stock from different vendors can't be released on the same delivery note.`,
+        );
+        setScanBarcode('');
+        return;
+      }
+    }
+
     setScannedBarcodes(prev => [...prev, barcode]);
     setScanBarcode('');
 
