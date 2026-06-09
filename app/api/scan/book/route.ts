@@ -277,6 +277,7 @@ export async function POST(req: NextRequest) {
       bookedRepName: repName,
       receiptBoxes: slipBoxes,
       receiptTotalBoxes: boxCount,
+      nothingToReturn,
     });
 
     if (!updated) {

@@ -32,6 +32,7 @@ interface SlipDto {
   receiptBoxes?: ReceiptBox[];
   receiptedAt?: string;
   receiptedByName?: string;
+  nothingToReturn?: boolean;
   releaseRepId?: string;
   releaseRepName?: string;
   releaseBoxes?: ReceiptBox[];
@@ -499,7 +500,7 @@ export default function ReceiptCapturePage() {
   // ── Complete receipt ──
   async function handleComplete(force = false) {
     if (!slip) return;
-    if (boxes.length === 0) {
+    if (!slip.nothingToReturn && boxes.length === 0) {
       notify('Scan at least one box before completing', 'error');
       return;
     }
@@ -959,7 +960,44 @@ export default function ReceiptCapturePage() {
       {/* ════════════════════════════════════════════════════════════════════ */}
       {/* RECEIPT MODE                                                       */}
       {/* ════════════════════════════════════════════════════════════════════ */}
-      {mode === 'receipt' && !showUnreturnedCapture && !showManualCapture && (
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {/* NOTHING TO RETURN — no boxes, skip straight to SKU capture          */}
+      {/* ════════════════════════════════════════════════════════════════════ */}
+      {mode === 'receipt' && !showUnreturnedCapture && !showManualCapture && slip.nothingToReturn && (
+        <>
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 flex items-start gap-3">
+            <svg className="w-5 h-5 text-amber-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <p className="text-sm font-medium text-amber-800">Nothing to Return</p>
+              <p className="text-xs text-amber-600 mt-0.5">
+                This pick slip was booked with no stock returned, so there are no boxes to receive.
+                Proceed to capture what happened to each SKU — display, refused, not found, damaged.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              onClick={() => handleComplete()}
+              disabled={completing}
+              className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {completing && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+              Go to SKU Capture
+            </button>
+            <button
+              onClick={() => router.push('/aged-stock/receipts')}
+              className="px-5 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
+
+      {mode === 'receipt' && !showUnreturnedCapture && !showManualCapture && !slip.nothingToReturn && (
         <>
           {/* GRN auto-fill banner */}
           {grnAutoFilled && (

@@ -112,6 +112,8 @@ export interface PickSlipRecord {
   bookedByName?: string;
   bookedRepId?: string;
   bookedRepName?: string;
+  /** True when booked via "Nothing to Return" — no boxes, skips box capture */
+  nothingToReturn?: boolean;
   /** Store references — replaces legacy receiptStoreRef1-4 */
   receiptStoreRefs?: string[];
   /** GRN/GRV date entered during receipt capture */
