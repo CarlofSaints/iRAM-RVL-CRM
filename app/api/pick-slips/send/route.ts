@@ -89,6 +89,8 @@ export async function POST(req: NextRequest) {
   // Helper: resolve rows for a slip, backfilling from load data if needed
   async function resolveRows(slip: PickSlipRecord): Promise<PickSlipPdfRow[]> {
     if (slip.rows?.length) return slip.rows;
+    // Manual slips start with empty rows — that's intentional (blank pick slip)
+    if (slip.manual) return [];
     const load = await getLoad(slip.clientId, slip.loadId);
     if (!load) return [];
     return load.rows
@@ -103,7 +105,7 @@ export async function POST(req: NextRequest) {
     for (const slip of targetSlips) {
       try {
         const rows = await resolveRows(slip);
-        if (rows.length === 0) {
+        if (rows.length === 0 && !slip.manual) {
           errors.push(`${slip.id}: no rows to generate PDF`);
           failed++;
           continue;
@@ -117,6 +119,7 @@ export async function POST(req: NextRequest) {
           warehouse: slip.warehouse,
           loadDate: slip.generatedAt.slice(0, 10),
           rows,
+          manual: slip.manual,
         });
         attachments.push({ filename: slip.fileName, content: pdfBuffer });
       } catch (err) {
@@ -157,7 +160,7 @@ export async function POST(req: NextRequest) {
     for (const slip of targetSlips) {
       try {
         const rows = await resolveRows(slip);
-        if (rows.length === 0) {
+        if (rows.length === 0 && !slip.manual) {
           errors.push(`${slip.id}: no rows to generate PDF`);
           failed++;
           continue;
@@ -171,6 +174,7 @@ export async function POST(req: NextRequest) {
           warehouse: slip.warehouse,
           loadDate: slip.generatedAt.slice(0, 10),
           rows,
+          manual: slip.manual,
         });
 
         const subject = `Pick Slip ${slip.id} — ${slip.clientName || ''} ${slip.vendorNumber} — ${slip.siteName}`;
