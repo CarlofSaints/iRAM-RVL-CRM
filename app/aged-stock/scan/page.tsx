@@ -539,10 +539,11 @@ export default function ScanPage() {
                 <label className="block text-xs text-gray-600 mb-1">Security Code <span className="text-red-500">*</span></label>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   value={securityCode}
                   onChange={e => setSecurityCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
                   maxLength={4}
-                  placeholder="4-char code"
+                  placeholder=""
                   className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm font-mono tracking-widest"
                 />
                 <span className="text-[10px] text-gray-400 mt-0.5 block">The rep must provide their 4-character release code</span>
@@ -600,10 +601,11 @@ export default function ScanPage() {
                 <label className="block text-xs text-gray-600 mb-1">Release Code <span className="text-red-500">*</span></label>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   value={ntrSecurityCode}
                   onChange={e => setNtrSecurityCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
                   maxLength={4}
-                  placeholder="4-char code"
+                  placeholder=""
                   className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm font-mono tracking-widest"
                 />
                 <span className="text-[10px] text-gray-400 mt-0.5 block">The rep must provide their 4-character release code</span>
