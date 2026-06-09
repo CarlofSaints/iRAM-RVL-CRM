@@ -284,7 +284,7 @@ export default function ReleasePage() {
     // Look up in index
     const slipId = barcodeIndex[barcode];
     if (!slipId) {
-      setScanError(`Barcode not found in any releasable slip: ${barcode}`);
+      setScanError(`Documents Not Captured! Ask admin personnel for help! (Barcode not found in any releasable slip: ${barcode})`);
       setScanBarcode('');
       return;
     }
