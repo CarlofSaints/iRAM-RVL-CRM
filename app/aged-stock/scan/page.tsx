@@ -88,6 +88,8 @@ export default function ScanPage() {
   const [users, setUsers] = useState<UserDto[]>([]);
   const [selectedRepId, setSelectedRepId] = useState('');
   const [securityCode, setSecurityCode] = useState('');
+  // Sticker print format for this booking (rep chooses roll vs A4 sheet)
+  const [bookFormat, setBookFormat] = useState<'roll' | 'a4sheet'>('roll');
 
   // Submit
   const [booking, setBooking] = useState(false);
@@ -228,6 +230,7 @@ export default function ScanPage() {
           })),
           repId: selectedRepId,
           securityCode: securityCode.trim(),
+          format: bookFormat,
         }),
       });
       const data = await res.json();
@@ -285,6 +288,7 @@ export default function ScanPage() {
           repId: ntrRepId,
           securityCode: ntrSecurityCode.trim(),
           nothingToReturn: true,
+          format: bookFormat,
         }),
       });
       const data = await res.json();
@@ -549,6 +553,19 @@ export default function ScanPage() {
                 <span className="text-[10px] text-gray-400 mt-0.5 block">The rep must provide their 4-character release code</span>
               </div>
             </div>
+          </div>
+
+          {/* Sticker format for this booking */}
+          <div className="flex items-center gap-2 mb-3">
+            <label className="text-xs font-medium text-gray-600">Sticker Format:</label>
+            <select
+              value={bookFormat}
+              onChange={e => setBookFormat(e.target.value as 'roll' | 'a4sheet')}
+              className="px-2.5 py-1.5 border border-gray-300 rounded-md text-sm"
+            >
+              <option value="roll">Roll (thermal)</option>
+              <option value="a4sheet">A4 Sheet</option>
+            </select>
           </div>
 
           {/* Print Stickers & Book button */}
