@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { list } from '@vercel/blob';
+import { list, get } from '@vercel/blob';
 import JSZip from 'jszip';
 import { requirePermission } from '@/lib/rolesData';
 
@@ -28,13 +28,15 @@ export async function GET(req: NextRequest) {
 
       for (const blob of result.blobs) {
         try {
-          const res = await fetch(blob.url);
-          if (!res.ok) {
-            console.warn(`[backup] Failed to fetch blob: ${blob.pathname} (${res.status})`);
+          // Private store: blob.url is NOT publicly fetchable (403). Read via the
+          // authenticated get() + stream — same pattern the data layers use.
+          const obj = await get(blob.pathname, { access: 'private', useCache: false });
+          if (!obj || obj.statusCode !== 200 || !obj.stream) {
+            console.warn(`[backup] Failed to read blob: ${blob.pathname}`);
             continue;
           }
 
-          const buffer = Buffer.from(await res.arrayBuffer());
+          const buffer = Buffer.from(await new Response(obj.stream).arrayBuffer());
 
           if (isImage(blob.pathname)) {
             zip.file(blob.pathname, buffer, { binary: true });
