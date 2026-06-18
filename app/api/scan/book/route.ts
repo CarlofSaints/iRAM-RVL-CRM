@@ -10,7 +10,7 @@ import {
   type Sticker,
 } from '@/lib/stickerData';
 import { generateStickerPdf, type StickerFieldData } from '@/lib/stickerPdf';
-import { loadSettings } from '@/lib/settingsData';
+import { loadSettings, resolveLayout, profileFor } from '@/lib/settingsData';
 import { logAudit } from '@/lib/auditLog';
 
 export const dynamic = 'force-dynamic';
@@ -238,17 +238,20 @@ export async function POST(req: NextRequest) {
 
     // Generate PDF
     const stickerSettings = await loadSettings();
+    // Optional `format` in the booking body selects roll vs A4; else the default.
+    const layout = resolveLayout(stickerSettings, typeof body.format === 'string' ? body.format : null);
+    const profile = profileFor(stickerSettings, layout);
     const pdfBuffer = await generateStickerPdf({
       stickers: pdfStickers,
       warehouseName: whName,
-      stickerWidthMm: stickerSettings.sticker.widthMm,
-      stickerHeightMm: stickerSettings.sticker.heightMm,
-      layout: stickerSettings.sticker.layout,
-      gapMm: stickerSettings.sticker.gapMm,
-      marginTopMm: stickerSettings.sticker.marginTop,
-      marginBottomMm: stickerSettings.sticker.marginBottom,
-      marginLeftMm: stickerSettings.sticker.marginLeft,
-      marginRightMm: stickerSettings.sticker.marginRight,
+      stickerWidthMm: profile.widthMm,
+      stickerHeightMm: profile.heightMm,
+      layout,
+      gapMm: profile.gapMm,
+      marginTopMm: profile.marginTop,
+      marginBottomMm: profile.marginBottom,
+      marginLeftMm: profile.marginLeft,
+      marginRightMm: profile.marginRight,
     });
     pdfBase64 = pdfBuffer.toString('base64');
   }

@@ -5,6 +5,12 @@
  *
  * Unlike control data (which is an array of records), settings is a
  * single JSON object. Each key group is a section (sticker, etc.).
+ *
+ * Stickers support TWO independent profiles — `roll` (thermal/roll printers,
+ * e.g. Postek) and `a4sheet` (A4 sheet labels, e.g. 99.1 x 139 mm 4-up) —
+ * so both can be configured and printed without re-calibrating each time.
+ * The format is chosen at print time; `defaultLayout` is used when a caller
+ * doesn't specify one.
  */
 
 import fs from 'fs';
@@ -15,14 +21,16 @@ import { put, get } from '@vercel/blob';
 
 export type StickerLayout = 'roll' | 'a4sheet';
 
-export interface StickerSettings {
+export interface StickerProfile {
   /** Sticker width in millimetres */
   widthMm: number;
   /** Sticker height in millimetres */
   heightMm: number;
-  /** Layout mode: 'roll' = one sticker per page (page = sticker size), 'a4sheet' = grid on A4 */
-  layout: StickerLayout;
-  /** Gap between labels on the roll in mm (added to page height so pages align with label pitch) */
+  /**
+   * Gap between labels in mm.
+   * - roll: inter-label gap added to page height so pages match the roll pitch.
+   * - a4sheet: gap between cells in the grid (0 = contiguous, e.g. pre-cut 4-up).
+   */
   gapMm: number;
   /** Content margins in millimetres (fine-tune print alignment) */
   marginTop: number;
@@ -31,18 +39,22 @@ export interface StickerSettings {
   marginRight: number;
 }
 
+export interface StickerSettings {
+  /** Profile used when a print request doesn't specify a format. */
+  defaultLayout: StickerLayout;
+  roll: StickerProfile;
+  a4sheet: StickerProfile;
+}
+
 export interface AppSettings {
   sticker: StickerSettings;
 }
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
 
-export const DEFAULT_STICKER: StickerSettings = {
-  // A4 4-up shipping labels (Avery L7169 / J8169 geometry).
-  // gap 0 → labels are contiguous; the A4 grid auto-centres to ~5.9mm L/R + ~9.5mm T/B margins.
-  widthMm: 99.1,
-  heightMm: 139,
-  layout: 'a4sheet',
+export const DEFAULT_ROLL_PROFILE: StickerProfile = {
+  widthMm: 74,
+  heightMm: 50,
   gapMm: 0,
   marginTop: 0,
   marginBottom: 0,
@@ -50,9 +62,95 @@ export const DEFAULT_STICKER: StickerSettings = {
   marginRight: 0,
 };
 
+export const DEFAULT_A4_PROFILE: StickerProfile = {
+  // A4 4-up shipping labels (Avery L7169 / J8169 geometry).
+  // gap 0 → labels are contiguous; the A4 grid auto-centres to ~5.9mm L/R + ~9.5mm T/B margins.
+  widthMm: 99.1,
+  heightMm: 139,
+  gapMm: 0,
+  marginTop: 0,
+  marginBottom: 0,
+  marginLeft: 0,
+  marginRight: 0,
+};
+
+export const DEFAULT_STICKER: StickerSettings = {
+  defaultLayout: 'a4sheet',
+  roll: { ...DEFAULT_ROLL_PROFILE },
+  a4sheet: { ...DEFAULT_A4_PROFILE },
+};
+
 export const DEFAULT_SETTINGS: AppSettings = {
   sticker: DEFAULT_STICKER,
 };
+
+// ── Normalisation / migration ────────────────────────────────────────────────
+
+/** Coerce a partial profile into a complete one, filling gaps from `fallback`. */
+function coerceProfile(p: unknown, fallback: StickerProfile): StickerProfile {
+  const o = (p && typeof p === 'object' ? p : {}) as Record<string, unknown>;
+  const num = (v: unknown, d: number) => (typeof v === 'number' && !isNaN(v) ? v : d);
+  return {
+    widthMm: num(o.widthMm, fallback.widthMm),
+    heightMm: num(o.heightMm, fallback.heightMm),
+    gapMm: num(o.gapMm, fallback.gapMm),
+    marginTop: num(o.marginTop, fallback.marginTop),
+    marginBottom: num(o.marginBottom, fallback.marginBottom),
+    marginLeft: num(o.marginLeft, fallback.marginLeft),
+    marginRight: num(o.marginRight, fallback.marginRight),
+  };
+}
+
+/**
+ * Normalise raw blob/disk JSON into the current AppSettings shape.
+ * Handles three cases:
+ *   1. Already new shape (`roll`/`a4sheet` present) → coerce each profile.
+ *   2. Legacy flat shape (`layout` + `widthMm` at sticker level) → migrate the
+ *      flat values into the matching profile, default the other.
+ *   3. Missing/garbage → full defaults.
+ */
+export function normalizeSettings(raw: unknown): AppSettings {
+  const s = (raw && typeof raw === 'object'
+    ? (raw as Record<string, unknown>).sticker
+    : undefined) as Record<string, unknown> | undefined;
+
+  if (!s || typeof s !== 'object') {
+    return { sticker: { defaultLayout: 'a4sheet', roll: { ...DEFAULT_ROLL_PROFILE }, a4sheet: { ...DEFAULT_A4_PROFILE } } };
+  }
+
+  // Case 1: new shape
+  if ('roll' in s || 'a4sheet' in s) {
+    const dl = s.defaultLayout === 'roll' || s.defaultLayout === 'a4sheet' ? s.defaultLayout : DEFAULT_STICKER.defaultLayout;
+    return {
+      sticker: {
+        defaultLayout: dl,
+        roll: coerceProfile(s.roll, DEFAULT_ROLL_PROFILE),
+        a4sheet: coerceProfile(s.a4sheet, DEFAULT_A4_PROFILE),
+      },
+    };
+  }
+
+  // Case 2: legacy flat shape — migrate into the matching profile
+  const oldLayout: StickerLayout = s.layout === 'a4sheet' ? 'a4sheet' : 'roll';
+  const flat = coerceProfile(s, oldLayout === 'roll' ? DEFAULT_ROLL_PROFILE : DEFAULT_A4_PROFILE);
+  return {
+    sticker: {
+      defaultLayout: oldLayout,
+      roll: oldLayout === 'roll' ? flat : { ...DEFAULT_ROLL_PROFILE },
+      a4sheet: oldLayout === 'a4sheet' ? flat : { ...DEFAULT_A4_PROFILE },
+    },
+  };
+}
+
+/** Resolve the effective layout for a print, honouring an optional request. */
+export function resolveLayout(settings: AppSettings, requested?: string | null): StickerLayout {
+  return requested === 'roll' || requested === 'a4sheet' ? requested : settings.sticker.defaultLayout;
+}
+
+/** Get the profile for a given layout. */
+export function profileFor(settings: AppSettings, layout: StickerLayout): StickerProfile {
+  return layout === 'a4sheet' ? settings.sticker.a4sheet : settings.sticker.roll;
+}
 
 // ── Blob / local helpers ─────────────────────────────────────────────────────
 
@@ -64,23 +162,22 @@ export async function loadSettings(): Promise<AppSettings> {
     try {
       if (fs.existsSync(LOCAL_PATH)) {
         const raw = JSON.parse(fs.readFileSync(LOCAL_PATH, 'utf-8'));
-        return { ...DEFAULT_SETTINGS, ...raw };
+        return normalizeSettings(raw);
       }
     } catch { /* empty */ }
-    return { ...DEFAULT_SETTINGS };
+    return normalizeSettings(null);
   }
 
   try {
     const result = await get(BLOB_KEY, { access: 'private', useCache: false });
     if (result && result.statusCode === 200) {
       const text = await new Response(result.stream).text();
-      const raw = JSON.parse(text);
-      return { ...DEFAULT_SETTINGS, ...raw };
+      return normalizeSettings(JSON.parse(text));
     }
   } catch (err) {
     console.error('[settingsData] Blob read failed:', err instanceof Error ? err.message : err);
   }
-  return { ...DEFAULT_SETTINGS };
+  return normalizeSettings(null);
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {

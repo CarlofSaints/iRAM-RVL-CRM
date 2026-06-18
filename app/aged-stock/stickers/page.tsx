@@ -6,6 +6,8 @@ import { useAuth, authFetch } from '@/lib/useAuth';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+type StickerLayout = 'roll' | 'a4sheet';
+
 interface Warehouse {
   id: string;
   name: string;
@@ -49,9 +51,10 @@ export default function StickerLabelsPage() {
   // Generate form state
   const [warehouseId, setWarehouseId] = useState('');
   const [quantity, setQuantity] = useState(50);
+  const [genFormat, setGenFormat] = useState<StickerLayout>('a4sheet');
   const [generating, setGenerating] = useState(false);
 
-  // Downloading tracker (batchId → true while downloading)
+  // Downloading tracker (`${batchId}:${format}` → true while downloading)
   const [downloading, setDownloading] = useState<Record<string, boolean>>({});
 
   // ── Fetch data ──
@@ -100,9 +103,9 @@ export default function StickerLabelsPage() {
       notify(`Generated ${data.quantity} stickers for ${data.warehouseCode}`);
       await fetchBatches();
 
-      // Auto-download the newly created batch PDF
+      // Auto-download the newly created batch PDF in the selected format
       if (data.batchId) {
-        downloadBatch(data.batchId);
+        downloadBatch(data.batchId, genFormat);
       }
     } catch {
       notify('Network error generating stickers', 'error');
@@ -113,10 +116,11 @@ export default function StickerLabelsPage() {
 
   // ── Download PDF ──
 
-  async function downloadBatch(batchId: string) {
-    setDownloading(prev => ({ ...prev, [batchId]: true }));
+  async function downloadBatch(batchId: string, format: StickerLayout) {
+    const key = `${batchId}:${format}`;
+    setDownloading(prev => ({ ...prev, [key]: true }));
     try {
-      const res = await authFetch(`/api/stickers/${batchId}`, { cache: 'no-store' });
+      const res = await authFetch(`/api/stickers/${batchId}?format=${format}`, { cache: 'no-store' });
       if (!res.ok) {
         notify('Failed to download PDF', 'error');
         return;
@@ -124,7 +128,7 @@ export default function StickerLabelsPage() {
       const blob = await res.blob();
       const disposition = res.headers.get('Content-Disposition') ?? '';
       const fileMatch = disposition.match(/filename="(.+?)"/);
-      const fileName = fileMatch ? fileMatch[1] : `stickers-${batchId}.pdf`;
+      const fileName = fileMatch ? fileMatch[1] : `stickers-${batchId}-${format}.pdf`;
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -139,7 +143,7 @@ export default function StickerLabelsPage() {
     } catch {
       notify('Network error downloading PDF', 'error');
     } finally {
-      setDownloading(prev => ({ ...prev, [batchId]: false }));
+      setDownloading(prev => ({ ...prev, [key]: false }));
     }
   }
 
@@ -188,6 +192,17 @@ export default function StickerLabelsPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
               />
             </div>
+            <div className="w-40">
+              <label className="block text-xs text-gray-600 mb-1">Format</label>
+              <select
+                value={genFormat}
+                onChange={e => setGenFormat(e.target.value as StickerLayout)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              >
+                <option value="a4sheet">A4 Sheet</option>
+                <option value="roll">Roll</option>
+              </select>
+            </div>
             <button
               onClick={handleGenerate}
               disabled={generating || !warehouseId}
@@ -235,16 +250,29 @@ export default function StickerLabelsPage() {
                   <td className="px-4 py-2 whitespace-nowrap text-gray-500">{fmtDate(b.createdAt)}</td>
                   <td className="px-4 py-2 whitespace-nowrap">{b.createdByName}</td>
                   <td className="px-4 py-2 whitespace-nowrap">
-                    <button
-                      onClick={() => downloadBatch(b.id)}
-                      disabled={downloading[b.id]}
-                      className="px-3 py-1 text-xs font-medium text-[var(--color-primary)] border border-[var(--color-primary)]/30 rounded hover:bg-[var(--color-primary)]/5 disabled:opacity-50 flex items-center gap-1.5"
-                    >
-                      {downloading[b.id] && (
-                        <div className="h-3 w-3 border-2 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin" />
-                      )}
-                      Download
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-gray-400 uppercase tracking-wide mr-0.5">PDF:</span>
+                      <button
+                        onClick={() => downloadBatch(b.id, 'a4sheet')}
+                        disabled={downloading[`${b.id}:a4sheet`]}
+                        className="px-3 py-1 text-xs font-medium text-[var(--color-primary)] border border-[var(--color-primary)]/30 rounded hover:bg-[var(--color-primary)]/5 disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {downloading[`${b.id}:a4sheet`] && (
+                          <div className="h-3 w-3 border-2 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin" />
+                        )}
+                        A4
+                      </button>
+                      <button
+                        onClick={() => downloadBatch(b.id, 'roll')}
+                        disabled={downloading[`${b.id}:roll`]}
+                        className="px-3 py-1 text-xs font-medium text-gray-600 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1.5"
+                      >
+                        {downloading[`${b.id}:roll`] && (
+                          <div className="h-3 w-3 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
+                        )}
+                        Roll
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

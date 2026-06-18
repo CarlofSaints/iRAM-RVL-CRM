@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
-import { loadSettings } from '@/lib/settingsData';
+import { loadSettings, resolveLayout, profileFor } from '@/lib/settingsData';
 import PDFDocument from 'pdfkit';
 
 export const dynamic = 'force-dynamic';
@@ -19,7 +19,8 @@ export async function GET(req: NextRequest) {
   if (guard instanceof NextResponse) return guard;
 
   const settings = await loadSettings();
-  const { widthMm, heightMm, gapMm, marginTop, marginBottom, marginLeft, marginRight } = settings.sticker;
+  const layout = resolveLayout(settings, new URL(req.url).searchParams.get('format'));
+  const { widthMm, heightMm, gapMm, marginTop, marginBottom, marginLeft, marginRight } = profileFor(settings, layout);
   const w = widthMm * MM;
   const h = heightMm * MM;
   const pageH = h + (gapMm ?? 0) * MM;
