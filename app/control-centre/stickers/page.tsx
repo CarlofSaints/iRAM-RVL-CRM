@@ -133,8 +133,9 @@ export default function StickersPage() {
   const MM = 72 / 25.4;
   const previewW = parseFloat(stickerW) || 0;
   const previewH = parseFloat(stickerH) || 0;
-  const cols = previewW > 0 ? Math.floor((595.28 + 8) / (previewW * MM + 8)) : 0;
-  const rows = previewH > 0 ? Math.floor((841.89 + 8) / (previewH * MM + 8)) : 0;
+  const gapPt = (parseFloat(gap) || 0) * MM;
+  const cols = previewW > 0 ? Math.floor((595.28 + gapPt) / (previewW * MM + gapPt)) : 0;
+  const rows = previewH > 0 ? Math.floor((841.89 + gapPt) / (previewH * MM + gapPt)) : 0;
   const perPage = cols * rows;
 
   if (!settings) {
@@ -225,24 +226,26 @@ export default function StickersPage() {
             </div>
           </div>
 
-          {/* Label gap (roll mode only) */}
-          {layout === 'roll' && (
-            <div className="flex flex-col gap-1 max-w-[200px]">
-              <label className="text-xs text-gray-500 font-medium">Label Gap (mm)</label>
-              <input
-                type="number"
-                min={0}
-                max={20}
-                step={0.5}
-                value={gap}
-                onChange={e => setGap(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
-              />
-              <p className="text-xs text-gray-400 mt-0.5">
-                Distance between labels on the roll. Measure the gap between the bottom of one label and the top of the next. Usually 2–3 mm.
-              </p>
-            </div>
-          )}
+          {/* Label / inter-label gap (used by both modes) */}
+          <div className="flex flex-col gap-1 max-w-[220px]">
+            <label className="text-xs text-gray-500 font-medium">
+              {layout === 'roll' ? 'Label Gap (mm)' : 'Gap Between Labels (mm)'}
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={20}
+              step={0.5}
+              value={gap}
+              onChange={e => setGap(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+            />
+            <p className="text-xs text-gray-400 mt-0.5">
+              {layout === 'roll'
+                ? 'Distance between labels on the roll. Measure the gap between the bottom of one label and the top of the next. Usually 2–3 mm.'
+                : 'Gap between labels on the A4 sheet. Set 0 for contiguous, pre-cut label sheets (e.g. 99.1 × 139 mm 4-up) — the grid auto-centres on the page.'}
+            </p>
+          </div>
 
           {/* Margins */}
           <div>

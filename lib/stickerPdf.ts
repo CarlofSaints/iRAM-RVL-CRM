@@ -54,7 +54,6 @@ export interface StickerPdfParams {
 const PAGE_W = 595.28;   // A4 width (pt)
 const PAGE_H = 841.89;   // A4 height (pt)
 const MM = 72 / 25.4;    // 1mm in points
-const GAP = 8;            // gap between stickers (pt)
 
 // Field layout — each row is full-width, split into two columns, or the
 // special "Box _ of _" layout with inline underlines.
@@ -126,7 +125,7 @@ export async function generateStickerPdf(params: StickerPdfParams): Promise<Buff
   if (layout === 'roll') {
     return generateRollPdf(stickers, warehouseName, stickerW, stickerH, compact, barcodePngs, margins, gapPt);
   } else {
-    return generateA4SheetPdf(stickers, warehouseName, stickerW, stickerH, compact, logoBuffer, barcodePngs, margins);
+    return generateA4SheetPdf(stickers, warehouseName, stickerW, stickerH, compact, logoBuffer, barcodePngs, margins, gapPt);
   }
 }
 
@@ -207,13 +206,16 @@ function generateA4SheetPdf(
   logoBuffer: Buffer | null,
   barcodePngs: Map<string, Buffer>,
   margins: ContentMargins,
+  gap: number,
 ): Promise<Buffer> {
-  const cols = Math.max(1, Math.floor((PAGE_W + GAP) / (stickerW + GAP)));
-  const rows = Math.max(1, Math.floor((PAGE_H + GAP) / (stickerH + GAP)));
+  // Inter-label gap (pt). gap 0 → contiguous labels; the grid auto-centres,
+  // so the page-edge margins fall out of the dimensions (standard 4-up sheets).
+  const cols = Math.max(1, Math.floor((PAGE_W + gap) / (stickerW + gap)));
+  const rows = Math.max(1, Math.floor((PAGE_H + gap) / (stickerH + gap)));
   const stickersPerPage = cols * rows;
 
-  const marginX = (PAGE_W - cols * stickerW - (cols - 1) * GAP) / 2;
-  const marginY = (PAGE_H - rows * stickerH - (rows - 1) * GAP) / 2;
+  const marginX = (PAGE_W - cols * stickerW - (cols - 1) * gap) / 2;
+  const marginY = (PAGE_H - rows * stickerH - (rows - 1) * gap) / 2;
 
   const doc = new PDFDocument({
     size: 'A4',
@@ -240,8 +242,8 @@ function generateA4SheetPdf(
       const col = slot % cols;
       const row = Math.floor(slot / cols);
 
-      const x = marginX + col * (stickerW + GAP);
-      const y = marginY + row * (stickerH + GAP);
+      const x = marginX + col * (stickerW + gap);
+      const y = marginY + row * (stickerH + gap);
 
       // Apply content margins within each sticker cell
       const cx = x + margins.left;

@@ -38,9 +38,11 @@ export interface AppSettings {
 // ── Defaults ─────────────────────────────────────────────────────────────────
 
 export const DEFAULT_STICKER: StickerSettings = {
-  widthMm: 74,
-  heightMm: 50,
-  layout: 'roll',
+  // A4 4-up shipping labels (Avery L7169 / J8169 geometry).
+  // gap 0 → labels are contiguous; the A4 grid auto-centres to ~5.9mm L/R + ~9.5mm T/B margins.
+  widthMm: 99.1,
+  heightMm: 139,
+  layout: 'a4sheet',
   gapMm: 0,
   marginTop: 0,
   marginBottom: 0,
