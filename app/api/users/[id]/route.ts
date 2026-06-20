@@ -58,6 +58,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       users[idx].forcePasswordChange = body.forcePasswordChange !== false;
     }
 
+    // Release code — used to authorise releases (rep) and cancellations/partial
+    // releases (manager/admin). Empty string clears it; otherwise must be 4 chars.
+    if (body.releaseCode !== undefined) {
+      const cleaned = (body.releaseCode ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (cleaned.length === 0) {
+        users[idx].releaseCode = undefined;
+      } else if (cleaned.length === 4) {
+        users[idx].releaseCode = cleaned;
+      } else {
+        return NextResponse.json(
+          { error: 'Release code must be exactly 4 alphanumeric characters (or blank to clear)' },
+          { status: 400 },
+        );
+      }
+    }
+
     // Subscription tier flip
     let upgradedToPro = false;
     if (body.subscriptionTier === 'pro' || body.subscriptionTier === 'standard') {

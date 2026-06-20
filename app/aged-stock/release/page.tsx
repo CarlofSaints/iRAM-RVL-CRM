@@ -820,8 +820,11 @@ export default function ReleasePage() {
 
       {/* Partial release manager override modal */}
       {showPartialModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
+          onClick={() => { setShowPartialModal(false); setManagerOverrideCode(''); setManagerOverrideRepId(''); }}
+        >
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-bold text-gray-900 mb-2">Partial Release</h3>
             <p className="text-sm text-gray-600 mb-4">
               Not all boxes have been scanned for the following slip(s):
@@ -838,27 +841,40 @@ export default function ReleasePage() {
               A manager must authorise this partial release.
             </p>
 
-            <label className="block text-xs text-gray-600 mb-1">Manager</label>
-            <select
-              value={managerOverrideRepId}
-              onChange={e => setManagerOverrideRepId(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm mb-3"
-            >
-              <option value="">Select manager...</option>
-              {managerOptions.map(u => (
-                <option key={u.id} value={u.id}>{u.name} {u.surname}</option>
-              ))}
-            </select>
+            {managerOptions.length === 0 ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-md p-3 mb-4 text-xs text-amber-800">
+                <p className="font-semibold mb-1">No authorising managers are set up yet.</p>
+                <p>
+                  A partial release must be authorised by a manager/admin who has a <strong>Release Code</strong>.
+                  Set one in <strong>User Management → Edit user → Release Code</strong> for any non-rep user,
+                  then try again.
+                </p>
+              </div>
+            ) : (
+              <>
+                <label className="block text-xs text-gray-600 mb-1">Manager</label>
+                <select
+                  value={managerOverrideRepId}
+                  onChange={e => setManagerOverrideRepId(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm mb-3"
+                >
+                  <option value="">Select manager...</option>
+                  {managerOptions.map(u => (
+                    <option key={u.id} value={u.id}>{u.name} {u.surname}</option>
+                  ))}
+                </select>
 
-            <label className="block text-xs text-gray-600 mb-1">Manager Release Code</label>
-            <input
-              value={managerOverrideCode}
-              onChange={e => setManagerOverrideCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
-              maxLength={4}
-              placeholder="4-char code"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-4"
-              autoComplete="off"
-            />
+                <label className="block text-xs text-gray-600 mb-1">Manager Release Code</label>
+                <input
+                  value={managerOverrideCode}
+                  onChange={e => setManagerOverrideCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
+                  maxLength={4}
+                  placeholder="4-char code"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-4"
+                  autoComplete="off"
+                />
+              </>
+            )}
 
             <div className="flex gap-2">
               <button
@@ -869,7 +885,7 @@ export default function ReleasePage() {
               </button>
               <button
                 onClick={handleRelease}
-                disabled={releasing || !managerOverrideRepId || !managerOverrideCode.trim()}
+                disabled={releasing || managerOptions.length === 0 || !managerOverrideRepId || !managerOverrideCode.trim()}
                 className="flex-1 py-2 bg-amber-500 text-white rounded-md text-sm font-bold hover:bg-amber-600 disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {releasing && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
@@ -882,9 +898,21 @@ export default function ReleasePage() {
 
       {/* Reassign rep modal */}
       {reassignTarget && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <h3 className="text-lg font-bold text-gray-900 mb-1">Reassign Collecting Rep</h3>
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
+          onClick={closeReassign}
+        >
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 relative" onClick={e => e.stopPropagation()}>
+            <button
+              onClick={closeReassign}
+              aria-label="Close"
+              className="absolute top-3 right-3 text-gray-400 hover:text-gray-700 rounded-md p-1 hover:bg-gray-100"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <h3 className="text-lg font-bold text-gray-900 mb-1 pr-8">Reassign Collecting Rep</h3>
             <p className="text-sm text-gray-600 mb-4">
               Reassign this release to a different rep. The delivery note will be regenerated and re-sent to the new rep.
             </p>
@@ -952,9 +980,21 @@ export default function ReleasePage() {
 
       {/* Cancel release modal */}
       {cancelTarget && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
-            <h3 className="text-lg font-bold text-gray-900 mb-1">Cancel Release</h3>
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4"
+          onClick={closeCancel}
+        >
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 relative" onClick={e => e.stopPropagation()}>
+            <button
+              onClick={closeCancel}
+              aria-label="Close"
+              className="absolute top-3 right-3 text-gray-400 hover:text-gray-700 rounded-md p-1 hover:bg-gray-100"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <h3 className="text-lg font-bold text-gray-900 mb-1 pr-8">Cancel Release</h3>
             <p className="text-sm text-gray-600 mb-4">
               Reverts this release back to <strong>Captured</strong> (in the warehouse, ready to release again)
               and invalidates the delivery note&apos;s QR link. Use this when the rep can no longer do the return.
@@ -979,31 +1019,44 @@ export default function ReleasePage() {
               </div>
             </div>
 
-            <label className="block text-xs text-gray-600 mb-1">Authorising Manager</label>
-            <select
-              value={cancelManagerId}
-              onChange={e => {
-                setCancelManagerId(e.target.value);
-                const m = managerOptions.find(o => o.id === e.target.value);
-                setCancelManagerName(m ? `${m.name} ${m.surname}` : '');
-              }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm mb-3"
-            >
-              <option value="">Select manager...</option>
-              {managerOptions.map(m => (
-                <option key={m.id} value={m.id}>{m.name} {m.surname}</option>
-              ))}
-            </select>
+            {managerOptions.length === 0 ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-md p-3 mb-4 text-xs text-amber-800">
+                <p className="font-semibold mb-1">No authorising managers are set up yet.</p>
+                <p>
+                  A cancellation must be authorised by a manager/admin who has a <strong>Release Code</strong>.
+                  Set one in <strong>User Management → Edit user → Release Code</strong> for any non-rep user,
+                  then come back here.
+                </p>
+              </div>
+            ) : (
+              <>
+                <label className="block text-xs text-gray-600 mb-1">Authorising Manager</label>
+                <select
+                  value={cancelManagerId}
+                  onChange={e => {
+                    setCancelManagerId(e.target.value);
+                    const m = managerOptions.find(o => o.id === e.target.value);
+                    setCancelManagerName(m ? `${m.name} ${m.surname}` : '');
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm mb-3"
+                >
+                  <option value="">Select manager...</option>
+                  {managerOptions.map(m => (
+                    <option key={m.id} value={m.id}>{m.name} {m.surname}</option>
+                  ))}
+                </select>
 
-            <label className="block text-xs text-gray-600 mb-1">Manager Security Code</label>
-            <input
-              value={cancelCode}
-              onChange={e => setCancelCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
-              maxLength={4}
-              placeholder="4-char code"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-4"
-              autoComplete="off"
-            />
+                <label className="block text-xs text-gray-600 mb-1">Manager Security Code</label>
+                <input
+                  value={cancelCode}
+                  onChange={e => setCancelCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
+                  maxLength={4}
+                  placeholder="4-char code"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-4"
+                  autoComplete="off"
+                />
+              </>
+            )}
 
             <div className="flex gap-2">
               <button
@@ -1014,7 +1067,7 @@ export default function ReleasePage() {
               </button>
               <button
                 onClick={handleCancelRelease}
-                disabled={cancelling || !cancelManagerId || !cancelCode.trim()}
+                disabled={cancelling || managerOptions.length === 0 || !cancelManagerId || !cancelCode.trim()}
                 className="flex-1 py-2 bg-red-500 text-white rounded-md text-sm font-bold hover:bg-red-600 disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {cancelling && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}

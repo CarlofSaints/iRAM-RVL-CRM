@@ -19,6 +19,7 @@ interface User {
   role: string;
   linkedClientId?: string;
   assignedClientIds?: string[];
+  releaseCode?: string;
   subscription?: UserSubscription;
   forcePasswordChange: boolean;
   firstLoginAt: string | null;
@@ -84,6 +85,7 @@ export default function AdminUsersPage() {
   const [editLinkedClient, setEditLinkedClient] = useState('');
   const [editAssignedClients, setEditAssignedClients] = useState<string[]>([]);
   const [editClientSearch, setEditClientSearch] = useState('');
+  const [editReleaseCode, setEditReleaseCode] = useState('');
   const [editPw, setEditPw] = useState('');
   const [showEditPw, setShowEditPw] = useState(false);
   const [sendReset, setSendReset] = useState(false);
@@ -174,6 +176,7 @@ export default function AdminUsersPage() {
     setEditLinkedClient(user.linkedClientId ?? '');
     setEditAssignedClients(user.assignedClientIds ?? []);
     setEditClientSearch('');
+    setEditReleaseCode(user.releaseCode ?? '');
     setEditPw('');
     setShowEditPw(false);
     setSendReset(false);
@@ -193,6 +196,8 @@ export default function AdminUsersPage() {
         linkedClientId: editRole === 'customer' ? editLinkedClient : null,
         assignedClientIds: editRole === 'customer' ? [] : editAssignedClients,
       };
+      // Release code only applies to non-customer roles (managers/admins/reps)
+      if (editRole !== 'customer') body.releaseCode = editReleaseCode;
       if (editPw) body.password = editPw;
 
       const res = await authFetch(`/api/users/${editUser.id}`, {
@@ -530,6 +535,25 @@ export default function AdminUsersPage() {
                   onSearchChange={setEditClientSearch}
                   note="Super Admins see all clients regardless of assignment."
                 />
+              )}
+              {editRole !== 'customer' && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-gray-500 font-medium">
+                    Release Code
+                    <span className="ml-2 text-gray-400 font-normal">4-char — authorises releases &amp; cancellations</span>
+                  </label>
+                  <input
+                    value={editReleaseCode}
+                    onChange={e => setEditReleaseCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
+                    maxLength={4}
+                    placeholder="e.g. 4Q7K (blank to clear)"
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono tracking-widest uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]"
+                    autoComplete="off"
+                  />
+                  <p className="text-xs text-gray-400">
+                    Managers/admins need a code here to authorise a partial release or to cancel a release.
+                  </p>
+                </div>
               )}
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-gray-500 font-medium">New Password <span className="text-gray-400 font-normal">(leave blank to keep current)</span></label>
