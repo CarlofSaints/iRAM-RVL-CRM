@@ -8,6 +8,7 @@ import {
   getPickSlipRun,
   clearPickSlipRun,
   clearManualIndex,
+  clearAllPickSlipRuns,
 } from '@/lib/pickSlipData';
 import { clearAllBatches } from '@/lib/stickerData';
 import { logAudit, clearAuditLog } from '@/lib/auditLog';
@@ -20,6 +21,8 @@ interface ClearRequest {
   modules: {
     agedStock?: boolean;
     pickSlips?: boolean;
+    /** Sweep EVERY pick slip run (load-based, manual, and orphaned) */
+    allPickSlips?: boolean;
     stickers?: boolean;
     auditLog?: boolean;
   };
@@ -82,10 +85,16 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 2. Pick Slips ─────────────────────────────────────────────────────────
+  // Global sweep: deletes every run (load-based, manual, AND orphaned) by
+  // enumerating the blob prefix directly — independent of any load index.
+  if (modules.allPickSlips) {
+    counts.pickSlipRuns += await clearAllPickSlipRuns();
+  }
+
   const clearPickSlips =
     (modules.agedStock && cascade.agedStockPickSlips) || modules.pickSlips;
 
-  if (clearPickSlips) {
+  if (!modules.allPickSlips && clearPickSlips) {
     if (isTargeted) {
       // Only clear pick slip runs for the selected loads
       for (const loadId of selectedLoadIds!) {

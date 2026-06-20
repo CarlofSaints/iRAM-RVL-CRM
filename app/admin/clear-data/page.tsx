@@ -27,6 +27,7 @@ interface Inventory {
   clients: ClientInventory[];
   stickerBatchCount: number;
   auditMonthCount: number;
+  totalPickSlipRuns: number;
 }
 
 interface ClearResult {
@@ -53,6 +54,7 @@ export default function ClearDataPage() {
   const [cascadeStickers, setCascadeStickers] = useState(false);
 
   // Standalone bulk
+  const [clearAllPickSlips, setClearAllPickSlips] = useState(false);
   const [clearStickers, setClearStickers] = useState(false);
   const [clearAuditLog, setClearAuditLog] = useState(false);
 
@@ -96,7 +98,8 @@ export default function ClearDataPage() {
     : '';
 
   const hasLoadsSelected = selectedLoadIds.size > 0;
-  const anythingSelected = hasLoadsSelected || clearStickers || clearAuditLog;
+  const anythingSelected =
+    hasLoadsSelected || clearAllPickSlips || clearStickers || clearAuditLog;
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -161,6 +164,7 @@ export default function ClearDataPage() {
           modules: {
             agedStock: hasLoadsSelected,
             pickSlips: false,
+            allPickSlips: clearAllPickSlips,
             stickers: clearStickers,
             auditLog: clearAuditLog,
           },
@@ -182,6 +186,7 @@ export default function ClearDataPage() {
       setSelectedLoadIds(new Set());
       setCascadePickSlips(false);
       setCascadeStickers(false);
+      setClearAllPickSlips(false);
       setClearStickers(false);
       setClearAuditLog(false);
       // Refresh inventory
@@ -211,6 +216,7 @@ export default function ClearDataPage() {
       if (cascadePickSlips) bullets.push('Associated pick slips for those loads');
       if (cascadeStickers) bullets.push('Associated sticker batches (all)');
     }
+    if (clearAllPickSlips) bullets.push(`ALL pick slips — every run incl. manual & orphaned (${inventory?.totalPickSlipRuns ?? 0} total)`);
     if (clearStickers && !cascadeStickers) bullets.push('All sticker batches');
     if (clearAuditLog) bullets.push('All audit log entries');
 
@@ -338,13 +344,19 @@ export default function ClearDataPage() {
 
         {loadingInventory ? (
           <div className="text-sm text-gray-500">Loading inventory...</div>
-        ) : !inventory || inventory.clients.length === 0 ? (
+        ) : !inventory || (
+            inventory.clients.length === 0 &&
+            inventory.totalPickSlipRuns === 0 &&
+            inventory.stickerBatchCount === 0 &&
+            inventory.auditMonthCount === 0
+          ) ? (
           <div className="text-sm text-gray-500 bg-white rounded-lg border border-gray-200 p-6 max-w-2xl">
-            No vendors with aged stock data found. There is nothing to clear.
+            No data found. There is nothing to clear.
           </div>
         ) : (
           <div className="max-w-2xl space-y-6">
             {/* ── Vendor Dropdown ─────────────────────────────────────── */}
+            {inventory.clients.length > 0 ? (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Select a vendor
@@ -362,6 +374,11 @@ export default function ClearDataPage() {
                 ))}
               </select>
             </div>
+            ) : (
+              <div className="text-sm text-gray-500 bg-white rounded-lg border border-gray-200 p-4">
+                No vendors with aged stock loads. Use the standalone options below to clear leftover pick slips, stickers, or audit entries.
+              </div>
+            )}
 
             {/* ── Load Checklist ──────────────────────────────────────── */}
             {selectedClient && (
@@ -464,6 +481,25 @@ export default function ClearDataPage() {
               </h2>
 
               <div className="space-y-3">
+                {/* All Pick Slips (incl. manual & orphaned) */}
+                <div className={`bg-white rounded-lg border p-4 ${clearAllPickSlips ? 'border-red-300 ring-1 ring-red-200' : 'border-gray-200'}`}>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={clearAllPickSlips}
+                      onChange={e => setClearAllPickSlips(e.target.checked)}
+                      className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                    />
+                    <div>
+                      <span className="font-medium text-gray-900 text-sm">Clear ALL pick slips (incl. manual &amp; orphaned)</span>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {inventory.totalPickSlipRuns} run{inventory.totalPickSlipRuns !== 1 ? 's' : ''} in the system.
+                        Sweeps every pick slip — including manual captures and runs left behind when their load was deleted.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
                 {/* Sticker Batches */}
                 <div className={`bg-white rounded-lg border p-4 ${clearStickers ? 'border-red-300 ring-1 ring-red-200' : 'border-gray-200'}`}>
                   <label className="flex items-center gap-3 cursor-pointer">

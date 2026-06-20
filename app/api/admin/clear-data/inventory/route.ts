@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { list } from '@vercel/blob';
 import { requirePermission } from '@/lib/rolesData';
 import { loadControl } from '@/lib/controlData';
 import { listLoads } from '@/lib/agedStockData';
@@ -61,6 +62,21 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // Total pick slip runs across the whole system — counted by enumerating the
+  // blob prefix directly so manual AND orphaned runs (whose source load was
+  // deleted) are included. These are invisible to the per-client counts above.
+  let totalPickSlipRuns = 0;
+  if (process.env.VERCEL) {
+    let cursor: string | undefined;
+    do {
+      const result = await list({ prefix: 'pickSlips/', cursor, limit: 1000 });
+      for (const blob of result.blobs) {
+        if (!blob.pathname.endsWith('/_manual-index.json')) totalPickSlipRuns++;
+      }
+      cursor = result.hasMore ? result.cursor : undefined;
+    } while (cursor);
+  }
+
   // Sticker batch count
   const stickerBatches = await listBatches();
   const stickerBatchCount = stickerBatches.length;
@@ -74,7 +90,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json(
-    { clients, stickerBatchCount, auditMonthCount },
+    { clients, stickerBatchCount, auditMonthCount, totalPickSlipRuns },
     { headers: { 'Cache-Control': 'no-store' } }
   );
 }

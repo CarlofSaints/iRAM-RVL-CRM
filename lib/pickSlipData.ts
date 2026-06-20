@@ -10,7 +10,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { put, get, del } from '@vercel/blob';
+import { put, get, del, list } from '@vercel/blob';
 import type { PickSlipPdfRow } from './pickSlipPdf';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -484,4 +484,51 @@ export async function clearManualIndex(clientId: string): Promise<void> {
       if (fs.existsSync(f)) fs.unlinkSync(f);
     } catch { /* empty */ }
   }
+}
+
+/**
+ * Delete EVERY pick slip run across all clients — load-based, manual, AND
+ * orphaned runs whose source load has already been deleted.
+ *
+ * The load-index–derived helpers (clearPickSlipRun keyed by loadId, the manual
+ * index) cannot reach runs once their load is gone, which leaves stale slips on
+ * the dashboard. This enumerates the `pickSlips/` blob prefix directly so it
+ * sweeps everything regardless of any index. Returns count of run blobs deleted
+ * (the per-client `_manual-index.json` markers are deleted but not counted).
+ */
+export async function clearAllPickSlipRuns(): Promise<number> {
+  let count = 0;
+
+  if (process.env.VERCEL) {
+    let cursor: string | undefined;
+    do {
+      const result = await list({ prefix: 'pickSlips/', cursor, limit: 1000 });
+      for (const blob of result.blobs) {
+        const isManualIndex = blob.pathname.endsWith('/_manual-index.json');
+        try {
+          await del(blob.pathname);
+          if (!isManualIndex) count++;
+        } catch { /* blob may already be gone */ }
+      }
+      cursor = result.hasMore ? result.cursor : undefined;
+    } while (cursor);
+    return count;
+  }
+
+  // Local dev fallback — walk data/pickSlips/<client>/*.json
+  try {
+    const root = path.join(process.cwd(), 'data', 'pickSlips');
+    if (fs.existsSync(root)) {
+      for (const clientId of fs.readdirSync(root)) {
+        const dir = path.join(root, clientId);
+        if (!fs.statSync(dir).isDirectory()) continue;
+        for (const file of fs.readdirSync(dir)) {
+          if (!file.endsWith('.json')) continue;
+          fs.unlinkSync(path.join(dir, file));
+          if (file !== '_manual-index.json') count++;
+        }
+      }
+    }
+  } catch { /* empty */ }
+  return count;
 }
