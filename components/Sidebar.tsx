@@ -77,8 +77,17 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
   const visibleAgedStockLinks = agedStockLinks.filter(l => has(l.perm));
   const showAgedStockSection = visibleAgedStockLinks.length > 0;
 
+  // Swap-Outs — separate module (per-client enablement enforced in data).
+  const swapOutLinks: Array<{ href: string; label: string; perm: string }> = [
+    { href: '/swap-outs', label: 'Swap-Outs', perm: 'view_aged_stock' },
+    { href: '/swap-outs/import', label: 'Import Sheet', perm: 'import_excel' },
+  ];
+  const visibleSwapOutLinks = swapOutLinks.filter(l => has(l.perm));
+  const showSwapOutSection = visibleSwapOutLinks.length > 0;
+
   const [controlOpen, setControlOpen] = useState(pathname.startsWith('/control-centre'));
   const [agedStockOpen, setAgedStockOpen] = useState(pathname.startsWith('/aged-stock'));
+  const [swapOutOpen, setSwapOutOpen] = useState(pathname.startsWith('/swap-outs'));
   const [collapsed, setCollapsed] = useState(false);
 
   // Hydrate collapsed state from localStorage on mount
@@ -221,6 +230,32 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
                     <SubNavLink key={l.href} href={l.href} label={l.label} active={isActive} />
                   );
                 })}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Swap-Outs — separate module */}
+        {showSwapOutSection && (
+          <>
+            <button
+              onClick={() => setSwapOutOpen(v => !v)}
+              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                pathname.startsWith('/swap-outs')
+                  ? 'bg-[var(--color-primary)] text-white'
+                  : 'text-gray-300 hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              Swap-Outs
+              <svg className={`w-4 h-4 transition-transform ${swapOutOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {swapOutOpen && (
+              <div className="flex flex-col gap-0.5 mt-0.5">
+                {visibleSwapOutLinks.map(l => (
+                  <SubNavLink key={l.href} href={l.href} label={l.label} active={pathname === l.href} />
+                ))}
               </div>
             )}
           </>

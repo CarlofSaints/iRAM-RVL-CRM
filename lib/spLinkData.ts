@@ -49,6 +49,10 @@ export interface ClientWithLinks {
   createdAt: string;
   sharepointLinks?: SpLink[];
   contacts?: ClientContact[];
+  /** Swap-Out module enabled for this client (separate to aged stock). */
+  swapOutEnabled?: boolean;
+  /** SP folder URL where signed swap-out forms are uploaded. */
+  swapOutFolderUrl?: string;
 }
 
 // ── Client record helpers ────────────────────────────────────────────────────

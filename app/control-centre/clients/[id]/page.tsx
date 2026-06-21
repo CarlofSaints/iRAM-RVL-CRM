@@ -28,6 +28,8 @@ interface Client {
   type: 'ASL' | 'NSL';
   createdAt: string;
   sharepointLinks?: SpLink[];
+  swapOutEnabled?: boolean;
+  swapOutFolderUrl?: string;
 }
 
 interface ClientContact {
@@ -83,6 +85,28 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
 
   // Per-row refreshing state
   const [refreshing, setRefreshing] = useState<Record<string, boolean>>({});
+
+  // Swap-Out module toggle
+  const [swapEnabled, setSwapEnabled] = useState(false);
+  const [swapFolder, setSwapFolder] = useState('');
+  const [swapSaving, setSwapSaving] = useState(false);
+  useEffect(() => {
+    if (client) {
+      setSwapEnabled(!!client.swapOutEnabled);
+      setSwapFolder(client.swapOutFolderUrl ?? '');
+    }
+  }, [client]);
+  const saveSwapOut = async () => {
+    setSwapSaving(true);
+    const res = await authFetch(`/api/clients/${id}/swap-out`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ swapOutEnabled: swapEnabled, swapOutFolderUrl: swapFolder.trim() }),
+    });
+    if (res.ok) setToast({ type: 'success', message: 'Swap-Out settings saved' });
+    else setToast({ type: 'error', message: 'Failed to save Swap-Out settings' });
+    setSwapSaving(false);
+  };
 
   // Contacts
   const [contacts, setContacts] = useState<ClientContact[]>([]);
@@ -332,6 +356,37 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           </div>
         </div>
       </div>
+
+      {/* Swap-Out module */}
+      <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Swap-Out Module</h2>
+          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+            <input type="checkbox" checked={swapEnabled} onChange={(e) => setSwapEnabled(e.target.checked)} />
+            Enabled for this client
+          </label>
+        </div>
+        <p className="text-xs text-gray-500 mb-3">
+          When enabled, this client appears in the Swap-Outs module (separate to aged stock) and
+          accepts swap-out sheet imports.
+        </p>
+        <label className="block text-xs font-medium text-gray-600 mb-1">
+          SharePoint folder for signed forms <span className="text-gray-400">(optional)</span>
+        </label>
+        <input
+          value={swapFolder}
+          onChange={(e) => setSwapFolder(e.target.value)}
+          placeholder="https://…sharepoint.com/…/Swap-Out Forms"
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3"
+        />
+        <button
+          onClick={saveSwapOut}
+          disabled={swapSaving}
+          className="px-4 py-2 bg-[var(--color-primary)] text-white text-sm font-medium rounded-lg disabled:opacity-50"
+        >
+          {swapSaving ? 'Saving…' : 'Save Swap-Out settings'}
+        </button>
+      </section>
 
       {/* Add link section */}
       <section className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
