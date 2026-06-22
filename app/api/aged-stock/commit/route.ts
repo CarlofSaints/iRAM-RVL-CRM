@@ -4,6 +4,7 @@ import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { clientScopeFor } from '@/lib/clientScope';
 import { listSpLinks, loadLinkProducts } from '@/lib/spLinkData';
+import { buildClientOmitMatcher } from '@/lib/agedStockOmit';
 import {
   loadDraft, deleteDraft, saveLoad,
   type AgedStockRow, type AgedStockLoadFull,
@@ -99,9 +100,13 @@ export async function POST(req: NextRequest) {
     (draft.vendorNumbers ?? []).map(v => v.trim()).filter(Boolean)
   );
 
+  // Build the site-omission matcher from the client's rules + Site Control master.
+  const isOmitted = await buildClientOmitMatcher(draft.clientId);
+
   // Aggregate draft rows across selected periods
   const loadId = randomUUID();
   const rows: AgedStockRow[] = [];
+  let omittedCount = 0;
   for (const r of draft.rows) {
     // If the row has a vendorNumber from the file AND the client has vendorNumbers,
     // only include rows whose vendorNumber matches one of the client's vendorNumbers.
@@ -109,6 +114,9 @@ export async function POST(req: NextRequest) {
     if (r.vendorNumber && clientVendorSet.size > 0 && !clientVendorSet.has(r.vendorNumber)) {
       continue;
     }
+
+    // Drop sites the client has chosen to omit (Africa sites, DCs, etc.)
+    if (isOmitted(r.siteCode)) { omittedCount++; continue; }
 
     let qty = 0;
     let val = 0;
@@ -176,6 +184,7 @@ export async function POST(req: NextRequest) {
     ok: true,
     loadId: full.id,
     rowCount: full.rowCount,
+    omittedCount,
     loadedAt: full.loadedAt,
   }, { headers: { 'Cache-Control': 'no-store' } });
 }

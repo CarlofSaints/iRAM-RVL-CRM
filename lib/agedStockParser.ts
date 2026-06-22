@@ -18,6 +18,11 @@
  *      Two sub-variants: with Barcode/BMC columns (Topline, Usabco HS) or
  *      without (STA007-style). Dynamically detects period Qty/Val pairs.
  *
+ *   5. Massbuild — Massmart "Weekly Aged Stock by Fiscal Year" export.
+ *      Header row: Article Code | BaseUnitBarcode | Store | Article | SOHQty …
+ *      with aged brackets from 1to3MnthQty onward. Site code is embedded as the
+ *      trailing `_S66` suffix on the Store name and must be split out.
+ *
  * Multi-sheet workbooks: parser prefers "Site Article" sheet, skips hidden
  * SAP sheets (`_com.sap.*`), and tries each sheet until detection succeeds.
  *
@@ -27,7 +32,7 @@
 
 import * as XLSX from 'xlsx';
 
-export type AgedStockFormat = 'genkem' | 'safetop' | 'usabco' | 'bw-site' | 'unknown';
+export type AgedStockFormat = 'genkem' | 'safetop' | 'usabco' | 'bw-site' | 'massbuild' | 'unknown';
 
 export interface AgedStockPeriod {
   /** Stable id used in the UI. Derived from the label, e.g. "10mnth". */
@@ -205,6 +210,20 @@ interface DetectedFormat {
   vendorProductCodeCol: number;
   /** Column with vendor/supplier number. -1 when not present. */
   vendorCol: number;
+  /**
+   * When true, siteCode and siteName are derived by splitting the siteNameCol
+   * value on its trailing `_<code>` suffix (Massbuild: `BEX Amanzimtoti_S66`
+   * → code `S66`, name `BEX Amanzimtoti`). siteCodeCol/siteNameCol both point
+   * at the combined Store column.
+   */
+  deriveSiteFromStore?: boolean;
+}
+
+/** `BEX Amanzimtoti_S66` → { code: 'S66', name: 'BEX Amanzimtoti' }. */
+function splitStoreSuffix(store: string): { code: string; name: string } {
+  const i = store.lastIndexOf('_');
+  if (i < 0) return { code: '', name: store };
+  return { code: store.slice(i + 1).trim(), name: store.slice(0, i).trim() };
 }
 
 function detectFormat(rows: unknown[][]): DetectedFormat | null {
@@ -282,6 +301,35 @@ function detectFormat(rows: unknown[][]): DetectedFormat | null {
         barcodeCol: -1,
         vendorProductCodeCol: -1,
         vendorCol: -1,
+      };
+    }
+  }
+
+  // ── Massbuild — Massmart "Weekly Aged Stock by Fiscal Year" export.
+  //    Header/label row: "Article Code" at A, "Store" at C, "Article" at D,
+  //    plus a Qty header (SOHQty / 1to3MnthQty) somewhere in the row. Period
+  //    Qty/Val pairs start at col E (index 4) — SOHQty/SOHCost are kept as a
+  //    "Soh" period; the % and SOH_AveRSP columns are skipped by the pairing.
+  for (let i = 0; i < hRows.length; i++) {
+    if (
+      hRows[i]?.[0] === 'article code' &&
+      hRows[i]?.[2] === 'store' &&
+      hRows[i]?.[3] === 'article' &&
+      hRows[i].some(h => /qty$/.test((h ?? '').replace(/\s+/g, '')))
+    ) {
+      return {
+        format: 'massbuild',
+        periodHeaderRow: i,
+        firstDataRow: i + 1,
+        periodStartCol: 4,
+        siteCodeCol: 2,   // Store column — code derived from the `_S66` suffix
+        siteNameCol: 2,
+        articleCol: 0,
+        descriptionCol: 3,
+        barcodeCol: 1,
+        vendorProductCodeCol: -1,
+        vendorCol: -1,
+        deriveSiteFromStore: true,
       };
     }
   }
@@ -379,7 +427,7 @@ export function parseAgedStockFile(buffer: Buffer): AgedStockParseResult {
       format: 'unknown', sheetName, periods: [], rows: [],
       warnings: [],
       errors: [
-        'Unrecognised aged stock list format. Expected one of: Genkem-style (fiscal-week banner), SafeTop-style (Barcode column), USABCO-style (Region / Store Code headers), or BW Site-Article (Site / Article columns).',
+        'Unrecognised aged stock list format. Expected one of: Genkem-style (fiscal-week banner), SafeTop-style (Barcode column), USABCO-style (Region / Store Code headers), BW Site-Article (Site / Article columns), or Massbuild (Article Code / Store / Article columns).',
       ],
     };
   }
@@ -398,8 +446,18 @@ export function parseAgedStockFile(buffer: Buffer): AgedStockParseResult {
     const g = grid[r];
     if (!g || !g.length) continue;
 
-    const siteCode = cellText(g[det.siteCodeCol]);
-    const siteNameRaw = cellText(g[det.siteNameCol]);
+    // Massbuild keeps site code + name combined in the Store column
+    // (`BEX Amanzimtoti_S66`); split it. Other formats have separate columns.
+    let siteCode: string;
+    let siteNameRaw: string;
+    if (det.deriveSiteFromStore) {
+      const split = splitStoreSuffix(cellText(g[det.siteNameCol]));
+      siteCode = split.code;
+      siteNameRaw = split.name;
+    } else {
+      siteCode = cellText(g[det.siteCodeCol]);
+      siteNameRaw = cellText(g[det.siteNameCol]);
+    }
     const articleRaw = cellText(g[det.articleCol]);
     const description = cellText(g[det.descriptionCol]);
 
@@ -410,11 +468,15 @@ export function parseAgedStockFile(buffer: Buffer): AgedStockParseResult {
     if (cellText(g[0]).toLowerCase() === 'overall result') continue;
     // SafeTop uses col B = "Result" for rollups
     if (det.format === 'safetop' && cellText(g[1]).toLowerCase() === 'result') continue;
-    // A real data row must have a site code too
-    if (!siteCode) continue;
+    // A real data row must have a store too. For derived-site formats we check
+    // the store name (a blank-store roll-up row has no name); otherwise the
+    // explicit site-code column.
+    if (det.deriveSiteFromStore ? !siteNameRaw : !siteCode) continue;
 
     const articleCode = stripZeroPrefix(articleRaw);
-    const siteName = stripStoreCodeSuffix(siteNameRaw, siteCode);
+    const siteName = det.deriveSiteFromStore
+      ? siteNameRaw
+      : stripStoreCodeSuffix(siteNameRaw, siteCode);
     const barcode = det.barcodeCol >= 0 ? cellText(g[det.barcodeCol]) : '';
     const vendorProductCode = det.vendorProductCodeCol >= 0
       ? cellText(g[det.vendorProductCodeCol])

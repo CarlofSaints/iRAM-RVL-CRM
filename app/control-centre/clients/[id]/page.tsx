@@ -30,6 +30,16 @@ interface Client {
   sharepointLinks?: SpLink[];
   swapOutEnabled?: boolean;
   swapOutFolderUrl?: string;
+  agedStockOmit?: { countries?: string[]; subChannels?: string[]; siteNums?: string[] };
+}
+
+interface Site {
+  id: string;
+  siteNum: string;
+  storeName: string;
+  channel: string;
+  subChannel: string;
+  country: string;
 }
 
 interface ClientContact {
@@ -106,6 +116,91 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     if (res.ok) setToast({ type: 'success', message: 'Swap-Out settings saved' });
     else setToast({ type: 'error', message: 'Failed to save Swap-Out settings' });
     setSwapSaving(false);
+  };
+
+  // Aged-stock omissions (driven off the Site Control master)
+  const [sites, setSites] = useState<Site[]>([]);
+  const [omitCountries, setOmitCountries] = useState<Set<string>>(new Set());
+  const [omitSubChannels, setOmitSubChannels] = useState<Set<string>>(new Set());
+  const [omitSiteNums, setOmitSiteNums] = useState<Set<string>>(new Set());
+  const [omitSaving, setOmitSaving] = useState(false);
+  const [storeSearch, setStoreSearch] = useState('');
+  const [reapplyLoading, setReapplyLoading] = useState(false);
+
+  useEffect(() => {
+    authFetch('/api/control/sites', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : []))
+      .then((s: Site[]) => setSites(Array.isArray(s) ? s : []))
+      .catch(() => { /* ignore */ });
+  }, []);
+
+  useEffect(() => {
+    if (client) {
+      setOmitCountries(new Set(client.agedStockOmit?.countries ?? []));
+      setOmitSubChannels(new Set(client.agedStockOmit?.subChannels ?? []));
+      setOmitSiteNums(new Set(client.agedStockOmit?.siteNums ?? []));
+    }
+  }, [client]);
+
+  const distinctCountries = useMemo(
+    () => Array.from(new Set(sites.map(s => s.country).filter(Boolean))).sort(),
+    [sites]
+  );
+  const distinctSubChannels = useMemo(
+    () => Array.from(new Set(sites.map(s => s.subChannel).filter(Boolean))).sort(),
+    [sites]
+  );
+  const storeMatches = useMemo(() => {
+    const q = storeSearch.trim().toLowerCase();
+    if (!q) return [];
+    return sites
+      .filter(s => s.siteNum.toLowerCase().includes(q) || s.storeName.toLowerCase().includes(q))
+      .slice(0, 30);
+  }, [sites, storeSearch]);
+  const siteByNum = useMemo(() => {
+    const m = new Map<string, Site>();
+    for (const s of sites) m.set(s.siteNum.toUpperCase(), s);
+    return m;
+  }, [sites]);
+
+  const toggleSet = (setter: React.Dispatch<React.SetStateAction<Set<string>>>, value: string) =>
+    setter(prev => { const n = new Set(prev); if (n.has(value)) n.delete(value); else n.add(value); return n; });
+
+  const saveOmissions = async () => {
+    setOmitSaving(true);
+    const res = await authFetch(`/api/clients/${id}/aged-stock-omit`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        countries: [...omitCountries],
+        subChannels: [...omitSubChannels],
+        siteNums: [...omitSiteNums],
+      }),
+    });
+    if (res.ok) { notify('Omission rules saved'); fetchAll(); }
+    else notify('Failed to save omission rules', 'error');
+    setOmitSaving(false);
+  };
+
+  const reapplyOmissions = async () => {
+    const total = omitCountries.size + omitSubChannels.size + omitSiteNums.size;
+    if (total === 0) { notify('No omission rules set — nothing to apply', 'error'); return; }
+    if (!confirm('Remove all sites matching the current omission rules from this client’s EXISTING aged-stock loads? This cannot be undone.')) return;
+    setReapplyLoading(true);
+    try {
+      const res = await authFetch(`/api/aged-stock/reapply-omissions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId: id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) notify(`Removed ${data.rowsRemoved ?? 0} rows from ${data.loadsAffected ?? 0} load(s)`);
+      else notify(data.error || 'Cleanup failed', 'error');
+    } catch {
+      notify('Cleanup failed', 'error');
+    } finally {
+      setReapplyLoading(false);
+    }
   };
 
   // Contacts
@@ -386,6 +481,106 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         >
           {swapSaving ? 'Saving…' : 'Save Swap-Out settings'}
         </button>
+      </section>
+
+      {/* Aged-Stock Omissions */}
+      <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
+          <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Aged-Stock Omissions</h2>
+          <span className="text-xs text-gray-400">
+            {omitCountries.size + omitSubChannels.size + omitSiteNums.size} rule(s) set
+          </span>
+        </div>
+        <p className="text-xs text-gray-500 mb-4">
+          Sites matching any rule below are dropped when an aged-stock list is loaded for this client.
+          Driven off the <Link href="/control-centre/site-control" className="text-[var(--color-primary)] hover:underline">Site Control</Link> master
+          (matched by site number). DCs live under sub-channel <code className="bg-gray-100 px-1 rounded">DC</code>; Africa sites are other-country.
+        </p>
+
+        {sites.length === 0 ? (
+          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-4 py-3">
+            No Site Control master loaded yet — upload one under{' '}
+            <Link href="/control-centre/site-control" className="underline">Control Centre → Site Control</Link> to enable omissions.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            {/* Countries */}
+            <div>
+              <h3 className="text-xs font-semibold text-gray-600 uppercase mb-2">Omit countries</h3>
+              <div className="border border-gray-200 rounded-lg max-h-52 overflow-y-auto divide-y divide-gray-50">
+                {distinctCountries.map(c => (
+                  <label key={c} className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                    <input type="checkbox" checked={omitCountries.has(c)} onChange={() => toggleSet(setOmitCountries, c)} />
+                    {c}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Sub-channels */}
+            <div>
+              <h3 className="text-xs font-semibold text-gray-600 uppercase mb-2">Omit sub-channels</h3>
+              <div className="border border-gray-200 rounded-lg max-h-52 overflow-y-auto divide-y divide-gray-50">
+                {distinctSubChannels.map(sc => (
+                  <label key={sc} className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                    <input type="checkbox" checked={omitSubChannels.has(sc)} onChange={() => toggleSet(setOmitSubChannels, sc)} />
+                    {sc}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Specific stores */}
+            <div>
+              <h3 className="text-xs font-semibold text-gray-600 uppercase mb-2">Omit specific stores</h3>
+              <input
+                value={storeSearch}
+                onChange={e => setStoreSearch(e.target.value)}
+                placeholder="Search site # or store name…"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-2"
+              />
+              {storeMatches.length > 0 && (
+                <div className="border border-gray-200 rounded-lg max-h-32 overflow-y-auto divide-y divide-gray-50 mb-2">
+                  {storeMatches.map(s => (
+                    <button key={s.id} type="button" onClick={() => { toggleSet(setOmitSiteNums, s.siteNum); }}
+                      className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 flex items-center gap-2">
+                      <span className={omitSiteNums.has(s.siteNum) ? 'text-[var(--color-primary)] font-bold' : 'text-gray-300'}>
+                        {omitSiteNums.has(s.siteNum) ? '✓' : '+'}
+                      </span>
+                      <span className="font-mono">{s.siteNum}</span>
+                      <span className="text-gray-600 truncate">{s.storeName}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {omitSiteNums.size > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {[...omitSiteNums].map(num => {
+                    const s = siteByNum.get(num.toUpperCase());
+                    return (
+                      <span key={num} className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 text-xs px-2 py-0.5 rounded-full">
+                        {num}{s ? ` · ${s.storeName.slice(0, 18)}` : ''}
+                        <button type="button" onClick={() => toggleSet(setOmitSiteNums, num)} className="text-gray-400 hover:text-red-600">×</button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-3 mt-5 flex-wrap">
+          <button onClick={saveOmissions} disabled={omitSaving || sites.length === 0}
+            className="px-4 py-2 bg-[var(--color-primary)] text-white text-sm font-medium rounded-lg disabled:opacity-50">
+            {omitSaving ? 'Saving…' : 'Save omission rules'}
+          </button>
+          <button onClick={reapplyOmissions} disabled={reapplyLoading || sites.length === 0}
+            className="px-4 py-2 border border-amber-300 text-amber-700 text-sm font-medium rounded-lg hover:bg-amber-50 disabled:opacity-50">
+            {reapplyLoading ? 'Removing…' : 'Remove omitted sites from existing loads'}
+          </button>
+          <span className="text-xs text-gray-400">New uploads apply omissions automatically; the button cleans data already loaded.</span>
+        </div>
       </section>
 
       {/* Add link section */}

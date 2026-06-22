@@ -324,6 +324,7 @@ export default function LoadAgedStockPage() {
     setCommitProgress('');
     const total = selectedClientIds.length;
     let totalRows = 0;
+    let totalOmitted = 0;
     let failed = 0;
 
     try {
@@ -361,12 +362,14 @@ export default function LoadAgedStockPage() {
           continue;
         }
         totalRows += json.rowCount ?? 0;
+        totalOmitted += json.omittedCount ?? 0;
       }
 
+      const omitNote = totalOmitted > 0 ? ` (${totalOmitted.toLocaleString()} omitted by site rules)` : '';
       if (failed === 0) {
-        notify(`Loaded ${totalRows.toLocaleString()} rows across ${total} client${total === 1 ? '' : 's'} — redirecting…`);
+        notify(`Loaded ${totalRows.toLocaleString()} rows across ${total} client${total === 1 ? '' : 's'}${omitNote} — redirecting…`);
       } else {
-        notify(`Loaded ${totalRows.toLocaleString()} rows. ${failed} client${failed === 1 ? '' : 's'} failed.`, failed === total ? 'error' : 'success');
+        notify(`Loaded ${totalRows.toLocaleString()} rows${omitNote}. ${failed} client${failed === 1 ? '' : 's'} failed.`, failed === total ? 'error' : 'success');
       }
       if (failed < total) {
         setTimeout(() => router.push('/aged-stock'), 600);

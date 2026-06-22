@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { put, get } from '@vercel/blob';
 
-export type ControlType = 'clients' | 'stores' | 'products' | 'reps' | 'warehouses' | 'channels';
+export type ControlType = 'clients' | 'stores' | 'products' | 'reps' | 'warehouses' | 'channels' | 'sites';
 
 function blobKey(type: ControlType): string {
   return `control/${type}.json`;

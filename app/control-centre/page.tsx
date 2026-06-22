@@ -15,7 +15,7 @@ export default function ControlCentreOverview() {
   const [counts, setCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    const types = ['clients', 'stores', 'products', 'reps', 'warehouses', 'channels'];
+    const types = ['clients', 'stores', 'products', 'reps', 'warehouses', 'channels', 'sites'];
     types.forEach(async (type) => {
       try {
         const res = await authFetch(`/api/control/${type}`, { cache: 'no-store' });
@@ -34,6 +34,7 @@ export default function ControlCentreOverview() {
     { label: 'Reps', href: '/control-centre/reps', count: counts.reps ?? 0, description: 'Field representatives' },
     { label: 'Warehouses', href: '/control-centre/warehouses', count: counts.warehouses ?? 0, description: 'Regional warehouse locations' },
     { label: 'Channels', href: '/control-centre/channels', count: counts.channels ?? 0, description: 'Retail channels (e.g. Massbuild, Game, Builders)' },
+    { label: 'Site Control', href: '/control-centre/site-control', count: counts.sites ?? 0, description: 'Master site file (site → sub-channel / country) for aged-stock omissions' },
     { label: 'Stickers', href: '/control-centre/stickers', count: -1, description: 'Sticker label dimensions and system configuration' },
   ];
 

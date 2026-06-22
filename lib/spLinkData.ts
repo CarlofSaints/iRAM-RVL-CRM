@@ -53,6 +53,21 @@ export interface ClientWithLinks {
   swapOutEnabled?: boolean;
   /** SP folder URL where signed swap-out forms are uploaded. */
   swapOutFolderUrl?: string;
+  /**
+   * Aged-stock omission rules — sites matching any of these (resolved against
+   * the Site Control master by site number) are dropped when an aged-stock list
+   * is loaded for this client. DC sites live under sub-channel `DC`.
+   */
+  agedStockOmit?: AgedStockOmit;
+}
+
+export interface AgedStockOmit {
+  /** Site COUNTRY values to omit (e.g. MOZAMBIQUE, ZAMBIA — "Africa" sites). */
+  countries?: string[];
+  /** Site SUB_CHANNEL values to omit (e.g. DC, BWH AFRICA). */
+  subChannels?: string[];
+  /** Individual SITE NUM values to omit. */
+  siteNums?: string[];
 }
 
 // ── Client record helpers ────────────────────────────────────────────────────
