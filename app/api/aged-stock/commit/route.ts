@@ -6,7 +6,7 @@ import { clientScopeFor } from '@/lib/clientScope';
 import { listSpLinks, loadLinkProducts } from '@/lib/spLinkData';
 import { buildClientOmitMatcher } from '@/lib/agedStockOmit';
 import {
-  loadDraft, deleteDraft, saveLoad,
+  loadDraft, deleteDraft, saveLoad, clearAllLoads,
   type AgedStockRow, type AgedStockLoadFull,
 } from '@/lib/agedStockData';
 
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   const me = users.find(u => u.id === guard.userId);
   if (!me) return NextResponse.json({ error: 'User not found' }, { status: 401 });
 
-  let body: { draftId?: unknown; selectedPeriodKeys?: unknown };
+  let body: { draftId?: unknown; selectedPeriodKeys?: unknown; replace?: unknown };
   try { body = await req.json(); }
   catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
 
@@ -46,6 +46,9 @@ export async function POST(req: NextRequest) {
   const selected = Array.isArray(body.selectedPeriodKeys)
     ? (body.selectedPeriodKeys as unknown[]).filter((k): k is string => typeof k === 'string')
     : [];
+  // When true, clear this client's existing aged-stock loads before saving the
+  // new one — so reloading the same file refreshes instead of double-counting.
+  const replace = body.replace === true;
 
   if (!draftId) return NextResponse.json({ error: 'draftId is required' }, { status: 400 });
   if (selected.length === 0) {
@@ -185,6 +188,17 @@ export async function POST(req: NextRequest) {
     rows,
   };
 
+  // Replace mode: clear this client's existing loads first, then save the new
+  // one. Done right before save so a parse/aggregate failure can't wipe data.
+  let replacedCount = 0;
+  if (replace) {
+    try { replacedCount = await clearAllLoads(draft.clientId); }
+    catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ error: `Failed to clear existing loads: ${msg}` }, { status: 500 });
+    }
+  }
+
   try {
     await saveLoad(full);
   } catch (err) {
@@ -202,6 +216,7 @@ export async function POST(req: NextRequest) {
     rowCount: full.rowCount,
     omittedCount,
     unmatchedCount,
+    replacedCount,
     loadedAt: full.loadedAt,
   }, { headers: { 'Cache-Control': 'no-store' } });
 }

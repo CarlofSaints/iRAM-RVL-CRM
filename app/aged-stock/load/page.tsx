@@ -241,6 +241,9 @@ export default function LoadAgedStockPage() {
   const [commitProgress, setCommitProgress] = useState('');
   const [parsed, setParsed] = useState<ParseResponse | null>(null);
   const [selectedPeriods, setSelectedPeriods] = useState<string[]>([]);
+  // Default ON: replace each client's existing aged stock so a re-load refreshes
+  // instead of stacking a second copy (the common double-count mistake).
+  const [replaceExisting, setReplaceExisting] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Full client-side parse result, reused to create a draft per selected client
   // (so the big file is parsed once, in the browser, and never re-uploaded).
@@ -376,6 +379,20 @@ export default function LoadAgedStockPage() {
       notify('Select at least one period to load', 'error');
       return;
     }
+    // Replace mode wipes each selected client's existing aged stock — confirm first.
+    if (replaceExisting) {
+      const names = selectedClientIds
+        .map(id => {
+          const c = clients.find(x => x.id === id);
+          return c ? clientLabel(c) : 'client';
+        })
+        .join(', ');
+      const ok = window.confirm(
+        `Replace existing aged stock for: ${names}?\n\n` +
+        `Any aged-stock data already loaded for ${selectedClientIds.length === 1 ? 'this client' : 'these clients'} will be cleared and replaced with this file.`,
+      );
+      if (!ok) return;
+    }
     setCommitting(true);
     setCommitProgress('');
     const total = selectedClientIds.length;
@@ -413,7 +430,7 @@ export default function LoadAgedStockPage() {
         const res = await authFetch('/api/aged-stock/commit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ draftId: draftIdToCommit, selectedPeriodKeys: selectedPeriods }),
+          body: JSON.stringify({ draftId: draftIdToCommit, selectedPeriodKeys: selectedPeriods, replace: replaceExisting }),
         });
         const json = await res.json();
         if (!res.ok || !json.ok) {
@@ -638,8 +655,7 @@ export default function LoadAgedStockPage() {
             </div>
             <p className="text-sm text-gray-600 mb-3">
               Tick the periods to sum into this load. Qty and Value are added across the
-              selected periods. You can load the same file again later with different
-              periods — each load is kept separate.
+              selected periods.
             </p>
             <div className="grid grid-cols-2 gap-2 mb-4">
               {parsed.periods.map(p => (
@@ -654,6 +670,21 @@ export default function LoadAgedStockPage() {
                 </label>
               ))}
             </div>
+
+            <label className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-md bg-amber-50 border border-amber-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={replaceExisting}
+                onChange={e => setReplaceExisting(e.target.checked)}
+                className="w-4 h-4 mt-0.5 accent-[var(--color-primary)]"
+              />
+              <span className="text-sm text-amber-900">
+                <span className="font-medium">Replace existing aged stock</span> for the selected client{selectedClientIds.length === 1 ? '' : 's'}
+                <span className="block text-xs text-amber-700 mt-0.5">
+                  Clears any data already loaded for {selectedClientIds.length === 1 ? 'this client' : 'these clients'} before adding this file — prevents double-counting on a re-load. Untick to add this load alongside existing data.
+                </span>
+              </span>
+            </label>
 
             <div className="flex items-center justify-between gap-3 pt-4 border-t border-gray-200">
               <button
