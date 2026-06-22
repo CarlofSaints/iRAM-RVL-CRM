@@ -231,30 +231,37 @@ function detectFormat(rows: unknown[][]): DetectedFormat | null {
   // Scanning dynamically handles SAP BW files where blank/hidden rows may
   // shift the header row position depending on export options.
   const hRows: string[][] = [];
-  for (let i = 0; i < Math.min(6, rows.length); i++) {
+  for (let i = 0; i < Math.min(8, rows.length); i++) {
     hRows.push((rows[i] ?? []).map(v => normalizeHeader(cellText(v))));
   }
 
-  // ── USABCO flat — always row 1: Region | Store Code | Store | Article Code
-  if (
-    hRows[0]?.[0] === 'region' &&
-    hRows[0]?.[1] === 'store code' &&
-    hRows[0]?.[2] === 'store' &&
-    hRows[0]?.[3] === 'article code'
-  ) {
-    return {
-      format: 'usabco',
-      periodHeaderRow: 0,
-      firstDataRow: 1,
-      periodStartCol: 5,
-      siteCodeCol: 1,
-      siteNameCol: 2,
-      articleCol: 3,
-      descriptionCol: 4,
-      barcodeCol: -1,
-      vendorProductCodeCol: -1,
-      vendorCol: -1,
-    };
+  // ── USABCO flat — Region | Store Code | Store | Article Code | Article | …Qty
+  //    Original export keeps this on row 1. Newer Massbuild/USABCO exports push
+  //    it down with a title banner + a fiscal-week row (the column names repeat
+  //    on two rows). Scan for the column-name row whose period columns actually
+  //    carry the Qty/Val labels (skips the fiscal-week row above it).
+  for (let i = 0; i < hRows.length; i++) {
+    if (
+      hRows[i]?.[0] === 'region' &&
+      hRows[i]?.[1] === 'store code' &&
+      hRows[i]?.[2] === 'store' &&
+      hRows[i]?.[3] === 'article code' &&
+      hRows[i].some(h => /qty$/.test((h ?? '').replace(/\s+/g, '')))
+    ) {
+      return {
+        format: 'usabco',
+        periodHeaderRow: i,
+        firstDataRow: i + 1,
+        periodStartCol: 5,
+        siteCodeCol: 1,
+        siteNameCol: 2,
+        articleCol: 3,
+        descriptionCol: 4,
+        barcodeCol: -1,
+        vendorProductCodeCol: -1,
+        vendorCol: -1,
+      };
+    }
   }
 
   // ── SafeTop — row with "Fiscal Week / Year" at A and "Barcode" somewhere.
