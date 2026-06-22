@@ -425,13 +425,45 @@ export default function LoadAgedStockPage() {
         totalOmitted += json.omittedCount ?? 0;
       }
 
-      const omitNote = totalOmitted > 0 ? ` (${totalOmitted.toLocaleString()} omitted by site rules)` : '';
-      if (failed === 0) {
-        notify(`Loaded ${totalRows.toLocaleString()} rows across ${total} client${total === 1 ? '' : 's'}${omitNote} — redirecting…`);
-      } else {
-        notify(`Loaded ${totalRows.toLocaleString()} rows${omitNote}. ${failed} client${failed === 1 ? '' : 's'} failed.`, failed === total ? 'error' : 'success');
+      // Report SKUs in the file that no selected client's control file recognises
+      // (these weren't loaded). The server emails the loader the full list.
+      let missingCount = 0;
+      const full = parsedFullRef.current;
+      if (full) {
+        const seen = new Set<string>();
+        const skus: { articleCode: string; description: string }[] = [];
+        for (const r of full.rows) {
+          const code = r.articleCode || '';
+          if (!code || seen.has(code)) continue;
+          seen.add(code);
+          skus.push({ articleCode: code, description: r.description || '' });
+        }
+        try {
+          const res = await authFetch('/api/aged-stock/missing-skus', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientIds: selectedClientIds, fileName: full.fileName, skus }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && Array.isArray(data.missing)) missingCount = data.missing.length;
+        } catch { /* non-fatal — load already committed */ }
       }
-      if (failed < total) {
+
+      const omitNote = totalOmitted > 0 ? ` (${totalOmitted.toLocaleString()} omitted by site rules)` : '';
+      const missNote = missingCount > 0
+        ? ` ${missingCount.toLocaleString()} SKU${missingCount === 1 ? '' : 's'} not in the control file were skipped — emailed to you to add & reload.`
+        : '';
+      if (failed === 0) {
+        notify(
+          `Loaded ${totalRows.toLocaleString()} rows across ${total} client${total === 1 ? '' : 's'}${omitNote}.${missNote}`,
+          missingCount > 0 ? 'error' : 'success',
+        );
+      } else {
+        notify(`Loaded ${totalRows.toLocaleString()} rows${omitNote}. ${failed} client${failed === 1 ? '' : 's'} failed.${missNote}`, failed === total ? 'error' : 'success');
+      }
+      // Hold on the page when SKUs were missing so the loader sees the notice;
+      // otherwise return to the dashboard.
+      if (failed < total && missingCount === 0) {
         setTimeout(() => router.push('/aged-stock'), 600);
       }
     } catch (err) {

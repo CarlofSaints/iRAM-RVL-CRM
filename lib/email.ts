@@ -355,3 +355,53 @@ export async function sendPasswordResetEmail(to: string, name: string, password:
     html: emailShell(body),
   });
 }
+
+/**
+ * Tell the person loading aged stock which SKUs in the file aren't in any
+ * selected client's product control file, so they can add them and reload.
+ */
+export async function sendMissingSkuEmail(opts: {
+  to: string;
+  loaderName: string;
+  fileName: string;
+  clientNames: string[];
+  missing: { articleCode: string; description: string }[];
+}) {
+  const { to, loaderName, fileName, clientNames, missing } = opts;
+  const rows = missing
+    .map(
+      (m) => `
+      <tr>
+        <td style="padding:6px 12px;border-bottom:1px solid #eee;font-family:monospace;font-size:13px;">${m.articleCode}</td>
+        <td style="padding:6px 12px;border-bottom:1px solid #eee;font-size:13px;">${(m.description || '').replace(/</g, '&lt;')}</td>
+      </tr>`,
+    )
+    .join('');
+
+  const body = `
+    <p style="margin:0 0 14px;">Hi <strong>${loaderName}</strong>,</p>
+    <p style="margin:0 0 16px;">
+      <strong>${missing.length}</strong> SKU${missing.length === 1 ? '' : 's'} in the aged-stock file
+      <strong>${(fileName || '').replace(/</g, '&lt;')}</strong> ${missing.length === 1 ? 'was' : 'were'} not found in the product control file for
+      ${clientNames.length ? `<strong>${clientNames.join(', ').replace(/</g, '&lt;')}</strong>` : 'the selected client(s)'},
+      so ${missing.length === 1 ? 'it was' : 'they were'} <strong>not loaded</strong>.
+    </p>
+    <p style="margin:0 0 16px;">Add ${missing.length === 1 ? 'this SKU' : 'these SKUs'} to the relevant vendor's product control file, then reload the aged-stock list to capture ${missing.length === 1 ? 'it' : 'them'}.</p>
+    <table style="border-collapse:collapse;width:100%;border:1px solid #eee;border-radius:6px;overflow:hidden;">
+      <thead>
+        <tr style="background:#f4f4f4;">
+          <th style="text-align:left;padding:8px 12px;font-size:12px;color:#666;text-transform:uppercase;">Article #</th>
+          <th style="text-align:left;padding:8px 12px;font-size:12px;color:#666;text-transform:uppercase;">Description</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+
+  return getResend().emails.send({
+    from: FROM,
+    to,
+    subject: `iRamFlow — ${missing.length} missing SKU${missing.length === 1 ? '' : 's'} not loaded (${fileName})`,
+    html: emailShell(body),
+  });
+}

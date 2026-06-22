@@ -80,12 +80,19 @@ export async function POST(req: NextRequest) {
   // wins — so if the same article appears across channels with different
   // barcodes, the earliest link takes precedence.
   const productLookup = new Map<string, { barcode: string; vendorProductCode: string }>();
+  // Set of every article this client's product control file(s) recognise. Used
+  // to route a load to the right vendor record: when one supplier has two vendor
+  // numbers as two separate client records and the aged-stock file has no vendor
+  // column, each record only keeps the articles its own control file lists — so
+  // loading the same file to both records no longer duplicates every row.
+  const clientArticles = new Set<string>();
   const links = await listSpLinks(draft.clientId);
   for (const link of links) {
     const products = await loadLinkProducts(draft.clientId, link.id);
     for (const p of products) {
       const k = normArticle(p.articleNumber);
       if (!k) continue;
+      clientArticles.add(k);
       if (!productLookup.has(k)) {
         productLookup.set(k, {
           barcode: p.barcode ?? '',
@@ -107,11 +114,20 @@ export async function POST(req: NextRequest) {
   const loadId = randomUUID();
   const rows: AgedStockRow[] = [];
   let omittedCount = 0;
+  let unmatchedCount = 0;
   for (const r of draft.rows) {
     // If the row has a vendorNumber from the file AND the client has vendorNumbers,
     // only include rows whose vendorNumber matches one of the client's vendorNumbers.
     // Rows without a vendorNumber (formats without vendor info) are always included.
     if (r.vendorNumber && clientVendorSet.size > 0 && !clientVendorSet.has(r.vendorNumber)) {
+      continue;
+    }
+
+    // Article→vendor routing: when this client has a product control file, only
+    // keep rows whose article it recognises. Rows for another vendor (or not in
+    // any control file) are dropped here and reported separately as missing SKUs.
+    if (clientArticles.size > 0 && !clientArticles.has(normArticle(r.articleCode))) {
+      unmatchedCount++;
       continue;
     }
 
@@ -185,6 +201,7 @@ export async function POST(req: NextRequest) {
     loadId: full.id,
     rowCount: full.rowCount,
     omittedCount,
+    unmatchedCount,
     loadedAt: full.loadedAt,
   }, { headers: { 'Cache-Control': 'no-store' } });
 }
