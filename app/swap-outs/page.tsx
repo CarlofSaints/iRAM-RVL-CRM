@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/useAuth';
 
@@ -19,7 +19,13 @@ interface SwapOutDto {
   assignedRepName?: string;
   createdAt: string;
 }
-interface ClientDto { id: string; name: string; swapOutEnabled?: boolean }
+interface ClientDto { id: string; name: string; vendorNumbers?: string[]; swapOutEnabled?: boolean }
+
+/** Label a client with its vendor number(s) so same-name records are distinguishable. */
+function clientLabel(c: ClientDto): string {
+  const nums = (c.vendorNumbers ?? []).filter(Boolean);
+  return nums.length ? `${c.name} (${nums.join(', ')})` : c.name;
+}
 
 const STATUS_LABELS: Record<string, string> = {
   requested: 'Requested',
@@ -51,7 +57,9 @@ export default function SwapOutsListPage() {
   const [rows, setRows] = useState<SwapOutDto[]>([]);
   const [clients, setClients] = useState<ClientDto[]>([]);
   const [loading, setLoading] = useState(true);
-  const [clientFilter, setClientFilter] = useState('');
+  const [selectedClientIds, setSelectedClientIds] = useState<Set<string>>(new Set());
+  const [clientDropOpen, setClientDropOpen] = useState(false);
+  const clientDropRef = useRef<HTMLDivElement>(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
 
@@ -76,10 +84,31 @@ export default function SwapOutsListPage() {
     return (id: string) => m.get(id) ?? '—';
   }, [clients]);
 
-  const enabledClients = clients.filter((c) => c.swapOutEnabled);
+  const enabledClients = useMemo(
+    () => clients.filter((c) => c.swapOutEnabled).sort((a, b) => clientLabel(a).localeCompare(clientLabel(b))),
+    [clients],
+  );
+
+  // Close the client dropdown on outside click
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (clientDropRef.current && !clientDropRef.current.contains(e.target as Node)) {
+        setClientDropOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  const toggleClient = (id: string) =>
+    setSelectedClientIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
 
   const filtered = rows.filter((r) => {
-    if (clientFilter && r.clientId !== clientFilter) return false;
+    if (selectedClientIds.size > 0 && !selectedClientIds.has(r.clientId)) return false;
     if (statusFilter && r.status !== statusFilter) return false;
     if (search) {
       const q = search.trim().toLowerCase();
@@ -124,16 +153,54 @@ export default function SwapOutsListPage() {
           className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-64 focus:ring-2 focus:ring-[var(--color-primary)] outline-none"
           autoFocus
         />
-        <select
-          value={clientFilter}
-          onChange={(e) => setClientFilter(e.target.value)}
-          className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-        >
-          <option value="">All clients</option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
+        <div className="relative" ref={clientDropRef}>
+          <button
+            type="button"
+            onClick={() => setClientDropOpen((o) => !o)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white flex items-center gap-2 min-w-[12rem] justify-between hover:bg-gray-50"
+          >
+            <span className="truncate">
+              {(() => {
+                if (selectedClientIds.size === 0) return 'All clients';
+                if (selectedClientIds.size === 1) {
+                  const c = enabledClients.find((x) => selectedClientIds.has(x.id));
+                  return c ? clientLabel(c) : '1 client selected';
+                }
+                return `${selectedClientIds.size} clients selected`;
+              })()}
+            </span>
+            <svg className={`w-4 h-4 text-gray-400 transition-transform ${clientDropOpen ? 'rotate-180' : ''}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {clientDropOpen && (
+            <div className="absolute z-20 mt-1 w-72 max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+              <label className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer border-b border-gray-100">
+                <input
+                  type="checkbox"
+                  checked={selectedClientIds.size === 0}
+                  onChange={() => setSelectedClientIds(new Set())}
+                />
+                <span className="font-medium">All clients</span>
+              </label>
+              {enabledClients.length === 0 ? (
+                <p className="px-3 py-2 text-sm text-gray-400 italic">No swap-out clients enabled.</p>
+              ) : (
+                enabledClients.map((c) => (
+                  <label key={c.id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selectedClientIds.has(c.id)}
+                      onChange={() => toggleClient(c.id)}
+                    />
+                    <span className="truncate">{clientLabel(c)}</span>
+                  </label>
+                ))
+              )}
+            </div>
+          )}
+        </div>
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}

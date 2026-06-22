@@ -4,7 +4,14 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/useAuth';
 
-interface ClientDto { id: string; name: string; swapOutEnabled?: boolean }
+interface ClientDto { id: string; name: string; vendorNumbers?: string[]; swapOutEnabled?: boolean }
+
+/** Label a client with its vendor number(s) so same-name records are distinguishable. */
+function clientLabel(c: ClientDto): string {
+  const nums = (c.vendorNumbers ?? []).filter(Boolean);
+  return nums.length ? `${c.name} (${nums.join(', ')})` : c.name;
+}
+
 interface ImportResult {
   created: number;
   skipped: number;
@@ -76,7 +83,7 @@ export default function SwapOutImportPage() {
             >
               <option value="">Select a client…</option>
               {enabledClients.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+                <option key={c.id} value={c.id}>{clientLabel(c)}</option>
               ))}
             </select>
             {enabledClients.length === 0 && (
