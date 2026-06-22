@@ -384,8 +384,10 @@ function detectFormat(rows: unknown[][]): DetectedFormat | null {
 
 // ── Main entry point ─────────────────────────────────────────────────────────
 
-export function parseAgedStockFile(buffer: Buffer): AgedStockParseResult {
-  const wb = XLSX.read(buffer, { type: 'buffer', raw: true });
+export function parseAgedStockFile(data: Uint8Array): AgedStockParseResult {
+  // `type: 'array'` accepts any Uint8Array — a Node Buffer (server) or a
+  // browser-side Uint8Array — so this parser runs in both environments.
+  const wb = XLSX.read(data, { type: 'array', raw: true });
 
   // Build ordered list of sheets to try:
   //   1. "Site Article" (if present — Topline files have summary sheets first)

@@ -242,8 +242,50 @@ export default function LoadAgedStockPage() {
   const [parsed, setParsed] = useState<ParseResponse | null>(null);
   const [selectedPeriods, setSelectedPeriods] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Full client-side parse result, reused to create a draft per selected client
+  // (so the big file is parsed once, in the browser, and never re-uploaded).
+  const parsedFullRef = useRef<{
+    format: AgedStockFormat;
+    periods: AgedStockPeriod[];
+    rows: AgedStockRawRow[];
+    warnings: string[];
+    fileName: string;
+  } | null>(null);
 
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
+
+  /** Parse an xlsx entirely in the browser (avoids Vercel's 4.5 MB upload limit). */
+  async function parseClientSide(f: File) {
+    const buf = new Uint8Array(await f.arrayBuffer());
+    const { parseAgedStockFile } = await import('@/lib/agedStockParser');
+    return parseAgedStockFile(buf);
+  }
+
+  /** Gzip a JSON-serialisable object to a Blob for compact upload. */
+  async function gzipJson(obj: unknown): Promise<Blob> {
+    const stream = new Blob([JSON.stringify(obj)]).stream().pipeThrough(new CompressionStream('gzip'));
+    return new Response(stream).blob();
+  }
+
+  /** Create a server draft for one client from an already-parsed result. */
+  async function createDraft(
+    clientId: string,
+    full: { format: AgedStockFormat; periods: AgedStockPeriod[]; rows: AgedStockRawRow[]; warnings: string[]; fileName: string },
+  ) {
+    const body = await gzipJson({
+      clientId,
+      fileName: full.fileName,
+      format: full.format,
+      periods: full.periods,
+      rows: full.rows,
+      warnings: full.warnings,
+    });
+    return authFetch('/api/aged-stock/parse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/gzip' },
+      body,
+    });
+  }
 
   useEffect(() => {
     (async () => {
@@ -282,11 +324,25 @@ export default function LoadAgedStockPage() {
     }
     setParsing(true);
     setParsed(null);
+    parsedFullRef.current = null;
     try {
-      const form = new FormData();
-      form.append('clientId', selectedClientIds[0]);
-      form.append('file', fileToParse);
-      const res = await authFetch('/api/aged-stock/parse', { method: 'POST', body: form });
+      // Parse in the browser, then send the compact gzipped result — large
+      // xlsx files never hit Vercel's 4.5 MB request-body limit this way.
+      const result = await parseClientSide(fileToParse);
+      if (result.errors.length > 0) {
+        notify(result.errors.join('; '), 'error');
+        return;
+      }
+      const full = {
+        format: result.format,
+        periods: result.periods,
+        rows: result.rows,
+        warnings: result.warnings,
+        fileName: fileToParse.name,
+      };
+      parsedFullRef.current = full;
+
+      const res = await createDraft(selectedClientIds[0], full);
       const json = await res.json();
       if (!res.ok || !json.ok) {
         const errs = Array.isArray(json?.errors) ? json.errors.join('; ') : (json?.error ?? 'Parse failed');
@@ -335,12 +391,16 @@ export default function LoadAgedStockPage() {
 
         let draftIdToCommit = parsed.draftId;
 
-        // First client already has a draft from parse; others need their own
+        // First client already has a draft from parse; others get their own
+        // draft from the SAME client-side parse result (no file re-upload).
         if (i > 0) {
-          const form = new FormData();
-          form.append('clientId', cId);
-          form.append('file', file);
-          const parseRes = await authFetch('/api/aged-stock/parse', { method: 'POST', body: form });
+          const full = parsedFullRef.current;
+          if (!full) {
+            notify(`Parse data missing for ${cName} — re-drop the file`, 'error');
+            failed++;
+            continue;
+          }
+          const parseRes = await createDraft(cId, full);
           const parseJson = await parseRes.json();
           if (!parseRes.ok || !parseJson.ok) {
             notify(`Parse failed for ${cName}: ${parseJson?.error ?? parseJson?.errors?.join('; ') ?? 'Unknown error'}`, 'error');
