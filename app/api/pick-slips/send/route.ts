@@ -130,10 +130,19 @@ export async function POST(req: NextRequest) {
 
     if (attachments.length > 0) {
       try {
-        const subjectParts = targetSlips.slice(0, 3).map(s => s.id).join(', ');
-        const subject = targetSlips.length <= 3
-          ? `Pick Slips: ${subjectParts}`
-          : `Pick Slips: ${subjectParts} (+${targetSlips.length - 3} more)`;
+        // If every slip in this email is for the same store, name the store in
+        // the subject (the individual slip IDs remain listed in the body table).
+        // Otherwise fall back to an ID list across the multiple stores.
+        const uniqueSites = new Set(targetSlips.map(s => s.siteCode));
+        let subject: string;
+        if (uniqueSites.size === 1) {
+          subject = `${targetSlips[0].siteName} — Pick Slip${targetSlips.length > 1 ? 's' : ''}`;
+        } else {
+          const subjectParts = targetSlips.slice(0, 3).map(s => s.id).join(', ');
+          subject = targetSlips.length <= 3
+            ? `Pick Slips: ${subjectParts}`
+            : `Pick Slips: ${subjectParts} (+${targetSlips.length - 3} more)`;
+        }
 
         const bodyHtml = `
           <p style="margin:0 0 14px;">Please find the attached pick slip${attachments.length > 1 ? 's' : ''}.</p>
