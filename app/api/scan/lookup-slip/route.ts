@@ -89,6 +89,34 @@ export async function GET(req: NextRequest) {
       if (slip) {
         matched = true;
         if (!bookableStatuses.includes(slip.status)) {
+          // A single already-booked slip can enter "add boxes" mode — the
+          // booking entered too few boxes and more stickers are needed.
+          if (slip.status === 'booked' && slipIds.length === 1 && !slip.nothingToReturn) {
+            return NextResponse.json(
+              {
+                found: true,
+                bookable: false,
+                addable: true,
+                status: slip.status,
+                slip: {
+                  id: slip.id,
+                  loadId: slip.loadId,
+                  clientId: slip.clientId,
+                  clientName: slip.clientName,
+                  vendorNumber: slip.vendorNumber,
+                  siteCode: slip.siteCode,
+                  siteName: slip.siteName,
+                  warehouse: slip.warehouse,
+                  warehouseCode: slip.warehouseCode || resolveWarehouseCode(slip.warehouse || ''),
+                  totalQty: slip.totalQty,
+                  totalVal: slip.totalVal,
+                  status: slip.status,
+                  currentBoxes: slip.receiptBoxes?.length ?? slip.receiptTotalBoxes ?? 0,
+                },
+              },
+              { headers: { 'Cache-Control': 'no-store' } },
+            );
+          }
           return NextResponse.json(
             {
               found: true,

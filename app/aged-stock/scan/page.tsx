@@ -100,6 +100,13 @@ export default function ScanPage() {
   const [ntrSecurityCode, setNtrSecurityCode] = useState('');
   const [ntrSubmitting, setNtrSubmitting] = useState(false);
 
+  // Add boxes to an already-booked slip (wrong box count was entered at booking)
+  const [addBoxesSlip, setAddBoxesSlip] = useState<(SlipSummary & { currentBoxes: number }) | null>(null);
+  const [addBoxCount, setAddBoxCount] = useState('');
+  const [addRepId, setAddRepId] = useState('');
+  const [addSecurityCode, setAddSecurityCode] = useState('');
+  const [addingBoxes, setAddingBoxes] = useState(false);
+
   // ── Load reps + users on mount ──
   const loadRepsAndUsers = useCallback(async () => {
     try {
@@ -127,6 +134,13 @@ export default function ScanPage() {
     const query = slipQuery.trim();
     if (!query) return;
 
+    // Already adding boxes to a booked slip — finish or cancel that first
+    if (addBoxesSlip) {
+      setSlipError('Finish adding boxes to the booked slip, or cancel, before scanning another');
+      setSlipQuery('');
+      return;
+    }
+
     // Check if already added
     if (slips.some(s => s.id === query)) {
       setSlipError(`Pick slip ${query} is already added`);
@@ -143,6 +157,17 @@ export default function ScanPage() {
 
       if (!data.found) {
         setSlipError(data.error || 'Pick slip not found');
+      } else if (data.addable && data.slip) {
+        // Slip is already booked — switch into "add more boxes" mode.
+        // Only allowed when no in-progress booking is on screen.
+        if (slips.length > 0) {
+          setSlipError('Clear the current booking before adding boxes to an already-booked slip');
+          setSlipQuery('');
+        } else {
+          setAddBoxesSlip(data.slip as SlipSummary & { currentBoxes: number });
+          setSlipQuery('');
+          setSlipError('');
+        }
       } else if (!data.bookable) {
         setSlipError(data.error || `Pick slip status "${data.status}" is not bookable`);
       } else {
@@ -310,6 +335,66 @@ export default function ScanPage() {
     }
   }
 
+  // ── Add boxes to an already-booked slip ──
+  function cancelAddBoxes() {
+    setAddBoxesSlip(null);
+    setAddBoxCount('');
+    setAddRepId('');
+    setAddSecurityCode('');
+    setSlipQuery('');
+    setSlipError('');
+  }
+
+  async function handleAddBoxes() {
+    if (!addBoxesSlip) return;
+    const count = parseInt(addBoxCount, 10);
+    if (!count || count < 1) {
+      notify('Enter how many more boxes to add', 'error');
+      return;
+    }
+    if (!addRepId) {
+      notify('Select a rep', 'error');
+      return;
+    }
+    if (addSecurityCode.trim().length !== 4) {
+      notify('Enter the 4-character release code', 'error');
+      return;
+    }
+
+    setAddingBoxes(true);
+    try {
+      const res = await authFetch('/api/scan/add-boxes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slipId: addBoxesSlip.id,
+          clientId: addBoxesSlip.clientId,
+          loadId: addBoxesSlip.loadId,
+          additionalBoxes: count,
+          repId: addRepId,
+          securityCode: addSecurityCode.trim(),
+          format: bookFormat,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        notify(`${data.addedBoxes} sticker${data.addedBoxes !== 1 ? 's' : ''} added — ${data.totalBoxes} boxes total`);
+        if (data.pdfBase64) {
+          const filename = `Stickers-${addBoxesSlip.id}-additional-${data.addedBoxes}pcs.pdf`;
+          downloadAndPrintPdf(data.pdfBase64, filename);
+        }
+        cancelAddBoxes();
+        setTimeout(() => slipInputRef.current?.focus(), 100);
+      } else {
+        notify(data.error || 'Failed to add boxes', 'error');
+      }
+    } catch {
+      notify('Network error adding boxes', 'error');
+    } finally {
+      setAddingBoxes(false);
+    }
+  }
+
   // Combined rep/user options for dropdown — only those with release codes
   const repOptions = [
     ...reps.filter(r => r.releaseCode).map(r => ({
@@ -347,7 +432,7 @@ export default function ScanPage() {
       {/* Step 1: Scan Picking Slips */}
       <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4">
         <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-1">Step 1: Scan Picking Slips</h2>
-        <p className="text-xs text-gray-500 mb-3">Scan one or more Uplift Instructions Forms</p>
+        <p className="text-xs text-gray-500 mb-3">Scan one or more Uplift Instructions Forms. Re-scan an already-booked slip to print additional box stickers.</p>
 
         <div className="flex gap-3 items-end">
           <div className="flex-1">
@@ -439,6 +524,113 @@ export default function ScanPage() {
           </div>
         )}
       </div>
+
+      {/* Add Boxes to an already-booked slip */}
+      {addBoxesSlip && (
+        <div className="bg-white border border-amber-300 rounded-lg p-5 mb-4">
+          <div className="flex items-start gap-3 mb-4">
+            <svg className="w-5 h-5 text-amber-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <h2 className="text-sm font-bold text-amber-800 uppercase tracking-wide">Add Boxes to Booked Slip</h2>
+              <p className="text-xs text-amber-600 mt-0.5">
+                This slip is already booked with {addBoxesSlip.currentBoxes} box{addBoxesSlip.currentBoxes !== 1 ? 'es' : ''}.
+                Print additional stickers if too few boxes were entered at booking. New labels continue the box numbering.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
+            <div>
+              <span className="text-gray-500 text-xs block">Document No</span>
+              <span className="font-mono font-medium">{addBoxesSlip.id}</span>
+            </div>
+            <div>
+              <span className="text-gray-500 text-xs block">Principal</span>
+              <span className="font-medium">{addBoxesSlip.clientName}</span>
+            </div>
+            <div>
+              <span className="text-gray-500 text-xs block">Store</span>
+              <span className="font-medium">{addBoxesSlip.siteName} - {addBoxesSlip.siteCode}</span>
+            </div>
+            <div>
+              <span className="text-gray-500 text-xs block">Current Boxes</span>
+              <span className="font-medium">{addBoxesSlip.currentBoxes}</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Additional Boxes <span className="text-red-500">*</span></label>
+              <input
+                type="number"
+                min={1}
+                value={addBoxCount}
+                onChange={e => setAddBoxCount(e.target.value)}
+                placeholder="How many more?"
+                className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Select Rep <span className="text-red-500">*</span></label>
+              <select
+                value={addRepId}
+                onChange={e => setAddRepId(e.target.value)}
+                className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm"
+              >
+                <option value="">{repOptions.length === 0 ? 'No reps with release codes' : 'Select rep/user...'}</option>
+                {repOptions.map(r => (
+                  <option key={r.id} value={r.id}>{r.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Security Code <span className="text-red-500">*</span></label>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={addSecurityCode}
+                onChange={e => setAddSecurityCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
+                maxLength={4}
+                placeholder=""
+                className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm font-mono tracking-widest"
+              />
+              <span className="text-[10px] text-gray-400 mt-0.5 block">The rep must provide their 4-character release code</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 mb-4">
+            <label className="text-xs font-medium text-gray-600">Sticker Format:</label>
+            <select
+              value={bookFormat}
+              onChange={e => setBookFormat(e.target.value as 'roll' | 'a4sheet')}
+              className="px-2.5 py-1.5 border border-gray-300 rounded-md text-sm"
+            >
+              <option value="roll">Roll (thermal)</option>
+              <option value="a4sheet">A4 Sheet</option>
+            </select>
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              onClick={handleAddBoxes}
+              disabled={addingBoxes}
+              className="px-5 py-2.5 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {addingBoxes && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+              Print Additional Stickers
+            </button>
+            <button
+              onClick={cancelAddBoxes}
+              className="px-5 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Slip details summary (shown when slips added) */}
       {slips.length > 0 && (
