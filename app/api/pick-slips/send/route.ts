@@ -212,16 +212,21 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Update status to 'sent' for successfully processed slips
-  // Only advance from 'generated' → 'sent'. Never regress later statuses.
+  // Update status to 'sent' for successfully processed slips.
+  // Advance from 'generated' → 'sent', and re-send an 'unsuccessful' slip back to
+  // 'sent' (clearing the failure reason). Never regress later statuses.
   const now = new Date().toISOString();
   for (const slip of targetSlips) {
     const hadError = errors.some(e => e.startsWith(slip.id));
-    if (!hadError && slip.status === 'generated') {
+    if (!hadError && (slip.status === 'generated' || slip.status === 'unsuccessful')) {
       try {
         await updateSlipInRun(slip._clientId, slip._loadId, slip.id, {
           status: 'sent',
           sentAt: now,
+          unsuccessfulReason: undefined,
+          unsuccessfulAt: undefined,
+          unsuccessfulBy: undefined,
+          unsuccessfulByName: undefined,
         });
       } catch {
         // Best effort — don't fail the response

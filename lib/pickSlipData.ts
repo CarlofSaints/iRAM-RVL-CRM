@@ -36,6 +36,7 @@ export interface ReceiptBox {
 export type PickSlipStatus =
   | 'generated'
   | 'sent'
+  | 'unsuccessful'
   | 'booked'
   | 'captured'
   | 'in-transit'
@@ -84,6 +85,11 @@ export interface PickSlipRecord {
   channel?: string;
   /** ISO timestamp — set after email send */
   sentAt?: string;
+  /** Upliftment-failure fields — set when an admin marks a 'sent' slip 'unsuccessful' */
+  unsuccessfulReason?: string;
+  unsuccessfulAt?: string;
+  unsuccessfulBy?: string;
+  unsuccessfulByName?: string;
   /** ISO timestamp — set after edit */
   editedAt?: string;
   /** SP web URL of the edited PDF */

@@ -17,7 +17,7 @@ interface PdfRow {
   val: number;
 }
 
-type SlipStatus = 'generated' | 'sent' | 'booked' | 'captured' | 'in-transit' | 'failed-release' | 'partial-release' | 'delivered';
+type SlipStatus = 'generated' | 'sent' | 'unsuccessful' | 'booked' | 'captured' | 'in-transit' | 'failed-release' | 'partial-release' | 'delivered';
 
 interface SlipDto {
   id: string;
@@ -44,6 +44,7 @@ interface SlipDto {
   manual?: boolean;
   channel?: string;
   deliveryNoteSpWebUrl?: string;
+  unsuccessfulReason?: string;
 }
 
 interface RepDto {
@@ -88,6 +89,7 @@ function fmtCurrency(v: number): string {
 const STATUS_LABELS: Record<string, string> = {
   'generated': 'Generated',
   'sent': 'Sent',
+  'unsuccessful': 'Unsuccessful',
   'booked': 'Booked',
   'captured': 'Captured',
   'in-transit': 'In Transit',
@@ -99,6 +101,7 @@ const STATUS_LABELS: Record<string, string> = {
 const STATUS_COLORS: Record<string, string> = {
   'generated': 'bg-gray-100 text-gray-700',
   'sent': 'bg-blue-100 text-blue-700',
+  'unsuccessful': 'bg-rose-100 text-rose-700',
   'booked': 'bg-teal-100 text-teal-700',
   'captured': 'bg-green-100 text-green-700',
   'in-transit': 'bg-purple-100 text-purple-700',
@@ -185,6 +188,12 @@ export default function PickingSlipsPage() {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteDeleting, setDeleteDeleting] = useState(false);
 
+  // Mark Unsuccessful modal
+  const [unsuccessfulSlip, setUnsuccessfulSlip] = useState<SlipDto | null>(null);
+  const [unsuccessfulReason, setUnsuccessfulReason] = useState('');
+  const [unsuccessfulSaving, setUnsuccessfulSaving] = useState(false);
+  const [upliftReasons, setUpliftReasons] = useState<string[]>([]);
+
   // ── Fetch data ──
 
   const fetchSlips = useCallback(async () => {
@@ -217,6 +226,10 @@ export default function PickingSlipsPage() {
       authFetch('/api/control/clients', { cache: 'no-store' })
         .then(r => r.ok ? r.json() : [])
         .then(data => setClients(Array.isArray(data) ? data : []))
+        .catch(() => {}),
+      authFetch('/api/pick-slips/uplift-reasons', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : { reasons: [] })
+        .then(data => setUpliftReasons(Array.isArray(data.reasons) ? data.reasons : []))
         .catch(() => {}),
     ]).finally(() => setLoading(false));
   }, [session, fetchSlips]);
@@ -510,6 +523,45 @@ export default function PickingSlipsPage() {
       notify('Network error sending delivery note', 'error');
     } finally {
       setDnSending(false);
+    }
+  }
+
+  // ── Mark Unsuccessful ──
+
+  function openMarkUnsuccessful(slip: SlipDto) {
+    setUnsuccessfulSlip(slip);
+    setUnsuccessfulReason(upliftReasons[0] ?? '');
+  }
+
+  async function doMarkUnsuccessful() {
+    if (!unsuccessfulSlip) return;
+    if (!unsuccessfulReason) {
+      notify('Choose a reason', 'error');
+      return;
+    }
+    setUnsuccessfulSaving(true);
+    try {
+      const res = await authFetch(`/api/pick-slips/${unsuccessfulSlip.id}/mark-unsuccessful`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: unsuccessfulSlip.clientId,
+          loadId: unsuccessfulSlip.loadId,
+          reason: unsuccessfulReason,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notify('Pick slip marked Unsuccessful — it can now be re-sent');
+        setUnsuccessfulSlip(null);
+        await fetchSlips();
+      } else {
+        notify(data.error || 'Failed to mark unsuccessful', 'error');
+      }
+    } catch {
+      notify('Network error', 'error');
+    } finally {
+      setUnsuccessfulSaving(false);
     }
   }
 
@@ -889,12 +941,15 @@ export default function PickingSlipsPage() {
                         Manual
                       </span>
                     )}
+                    {s.status === 'unsuccessful' && s.unsuccessfulReason && (
+                      <div className="mt-0.5 text-xs text-rose-600">{s.unsuccessfulReason}</div>
+                    )}
                   </td>
                   {canManage && (
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       <div className="flex gap-1">
-                        {/* generated/sent: Edit, Send */}
-                        {(s.status === 'generated' || s.status === 'sent') && (
+                        {/* generated/sent/unsuccessful: Edit, Send (Send re-sends an unsuccessful slip) */}
+                        {(s.status === 'generated' || s.status === 'sent' || s.status === 'unsuccessful') && (
                           <>
                             <button
                               onClick={() => openEdit(s)}
@@ -906,9 +961,18 @@ export default function PickingSlipsPage() {
                               onClick={() => openSend([s])}
                               className="px-2 py-1 text-xs font-medium text-blue-600 border border-blue-200 rounded hover:bg-blue-50"
                             >
-                              Send
+                              {s.status === 'unsuccessful' ? 'Resend' : 'Send'}
                             </button>
                           </>
+                        )}
+                        {/* sent only: an admin can mark the upliftment unsuccessful */}
+                        {s.status === 'sent' && (
+                          <button
+                            onClick={() => openMarkUnsuccessful(s)}
+                            className="px-2 py-1 text-xs font-medium text-rose-600 border border-rose-200 rounded hover:bg-rose-50"
+                          >
+                            Mark Unsuccessful
+                          </button>
                         )}
                         {/* booked: Edit, Send, Capture */}
                         {s.status === 'booked' && (
@@ -1309,6 +1373,55 @@ export default function PickingSlipsPage() {
               <button
                 onClick={() => setDeleteConfirm(false)}
                 disabled={deleteDeleting}
+                className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Mark Unsuccessful Modal ────────────────────────────────────────── */}
+      {unsuccessfulSlip && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-1">Mark Upliftment Unsuccessful</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              {unsuccessfulSlip.id} — {unsuccessfulSlip.siteName} ({unsuccessfulSlip.siteCode}).
+              The slip will move to <span className="font-medium text-rose-600">Unsuccessful</span> so it
+              can be edited and re-sent to the same or a new rep.
+            </p>
+
+            <label className="block text-xs font-medium text-gray-600 mb-1">Reason</label>
+            {upliftReasons.length === 0 ? (
+              <p className="text-sm text-gray-500 mb-4">
+                No reasons configured. Add them in Control Centre → Upliftment Reasons.
+              </p>
+            ) : (
+              <select
+                value={unsuccessfulReason}
+                onChange={e => setUnsuccessfulReason(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-rose-500/30"
+              >
+                {upliftReasons.map(r => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={doMarkUnsuccessful}
+                disabled={unsuccessfulSaving || upliftReasons.length === 0 || !unsuccessfulReason}
+                className="px-4 py-2 bg-rose-600 text-white rounded-lg text-sm font-medium hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {unsuccessfulSaving && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Mark Unsuccessful
+              </button>
+              <button
+                onClick={() => setUnsuccessfulSlip(null)}
+                disabled={unsuccessfulSaving}
                 className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
               >
                 Cancel

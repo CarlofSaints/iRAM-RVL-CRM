@@ -48,6 +48,12 @@ export interface StickerSettings {
 
 export interface AppSettings {
   sticker: StickerSettings;
+  /**
+   * Reasons an admin can pick from when marking a sent pick slip "Unsuccessful"
+   * (e.g. upliftment couldn't be completed at the store). Editable in the
+   * Control Centre → Upliftment Reasons page.
+   */
+  upliftFailureReasons: string[];
 }
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -80,9 +86,32 @@ export const DEFAULT_STICKER: StickerSettings = {
   a4sheet: { ...DEFAULT_A4_PROFILE },
 };
 
+export const DEFAULT_UPLIFT_FAILURE_REASONS: string[] = [
+  'Personnel not available',
+  'Wrong Rep Allocated',
+];
+
 export const DEFAULT_SETTINGS: AppSettings = {
   sticker: DEFAULT_STICKER,
+  upliftFailureReasons: [...DEFAULT_UPLIFT_FAILURE_REASONS],
 };
+
+/** Coerce raw uplift-failure reasons into a clean, deduped, non-empty string list. */
+export function normalizeUpliftFailureReasons(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [...DEFAULT_UPLIFT_FAILURE_REASONS];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of raw) {
+    if (typeof r !== 'string') continue;
+    const t = r.trim();
+    if (!t) continue;
+    const lc = t.toLowerCase();
+    if (seen.has(lc)) continue;
+    seen.add(lc);
+    out.push(t);
+  }
+  return out;
+}
 
 // ── Normalisation / migration ────────────────────────────────────────────────
 
@@ -110,12 +139,15 @@ function coerceProfile(p: unknown, fallback: StickerProfile): StickerProfile {
  *   3. Missing/garbage → full defaults.
  */
 export function normalizeSettings(raw: unknown): AppSettings {
-  const s = (raw && typeof raw === 'object'
-    ? (raw as Record<string, unknown>).sticker
-    : undefined) as Record<string, unknown> | undefined;
+  const root = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const reasons = normalizeUpliftFailureReasons(root.upliftFailureReasons);
+  const s = root.sticker as Record<string, unknown> | undefined;
 
   if (!s || typeof s !== 'object') {
-    return { sticker: { defaultLayout: 'a4sheet', roll: { ...DEFAULT_ROLL_PROFILE }, a4sheet: { ...DEFAULT_A4_PROFILE } } };
+    return {
+      sticker: { defaultLayout: 'a4sheet', roll: { ...DEFAULT_ROLL_PROFILE }, a4sheet: { ...DEFAULT_A4_PROFILE } },
+      upliftFailureReasons: reasons,
+    };
   }
 
   // Case 1: new shape
@@ -127,6 +159,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
         roll: coerceProfile(s.roll, DEFAULT_ROLL_PROFILE),
         a4sheet: coerceProfile(s.a4sheet, DEFAULT_A4_PROFILE),
       },
+      upliftFailureReasons: reasons,
     };
   }
 
@@ -139,6 +172,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
       roll: oldLayout === 'roll' ? flat : { ...DEFAULT_ROLL_PROFILE },
       a4sheet: oldLayout === 'a4sheet' ? flat : { ...DEFAULT_A4_PROFILE },
     },
+    upliftFailureReasons: reasons,
   };
 }
 

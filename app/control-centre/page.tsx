@@ -36,6 +36,7 @@ export default function ControlCentreOverview() {
     { label: 'Channels', href: '/control-centre/channels', count: counts.channels ?? 0, description: 'Retail channels (e.g. Massbuild, Game, Builders)' },
     { label: 'Site Control', href: '/control-centre/site-control', count: counts.sites ?? 0, description: 'Master site file (site → sub-channel / country) for aged-stock omissions' },
     { label: 'Stickers', href: '/control-centre/stickers', count: -1, description: 'Sticker label dimensions and system configuration' },
+    { label: 'Upliftment Reasons', href: '/control-centre/uplift-reasons', count: -1, description: 'Reasons for marking a sent pick slip "Unsuccessful"' },
   ];
 
   return (

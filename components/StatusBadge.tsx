@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from 'react';
 export const STATUS_LABELS: Record<string, string> = {
   'generated': 'Generated',
   'sent': 'Sent',
+  'unsuccessful': 'Unsuccessful',
   'booked': 'Booked',
   'captured': 'Captured',
   'in-transit': 'In Transit',
@@ -16,6 +17,7 @@ export const STATUS_LABELS: Record<string, string> = {
 export const STATUS_COLORS: Record<string, string> = {
   'generated': 'bg-gray-100 text-gray-700',
   'sent': 'bg-blue-100 text-blue-700',
+  'unsuccessful': 'bg-rose-100 text-rose-700',
   'booked': 'bg-teal-100 text-teal-700',
   'captured': 'bg-green-100 text-green-700',
   'in-transit': 'bg-purple-100 text-purple-700',
@@ -27,6 +29,7 @@ export const STATUS_COLORS: Record<string, string> = {
 export const STATUS_TOOLTIPS: Record<string, string> = {
   'generated': 'Aged stock has been loaded into the system and picking slip has been generated.',
   'sent': 'Pick slip has been sent to the rep via email.',
+  'unsuccessful': 'The upliftment could not be completed at the store. The slip can be edited and re-sent to the same or a new rep.',
   'booked': 'Stock has been scanned into the iRam warehouse.',
   'captured': 'Pick slip has been captured with all non-collection reasons.',
   'in-transit': 'Stock is on its way from iRam Warehouse to customer.',

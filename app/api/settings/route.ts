@@ -4,6 +4,7 @@ import {
   loadSettings,
   saveSettings,
   normalizeSettings,
+  normalizeUpliftFailureReasons,
   type AppSettings,
   type StickerLayout,
   type StickerProfile,
@@ -59,6 +60,10 @@ export async function PUT(req: NextRequest) {
   catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
 
   const current = await loadSettings();
+
+  if (body.upliftFailureReasons !== undefined) {
+    current.upliftFailureReasons = normalizeUpliftFailureReasons(body.upliftFailureReasons);
+  }
 
   if (body.sticker) {
     const incoming = body.sticker;
