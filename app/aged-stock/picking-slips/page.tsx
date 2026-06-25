@@ -439,8 +439,9 @@ export default function PickingSlipsPage() {
   function openSend(slipsToSend: SlipDto[]) {
     setSendSlips(slipsToSend);
     setSendTo('');
-    setSendCc('');
-    setSendBcc('');
+    // CC/BCC persist from the previous send so they don't need re-typing each time
+    setSendCc(typeof window !== 'undefined' ? localStorage.getItem('pickSlipSendCc') ?? '' : '');
+    setSendBcc(typeof window !== 'undefined' ? localStorage.getItem('pickSlipSendBcc') ?? '' : '');
     setSendMode('combined');
     setSendRep('');
   }
@@ -473,6 +474,11 @@ export default function PickingSlipsPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
+        // Remember CC/BCC for next time so they don't need re-typing
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('pickSlipSendCc', sendCc);
+          localStorage.setItem('pickSlipSendBcc', sendBcc);
+        }
         notify(`Sent ${data.sent ?? 0} pick slip${(data.sent ?? 0) !== 1 ? 's' : ''}`);
         setSendSlips([]);
         await fetchSlips();
