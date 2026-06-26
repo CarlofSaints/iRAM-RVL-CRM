@@ -22,6 +22,8 @@ const ACTION_LABELS: Record<string, string> = {
   partial_release: 'Partial Release',
   failed_release: 'Failed Release',
   release_code_changed: 'Release Code Changed',
+  'pick-slip-revert': 'Pick Slip Reversed',
+  'pick-slip-unsuccessful': 'Marked Unsuccessful',
 };
 
 const ACTION_COLORS: Record<string, string> = {
@@ -30,6 +32,8 @@ const ACTION_COLORS: Record<string, string> = {
   partial_release: 'bg-red-100 text-red-700',
   failed_release: 'bg-red-100 text-red-700',
   release_code_changed: 'bg-blue-100 text-blue-700',
+  'pick-slip-revert': 'bg-amber-100 text-amber-700',
+  'pick-slip-unsuccessful': 'bg-rose-100 text-rose-700',
 };
 
 function fmtDateTime(iso: string): string {

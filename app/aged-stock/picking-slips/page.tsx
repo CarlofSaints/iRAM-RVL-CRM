@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
 import StatusBadge from '@/components/StatusBadge';
+import { validRevertTargets, clearedStageDescriptions } from '@/lib/pickSlipRevert';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -121,6 +122,7 @@ export default function PickingSlipsPage() {
   const perms = session?.permissions ?? [];
   const canManage = perms.includes('manage_pick_slips');
   const canReceipt = perms.includes('receipt_stock');
+  const canRevert = session?.role === 'super-admin' || perms.includes('revert_pick_slips');
 
   const [toast, setToast] = useState<ToastData | null>(null);
   const notify = (message: string, type: 'success' | 'error' = 'success') =>
@@ -193,6 +195,12 @@ export default function PickingSlipsPage() {
   const [unsuccessfulReason, setUnsuccessfulReason] = useState('');
   const [unsuccessfulSaving, setUnsuccessfulSaving] = useState(false);
   const [upliftReasons, setUpliftReasons] = useState<string[]>([]);
+
+  // Reverse (revert stage) modal — Super Admin only
+  const [revertSlip, setRevertSlip] = useState<SlipDto | null>(null);
+  const [revertTarget, setRevertTarget] = useState('');
+  const [revertReason, setRevertReason] = useState('');
+  const [revertSaving, setRevertSaving] = useState(false);
 
   // ── Fetch data ──
 
@@ -568,6 +576,51 @@ export default function PickingSlipsPage() {
       notify('Network error', 'error');
     } finally {
       setUnsuccessfulSaving(false);
+    }
+  }
+
+  // ── Reverse (revert stage) — Super Admin only ──
+
+  function openRevert(slip: SlipDto) {
+    setRevertSlip(slip);
+    const targets = validRevertTargets(slip);
+    setRevertTarget(targets[0]?.status ?? '');
+    setRevertReason('');
+  }
+
+  async function doRevert() {
+    if (!revertSlip || !revertTarget) return;
+    if (!revertReason.trim()) {
+      notify('A reason is required', 'error');
+      return;
+    }
+    setRevertSaving(true);
+    try {
+      const res = await authFetch(`/api/pick-slips/${revertSlip.id}/revert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: revertSlip.clientId,
+          loadId: revertSlip.loadId,
+          targetStatus: revertTarget,
+          reason: revertReason.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notify(
+          `Reversed to ${STATUS_LABELS[revertTarget] ?? revertTarget}` +
+          (data.stickersUnlinked ? ` — ${data.stickersUnlinked} sticker(s) unlinked` : ''),
+        );
+        setRevertSlip(null);
+        await fetchSlips();
+      } else {
+        notify(data.error || 'Failed to reverse pick slip', 'error');
+      }
+    } catch {
+      notify('Network error', 'error');
+    } finally {
+      setRevertSaving(false);
     }
   }
 
@@ -1031,6 +1084,16 @@ export default function PickingSlipsPage() {
                             </button>
                           </>
                         )}
+                        {/* Super Admin: reverse a mistake — roll back to an earlier status */}
+                        {canRevert && validRevertTargets(s).length > 0 && (
+                          <button
+                            onClick={() => openRevert(s)}
+                            title="Reverse — roll this slip back to an earlier status"
+                            className="px-2 py-1 text-xs font-medium text-amber-700 border border-amber-300 rounded hover:bg-amber-50"
+                          >
+                            Reverse
+                          </button>
+                        )}
                       </div>
                     </td>
                   )}
@@ -1436,6 +1499,71 @@ export default function PickingSlipsPage() {
           </div>
         </div>
       )}
+
+      {/* ── Reverse Modal (Super Admin) ────────────────────────────────────── */}
+      {revertSlip && (() => {
+        const targets = validRevertTargets(revertSlip);
+        const cleared = revertTarget ? clearedStageDescriptions(revertSlip.status, revertTarget) : [];
+        return (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-auto">
+              <h2 className="text-lg font-bold text-gray-900 mb-1">Reverse Pick Slip</h2>
+              <p className="text-sm text-gray-600 mb-4">
+                {revertSlip.id} — {revertSlip.siteName} ({revertSlip.siteCode}). Current status:{' '}
+                <span className="font-medium">{STATUS_LABELS[revertSlip.status] ?? revertSlip.status}</span>.
+                Roll it back to an earlier status to undo a mistake (e.g. a GRN captured against the wrong store).
+              </p>
+
+              <label className="block text-xs font-medium text-gray-600 mb-1">Roll back to</label>
+              <select
+                value={revertTarget}
+                onChange={e => setRevertTarget(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+              >
+                {targets.map(t => (
+                  <option key={t.status} value={t.status}>{t.label}</option>
+                ))}
+              </select>
+
+              {cleared.length > 0 && (
+                <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                  <p className="text-xs font-semibold text-amber-800 mb-1">This will permanently clear:</p>
+                  <ul className="list-disc list-inside text-xs text-amber-800 space-y-0.5">
+                    {cleared.map((c, i) => <li key={i}>{c}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              <label className="block text-xs font-medium text-gray-600 mb-1">Reason (recorded in the audit log)</label>
+              <textarea
+                value={revertReason}
+                onChange={e => setRevertReason(e.target.value)}
+                rows={3}
+                placeholder="e.g. GRN captured against wrong store — wrong quantities"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+              />
+
+              <div className="flex gap-3">
+                <button
+                  onClick={doRevert}
+                  disabled={revertSaving || !revertTarget || !revertReason.trim()}
+                  className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {revertSaving && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  Reverse to {revertTarget ? (STATUS_LABELS[revertTarget] ?? revertTarget) : '…'}
+                </button>
+                <button
+                  onClick={() => setRevertSlip(null)}
+                  disabled={revertSaving}
+                  className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 }
