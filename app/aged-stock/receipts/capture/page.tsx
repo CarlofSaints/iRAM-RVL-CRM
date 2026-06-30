@@ -155,6 +155,12 @@ export default function ReceiptCapturePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [completing, setCompleting] = useState(false);
+  // True once the receipt has been completed this session. Used so the "Back"
+  // button can step back to the receipt screen (instead of navigating away) and
+  // a "Resume Capture" button can step forward again without re-running
+  // /api/receipts/complete (which would reject the now-'captured' slip and reset
+  // any quantities already entered).
+  const [receiptCompleted, setReceiptCompleted] = useState(false);
 
   // Receipt form fields
   const [receiptQty, setReceiptQty] = useState('');
@@ -526,6 +532,7 @@ export default function ReceiptCapturePage() {
       });
       const data = await res.json();
       if (res.ok) {
+        setReceiptCompleted(true);
         if (slip.manual) {
           // Manual slips need stock qty/val capture — user searches and adds products
           notify('Receipt completed — now search and add the products that were collected');
@@ -554,6 +561,32 @@ export default function ReceiptCapturePage() {
     } finally {
       setCompleting(false);
     }
+  }
+
+  // ── Context-aware Back ──
+  // Steps back through the in-page sub-flow (Unreturned → Manual → Receipt)
+  // instead of navigating away. Leaving the page after the receipt is completed
+  // would strand the slip: it's now 'captured' so it no longer shows in the
+  // booked-capture list, and /complete won't re-run it.
+  function handleBack() {
+    if (showUnreturnedCapture) {
+      setShowUnreturnedCapture(false);
+      if (slip?.manual) setShowManualCapture(true);
+      return;
+    }
+    if (showManualCapture) {
+      setShowManualCapture(false);
+      return;
+    }
+    router.push('/aged-stock/receipts');
+  }
+
+  // ── Resume forward after the receipt was already completed ──
+  // Re-shows the next sub-step (manual capture for manual slips, otherwise
+  // unreturned capture) without re-calling /complete, preserving any entered data.
+  function resumeAfterReceipt() {
+    if (slip?.manual) setShowManualCapture(true);
+    else setShowUnreturnedCapture(true);
   }
 
   // ── Unreturned stock capture functions ──
@@ -896,7 +929,7 @@ export default function ReceiptCapturePage() {
           </p>
         </div>
         <button
-          onClick={() => router.push('/aged-stock/receipts')}
+          onClick={handleBack}
           className="px-3 py-1.5 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50"
         >
           Back
@@ -980,12 +1013,12 @@ export default function ReceiptCapturePage() {
 
           <div className="flex gap-3">
             <button
-              onClick={() => handleComplete()}
+              onClick={() => receiptCompleted ? resumeAfterReceipt() : handleComplete()}
               disabled={completing}
               className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {completing && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-              Go to SKU Capture
+              {receiptCompleted ? 'Resume Capture' : 'Go to SKU Capture'}
             </button>
             <button
               onClick={() => router.push('/aged-stock/receipts')}
@@ -1192,12 +1225,12 @@ export default function ReceiptCapturePage() {
           {/* Action buttons */}
           <div className="flex gap-3">
             <button
-              onClick={() => handleComplete()}
-              disabled={completing || boxes.length === 0}
+              onClick={() => receiptCompleted ? resumeAfterReceipt() : handleComplete()}
+              disabled={completing || (!receiptCompleted && boxes.length === 0)}
               className="px-5 py-2.5 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {completing && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-              Complete Receipt
+              {receiptCompleted ? 'Resume Capture' : 'Complete Receipt'}
             </button>
             <button
               onClick={() => router.push('/aged-stock/receipts')}
@@ -1343,10 +1376,10 @@ export default function ReceiptCapturePage() {
               Save &amp; Continue
             </button>
             <button
-              onClick={() => router.push('/aged-stock/receipts')}
+              onClick={handleBack}
               className="px-5 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
             >
-              Cancel
+              Back
             </button>
           </div>
         </>
