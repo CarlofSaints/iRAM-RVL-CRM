@@ -199,7 +199,7 @@ export async function POST(
     if (isMulti) {
       signedPdfBuffer = await generateMultiSlipDeliveryNotePdf({
         clientName: firstSlip.clientName,
-        vendorNumber: firstSlip.vendorNumber,
+        vendorNumber: [...new Set(results.map(r => r.slip.vendorNumber).filter(Boolean))].join(' / ') || firstSlip.vendorNumber,
         releaseRepName: firstSlip.releaseRepName ?? '',
         releasedAt: firstSlip.releasedAt ?? now,
         qrUrl,

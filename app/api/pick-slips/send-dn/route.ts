@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
       // Multi-slip delivery note
       pdfBuffer = await generateMultiSlipDeliveryNotePdf({
         clientName: slip.clientName,
-        vendorNumber: slip.vendorNumber,
+        vendorNumber: [...new Set(allTokenSlips.map(r => r.slip.vendorNumber).filter(Boolean))].join(' / ') || slip.vendorNumber,
         releaseRepName: slip.releaseRepName ?? 'Unknown',
         releasedAt: slip.releasedAt ?? new Date().toISOString(),
         qrUrl,

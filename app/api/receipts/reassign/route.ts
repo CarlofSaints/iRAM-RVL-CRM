@@ -158,7 +158,7 @@ export async function POST(req: NextRequest) {
     if (isMulti) {
       pdfBuffer = await generateMultiSlipDeliveryNotePdf({
         clientName: firstSlip.clientName,
-        vendorNumber: firstSlip.vendorNumber,
+        vendorNumber: [...new Set(resolvedSlips.map(r => r.slip.vendorNumber).filter(Boolean))].join(' / ') || firstSlip.vendorNumber,
         releaseRepName: newRepName,
         releasedAt,
         qrUrl,

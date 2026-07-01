@@ -289,17 +289,19 @@ export default function ReleasePage() {
       return;
     }
 
-    // Client lock — a delivery note may only contain ONE client/supplier's stock.
-    // Multiple vendor numbers under the SAME client (e.g. Major Tech 2130 + 4394)
-    // are allowed on one note; different clients are not.
+    // Supplier lock — a delivery note may only contain ONE supplier's stock.
+    // A supplier can be split across several client records that share the same
+    // NAME but carry different vendor numbers (e.g. Major Tech 2130 + 4394), so
+    // we match on the client NAME, not the clientId. Different suppliers block.
+    const supplierKey = (s: SlipDto) => (s.clientName || '').trim().toUpperCase();
     const newSlip = slipMap.get(slipId);
     if (newSlip && discoveredSlips.length > 0) {
       const current = discoveredSlips[0].slip;
-      if (newSlip.clientId !== current.clientId) {
+      if (supplierKey(newSlip) !== supplierKey(current)) {
         setScanError(
           `This box is ${newSlip.clientName} (vendor ${newSlip.vendorNumber}). ` +
           `The current release is for ${current.clientName} (vendor ${current.vendorNumber}). ` +
-          `Stock from different clients/suppliers can't be released on the same delivery note.`,
+          `Stock from different suppliers can't be released on the same delivery note.`,
         );
         setScanBarcode('');
         return;

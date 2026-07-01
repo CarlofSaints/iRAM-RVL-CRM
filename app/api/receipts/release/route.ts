@@ -87,13 +87,16 @@ export async function POST(req: NextRequest) {
     resolvedSlips.push({ payload: sp, slip });
   }
 
-  // Client lock — a delivery note must never mix clients/suppliers, but
-  // multiple vendor numbers belonging to the SAME client are allowed on one note.
-  const firstClient = resolvedSlips[0].payload.clientId;
-  const mixedClients = resolvedSlips.some(r => r.payload.clientId !== firstClient);
-  if (mixedClients) {
+  // Supplier lock — a delivery note must never mix suppliers, but a supplier
+  // may be split across several client records sharing the same NAME with
+  // different vendor numbers (e.g. Major Tech 2130 + 4394). Match on the client
+  // name so those release together; genuinely different suppliers still block.
+  const supplierKey = (name: string) => (name || '').trim().toUpperCase();
+  const firstSupplier = supplierKey(resolvedSlips[0].slip.clientName);
+  const mixedSuppliers = resolvedSlips.some(r => supplierKey(r.slip.clientName) !== firstSupplier);
+  if (mixedSuppliers) {
     return NextResponse.json(
-      { error: 'Cannot release stock from multiple clients/suppliers on one delivery note' },
+      { error: 'Cannot release stock from multiple suppliers on one delivery note' },
       { status: 400 },
     );
   }
@@ -178,15 +181,17 @@ export async function POST(req: NextRequest) {
       let pdfBuffer: Buffer;
       let pdfFileName: string;
 
-      // Use the first slip for client-level info (all slips share clientName/vendorNumber)
+      // Use the first slip for supplier-level info. Slips share the same client
+      // NAME but may carry different vendor numbers — show all of them.
       const firstSlip = resolvedSlips[0].slip;
       const firstClientId = resolvedSlips[0].payload.clientId;
+      const allVendorNumbers = [...new Set(resolvedSlips.map(r => r.slip.vendorNumber).filter(Boolean))].join(' / ');
 
       if (isMulti) {
         // Multi-slip delivery note
         pdfBuffer = await generateMultiSlipDeliveryNotePdf({
           clientName: firstSlip.clientName,
-          vendorNumber: firstSlip.vendorNumber,
+          vendorNumber: allVendorNumbers || firstSlip.vendorNumber,
           releaseRepName,
           releasedAt: now,
           qrUrl,
