@@ -23,6 +23,17 @@ export interface DeliveryNotePdfRow {
   val: number;
 }
 
+/**
+ * Value of the GRN/GRV document(s) for a slip. Prefer the value captured at
+ * receipt (the store document value); fall back to the stock value (sum of row
+ * values) when no receipt value was entered.
+ */
+function documentValue(receiptValue: string | undefined, rows: { val: number }[]): number {
+  const parsed = parseFloat((receiptValue ?? '').replace(/[^0-9.]/g, ''));
+  if (!isNaN(parsed) && parsed > 0) return parsed;
+  return rows.reduce((s, r) => s + r.val, 0);
+}
+
 export interface DeliveryNotePdfParams {
   pickSlipId: string;
   clientName: string;
@@ -34,6 +45,10 @@ export interface DeliveryNotePdfParams {
   releasedAt: string; // ISO
   /** GRN/GRV reference numbers */
   storeRefs: string[];
+  /** GRN/GRV document date (captured at receipt) */
+  receiptGrnDate?: string;
+  /** GRN/GRV document value captured at receipt (string, may include "R"/commas) */
+  receiptValue?: string;
   /** Whether this was a manual capture pick slip */
   manual?: boolean;
   rows: DeliveryNotePdfRow[];
@@ -57,10 +72,12 @@ export interface DeliveryNotePdfParams {
 export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Promise<Buffer> {
   const {
     pickSlipId, clientName, vendorNumber, siteName, siteCode,
-    warehouse, releaseRepName, releasedAt, storeRefs, manual,
-    rows, boxCount, stickerBarcodes, qrUrl,
+    warehouse, releaseRepName, releasedAt, storeRefs, receiptGrnDate,
+    receiptValue, manual, rows, boxCount, qrUrl,
     signature, signedByName, deliveredAt,
   } = params;
+
+  const docVal = documentValue(receiptValue, rows);
 
   // Parse signature image if provided
   let signatureBuffer: Buffer | null = null;
@@ -120,17 +137,6 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
     releaseDateStr = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz })
       + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
   } catch { /* keep raw */ }
-
-  // Table columns: Article Code | Description | Qty | Value
-  const colWidths = [80, 270, 50, 60];
-  const totalColW = colWidths.reduce((a, b) => a + b, 0);
-  const scale = usableW / totalColW;
-  const cols = colWidths.map(w => Math.round(w * scale));
-  const sumCols = cols.reduce((a, b) => a + b, 0);
-  cols[cols.length - 1] += (Math.round(usableW) - sumCols);
-
-  const rowH = 22;
-  const tableHeaderH = 22;
 
   const doc = new PDFDocument({
     size: 'A4',
@@ -192,11 +198,15 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
   doc.text(`Collecting Rep: ${releaseRepName}`, rightX, y, { width: usableW / 2, align: 'right' });
   y += 15;
 
-  // GRN refs
-  if (storeRefs.length > 0) {
-    doc.font('Helvetica').fontSize(9);
-    doc.text(`GRN/GRV Refs: ${storeRefs.join(', ')}`, leftX, y);
-    y += 13;
+  const tableX = marginL;
+
+  // GRN/GRV number(s) + date
+  if (storeRefs.length > 0 || receiptGrnDate) {
+    doc.font('Helvetica-Bold').fontSize(10);
+    const refText = storeRefs.length > 0 ? storeRefs.join(', ') : '—';
+    doc.text(`GRN/GRV: ${refText}${receiptGrnDate ? `   |   Date: ${receiptGrnDate}` : ''}`, leftX, y, { width: usableW });
+    doc.font('Helvetica').fontSize(10);
+    y += 16;
   }
 
   // Manual/Uploaded indicator
@@ -207,80 +217,16 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
     y += 13;
   }
 
-  y += 5;
+  y += 8;
 
-  // ── Product table header ──
-  const tableX = marginL;
-  let colX = tableX;
-  doc.font('Helvetica-Bold').fontSize(8);
-  const headerLabels = ['Article Code', 'Description', 'Qty', 'Value'];
-
-  for (let c = 0; c < cols.length; c++) {
-    doc.rect(colX, y, cols[c], tableHeaderH).stroke();
-    doc.text(headerLabels[c], colX + 3, y + 5, {
-      width: cols[c] - 6,
-      align: c >= 2 ? 'right' : 'left',
-    });
-    colX += cols[c];
-  }
-  y += tableHeaderH;
-
-  // ── Product table rows ──
-  doc.font('Helvetica').fontSize(8);
-  const totalQty = rows.reduce((s, r) => s + r.qty, 0);
-  const totalVal = rows.reduce((s, r) => s + r.val, 0);
-
-  for (const r of rows) {
-    // Check if we need a new page
-    if (y + rowH > pageH - marginB - 200) {
-      doc.addPage();
-      y = marginT;
-    }
-
-    colX = tableX;
-    const cellVals = [
-      r.articleCode,
-      r.description,
-      r.qty.toString(),
-      manual ? '' : `R ${r.val.toFixed(2)}`,
-    ];
-    for (let c = 0; c < cols.length; c++) {
-      doc.rect(colX, y, cols[c], rowH).stroke();
-      if (cellVals[c]) {
-        doc.text(cellVals[c], colX + 3, y + 5, {
-          width: cols[c] - 6,
-          height: rowH - 6,
-          align: c >= 2 ? 'right' : 'left',
-        });
-      }
-      colX += cols[c];
-    }
-    y += rowH;
-  }
-
-  // ── Total row ──
-  doc.font('Helvetica-Bold').fontSize(8);
-  const labelW = cols[0] + cols[1];
-  doc.rect(tableX, y, labelW, rowH).stroke();
-  doc.text('Total', tableX + labelW - 40, y + 5, { width: 36, align: 'right' });
-  doc.rect(tableX + labelW, y, cols[2], rowH).stroke();
-  doc.text(totalQty.toString(), tableX + labelW + 3, y + 5, { width: cols[2] - 6, align: 'right' });
-  doc.rect(tableX + labelW + cols[2], y, cols[3], rowH).stroke();
-  if (!manual) {
-    doc.text(`R ${totalVal.toFixed(2)}`, tableX + labelW + cols[2] + 3, y + 5, { width: cols[3] - 6, align: 'right' });
-  }
-  y += rowH + 10;
-
-  // ── Box count + sticker barcodes ──
-  doc.font('Helvetica').fontSize(9);
-  doc.text(`Boxes: ${boxCount}`, leftX, y);
-  y += 13;
-  if (stickerBarcodes.length > 0) {
-    doc.font('Helvetica').fontSize(8).fillColor('#555555');
-    doc.text(`Stickers: ${stickerBarcodes.join(', ')}`, leftX, y, { width: usableW });
-    doc.fillColor('#000000');
-    y += Math.ceil(stickerBarcodes.length / 5) * 12 + 5;
-  }
+  // ── Value + box count (no article breakdown) ──
+  const summaryH = 30;
+  doc.rect(tableX, y, usableW, summaryH).stroke();
+  doc.font('Helvetica-Bold').fontSize(12);
+  doc.text(`Value: R ${docVal.toFixed(2)}`, tableX + 8, y + 9, { width: usableW / 2 - 12 });
+  doc.text(`Boxes: ${boxCount}`, tableX + usableW / 2, y + 9, { width: usableW / 2 - 8, align: 'right' });
+  doc.font('Helvetica').fontSize(10);
+  y += summaryH + 12;
 
   // Check space for QR + signature — if not enough, add page
   const neededSpace = 250;
@@ -386,6 +332,8 @@ export interface MultiSlipSection {
   warehouse: string;
   storeRefs: string[];
   receiptGrnDate?: string;
+  /** GRN/GRV document value captured at receipt (string, may include "R"/commas) */
+  receiptValue?: string;
   manual?: boolean;
   rows: DeliveryNotePdfRow[];
   stickerBarcodes: string[];
@@ -463,17 +411,6 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
       + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
   } catch { /* keep raw */ }
 
-  // Table column setup
-  const colWidths = [80, 270, 50, 60];
-  const totalColW = colWidths.reduce((a, b) => a + b, 0);
-  const scale = usableW / totalColW;
-  const cols = colWidths.map(w => Math.round(w * scale));
-  const sumCols = cols.reduce((a, b) => a + b, 0);
-  cols[cols.length - 1] += (Math.round(usableW) - sumCols);
-
-  const rowH = 22;
-  const tableHeaderH = 22;
-
   const allSlipIds = slips.map(s => s.pickSlipId).join(', ');
 
   const doc = new PDFDocument({
@@ -521,142 +458,90 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
   doc.text(`Pick Slips: ${slips.length}`, rightX, y, { width: usableW / 2, align: 'right' });
   y += 20;
 
-  // ── Per-slip sections ──
-  let grandQty = 0;
+  // ── Per-slip sections (no article breakdown) ──
   let grandVal = 0;
-  const anyManual = slips.some(s => s.manual);
 
-  for (let si = 0; si < slips.length; si++) {
-    const slip = slips[si];
-    const slipQty = slip.rows.reduce((s, r) => s + r.qty, 0);
-    const slipVal = slip.rows.reduce((s, r) => s + r.val, 0);
-    grandQty += slipQty;
-    grandVal += slipVal;
+  // Table: Pick Slip / Store | GRN/GRV (+date) | Boxes | Value
+  const dnColWidths = [200, 190, 45, 80];
+  const dnColW = dnColWidths.reduce((a, b) => a + b, 0);
+  const dnScale = usableW / dnColW;
+  const dnCols = dnColWidths.map(w => Math.round(w * dnScale));
+  const dnSum = dnCols.reduce((a, b) => a + b, 0);
+  dnCols[dnCols.length - 1] += (Math.round(usableW) - dnSum);
+  const dnRowH = 40;
+  const dnHeaderH = 20;
 
-    // Subheading
-    ensureSpace(60);
-    doc.font('Helvetica-Bold').fontSize(10).fillColor('#1a5e1a');
-    doc.text(`Pick Slip: ${slip.pickSlipId} — ${slip.siteName} (${slip.siteCode})`, leftX, y, { width: usableW });
-    doc.fillColor('#000000');
-    y += 14;
-
-    // GRN refs + date
-    doc.font('Helvetica').fontSize(8);
-    if (slip.storeRefs.length > 0) {
-      doc.text(`GRN/GRV: ${slip.storeRefs.join(', ')}${slip.receiptGrnDate ? ` | Date: ${slip.receiptGrnDate}` : ''}`, leftX, y);
-      y += 11;
-    }
-
-    if (slip.manual) {
-      doc.font('Helvetica-Bold').fontSize(8).fillColor('#CC0000');
-      doc.text('MANUAL CAPTURE', leftX, y);
-      doc.fillColor('#000000');
-      y += 11;
-    }
-
-    y += 3;
-
-    // Product table header
-    let colX = tableX;
-    doc.font('Helvetica-Bold').fontSize(7);
-    const headerLabels = ['Article Code', 'Description', 'Qty', 'Value'];
-    for (let c = 0; c < cols.length; c++) {
-      doc.rect(colX, y, cols[c], tableHeaderH).stroke();
-      doc.text(headerLabels[c], colX + 3, y + 6, {
-        width: cols[c] - 6,
-        align: c >= 2 ? 'right' : 'left',
-      });
-      colX += cols[c];
-    }
-    y += tableHeaderH;
-
-    // Product rows
-    doc.font('Helvetica').fontSize(7);
-    for (const r of slip.rows) {
-      ensureSpace(rowH + 10);
-      colX = tableX;
-      const cellVals = [
-        r.articleCode,
-        r.description,
-        r.qty.toString(),
-        slip.manual ? '' : `R ${r.val.toFixed(2)}`,
-      ];
-      for (let c = 0; c < cols.length; c++) {
-        doc.rect(colX, y, cols[c], rowH).stroke();
-        if (cellVals[c]) {
-          doc.text(cellVals[c], colX + 3, y + 6, {
-            width: cols[c] - 6,
-            height: rowH - 6,
-            align: c >= 2 ? 'right' : 'left',
-          });
-        }
-        colX += cols[c];
-      }
-      y += rowH;
-    }
-
-    // Slip subtotal
-    doc.font('Helvetica-Bold').fontSize(7);
-    const labelW = cols[0] + cols[1];
-    doc.rect(tableX, y, labelW, rowH).stroke();
-    doc.text(`Subtotal (${slip.pickSlipId.slice(-3)})`, tableX + 3, y + 6, { width: labelW - 6, align: 'right' });
-    doc.rect(tableX + labelW, y, cols[2], rowH).stroke();
-    doc.text(slipQty.toString(), tableX + labelW + 3, y + 6, { width: cols[2] - 6, align: 'right' });
-    doc.rect(tableX + labelW + cols[2], y, cols[3], rowH).stroke();
-    if (!slip.manual) {
-      doc.text(`R ${slipVal.toFixed(2)}`, tableX + labelW + cols[2] + 3, y + 6, { width: cols[3] - 6, align: 'right' });
-    }
-    y += rowH + 12;
+  // Header
+  ensureSpace(dnHeaderH + dnRowH);
+  let colX = tableX;
+  doc.font('Helvetica-Bold').fontSize(8);
+  const dnHeaders = ['Pick Slip / Store', 'GRN/GRV & Date', 'Boxes', 'Value'];
+  for (let c = 0; c < dnCols.length; c++) {
+    doc.rect(colX, y, dnCols[c], dnHeaderH).stroke();
+    doc.text(dnHeaders[c], colX + 4, y + 6, { width: dnCols[c] - 8, align: c >= 2 ? 'right' : 'left' });
+    colX += dnCols[c];
   }
+  y += dnHeaderH;
 
-  // ── Box summary table ──
-  ensureSpace(60);
-  doc.font('Helvetica-Bold').fontSize(9);
-  doc.text('Box Summary', leftX, y);
-  y += 14;
-
-  // Box table columns: Sticker # | Pick Slip | GRN/GRV #
-  const boxColWidths = [180, 180, 155];
-  const boxColW = boxColWidths.reduce((a, b) => a + b, 0);
-  const boxScale = usableW / boxColW;
-  const boxCols = boxColWidths.map(w => Math.round(w * boxScale));
-  const boxSumCols = boxCols.reduce((a, b) => a + b, 0);
-  boxCols[boxCols.length - 1] += (Math.round(usableW) - boxSumCols);
-
-  // Box header
-  let bColX = tableX;
-  doc.font('Helvetica-Bold').fontSize(7);
-  const boxHeaders = ['Sticker #', 'Pick Slip', 'GRN/GRV #'];
-  for (let c = 0; c < boxCols.length; c++) {
-    doc.rect(bColX, y, boxCols[c], tableHeaderH).stroke();
-    doc.text(boxHeaders[c], bColX + 3, y + 6, { width: boxCols[c] - 6 });
-    bColX += boxCols[c];
-  }
-  y += tableHeaderH;
-
-  // Box rows
-  doc.font('Helvetica').fontSize(7);
+  // Rows — one per slip
   for (const slip of slips) {
-    for (const barcode of slip.stickerBarcodes) {
-      ensureSpace(rowH + 10);
-      bColX = tableX;
-      const vals = [barcode, slip.pickSlipId, slip.storeRefs.join(', ')];
-      for (let c = 0; c < boxCols.length; c++) {
-        doc.rect(bColX, y, boxCols[c], rowH).stroke();
-        doc.text(vals[c], bColX + 3, y + 6, { width: boxCols[c] - 6, height: rowH - 6 });
-        bColX += boxCols[c];
-      }
-      y += rowH;
-    }
-  }
-  y += 8;
+    const slipVal = documentValue(slip.receiptValue, slip.rows);
+    grandVal += slipVal;
+    ensureSpace(dnRowH + 6);
 
-  // ── Grand total ──
+    colX = tableX;
+    // cell heights are uniform; draw all borders first
+    for (let c = 0; c < dnCols.length; c++) {
+      doc.rect(colX, y, dnCols[c], dnRowH).stroke();
+      colX += dnCols[c];
+    }
+
+    // Col 0: Pick slip + store (+ MANUAL)
+    doc.font('Helvetica-Bold').fontSize(8).fillColor('#000000');
+    doc.text(slip.pickSlipId, tableX + 4, y + 5, { width: dnCols[0] - 8 });
+    doc.font('Helvetica').fontSize(8);
+    doc.text(`${slip.siteName} (${slip.siteCode})`, tableX + 4, y + 17, { width: dnCols[0] - 8 });
+    if (slip.manual) {
+      doc.font('Helvetica-Bold').fontSize(6).fillColor('#CC0000');
+      doc.text('MANUAL CAPTURE', tableX + 4, y + 29, { width: dnCols[0] - 8 });
+      doc.fillColor('#000000');
+    }
+
+    // Col 1: GRN/GRV + date
+    const c1x = tableX + dnCols[0];
+    doc.font('Helvetica').fontSize(8);
+    doc.text(slip.storeRefs.length > 0 ? slip.storeRefs.join(', ') : '—', c1x + 4, y + 5, { width: dnCols[1] - 8 });
+    if (slip.receiptGrnDate) {
+      doc.fillColor('#555555');
+      doc.text(`Date: ${slip.receiptGrnDate}`, c1x + 4, y + 22, { width: dnCols[1] - 8 });
+      doc.fillColor('#000000');
+    }
+
+    // Col 2: boxes
+    const c2x = c1x + dnCols[1];
+    doc.text(String(slip.stickerBarcodes.length), c2x + 4, y + 15, { width: dnCols[2] - 8, align: 'right' });
+
+    // Col 3: value
+    const c3x = c2x + dnCols[2];
+    doc.font('Helvetica-Bold').fontSize(9);
+    doc.text(`R ${slipVal.toFixed(2)}`, c3x + 4, y + 15, { width: dnCols[3] - 8, align: 'right' });
+    doc.font('Helvetica').fontSize(8);
+
+    y += dnRowH;
+  }
+
+  // ── Combined total ──
   ensureSpace(30);
-  doc.font('Helvetica-Bold').fontSize(9);
   const totalBoxes = slips.reduce((s, sl) => s + sl.stickerBarcodes.length, 0);
-  doc.text(`Grand Total — ${slips.length} slips, ${totalBoxes} boxes, ${grandQty} units${anyManual ? '' : `, R ${grandVal.toFixed(2)}`}`, leftX, y, { width: usableW });
-  y += 18;
+  const labelW = dnCols[0] + dnCols[1];
+  doc.font('Helvetica-Bold').fontSize(9);
+  doc.rect(tableX, y, labelW, dnHeaderH).stroke();
+  doc.text(`Combined — ${slips.length} slips`, tableX + 4, y + 6, { width: labelW - 8, align: 'right' });
+  doc.rect(tableX + labelW, y, dnCols[2], dnHeaderH).stroke();
+  doc.text(String(totalBoxes), tableX + labelW + 4, y + 6, { width: dnCols[2] - 8, align: 'right' });
+  doc.rect(tableX + labelW + dnCols[2], y, dnCols[3], dnHeaderH).stroke();
+  doc.text(`R ${grandVal.toFixed(2)}`, tableX + labelW + dnCols[2] + 4, y + 6, { width: dnCols[3] - 8, align: 'right' });
+  y += dnHeaderH + 12;
 
   // ── QR Code ──
   ensureSpace(200);

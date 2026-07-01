@@ -210,6 +210,7 @@ export async function POST(
           warehouse: slip.warehouse,
           storeRefs: slip.receiptStoreRefs ?? [],
           receiptGrnDate: slip.receiptGrnDate,
+          receiptValue: slip.receiptValue,
           manual: slip.manual,
           rows: (slip.rows ?? []).map(r => ({
             articleCode: r.articleCode,
@@ -234,6 +235,8 @@ export async function POST(
         releaseRepName: firstSlip.releaseRepName ?? '',
         releasedAt: firstSlip.releasedAt ?? now,
         storeRefs: firstSlip.receiptStoreRefs ?? [],
+        receiptGrnDate: firstSlip.receiptGrnDate,
+        receiptValue: firstSlip.receiptValue,
         manual: firstSlip.manual,
         rows: (firstSlip.rows ?? []).map(r => ({
           articleCode: r.articleCode,

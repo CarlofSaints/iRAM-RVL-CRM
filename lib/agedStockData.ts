@@ -22,6 +22,7 @@ import fs from 'fs';
 import path from 'path';
 import { put, get, del } from '@vercel/blob';
 import type { AgedStockFormat, AgedStockPeriod, AgedStockRawRow } from './agedStockParser';
+import { upperName } from './upperName';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -151,10 +152,19 @@ export async function saveDraft(d: AgedStockDraft): Promise<void> {
 }
 
 export async function loadDraft(userId: string, draftId: string): Promise<AgedStockDraft | null> {
-  if (process.env.VERCEL) {
-    return blobReadJson<AgedStockDraft>(draftKey(userId, draftId));
+  const draft = process.env.VERCEL
+    ? await blobReadJson<AgedStockDraft>(draftKey(userId, draftId))
+    : await localReadJson<AgedStockDraft>(draftLocalPath(userId, draftId));
+  if (draft) {
+    // Uppercase store + vendor names on read so the upload preview matches the
+    // rest of the app.
+    draft.clientName = upperName(draft.clientName);
+    for (const r of draft.rows) {
+      r.siteName = upperName(r.siteName);
+      r.siteCode = upperName(r.siteCode);
+    }
   }
-  return localReadJson<AgedStockDraft>(draftLocalPath(userId, draftId));
+  return draft;
 }
 
 export async function deleteDraft(userId: string, draftId: string): Promise<void> {
@@ -175,10 +185,11 @@ export async function deleteDraft(userId: string, draftId: string): Promise<void
 // ── Loads (committed) ────────────────────────────────────────────────────────
 
 export async function listLoads(clientId: string): Promise<AgedStockLoadMeta[]> {
-  if (process.env.VERCEL) {
-    return (await blobReadJson<AgedStockLoadMeta[]>(indexKey(clientId))) ?? [];
-  }
-  return (await localReadJson<AgedStockLoadMeta[]>(indexLocalPath(clientId))) ?? [];
+  const index = process.env.VERCEL
+    ? (await blobReadJson<AgedStockLoadMeta[]>(indexKey(clientId))) ?? []
+    : (await localReadJson<AgedStockLoadMeta[]>(indexLocalPath(clientId))) ?? [];
+  for (const meta of index) meta.clientName = upperName(meta.clientName);
+  return index;
 }
 
 async function saveIndex(clientId: string, items: AgedStockLoadMeta[]): Promise<void> {
@@ -190,10 +201,18 @@ async function saveIndex(clientId: string, items: AgedStockLoadMeta[]): Promise<
 }
 
 export async function getLoad(clientId: string, loadId: string): Promise<AgedStockLoadFull | null> {
-  if (process.env.VERCEL) {
-    return blobReadJson<AgedStockLoadFull>(loadKey(clientId, loadId));
+  const full = process.env.VERCEL
+    ? await blobReadJson<AgedStockLoadFull>(loadKey(clientId, loadId))
+    : await localReadJson<AgedStockLoadFull>(loadLocalPath(clientId, loadId));
+  if (full) {
+    // Uppercase store + vendor names on read for consistent display everywhere.
+    full.clientName = upperName(full.clientName);
+    for (const r of full.rows) {
+      r.siteName = upperName(r.siteName);
+      r.siteCode = upperName(r.siteCode);
+    }
   }
-  return localReadJson<AgedStockLoadFull>(loadLocalPath(clientId, loadId));
+  return full;
 }
 
 export async function saveLoad(full: AgedStockLoadFull): Promise<void> {

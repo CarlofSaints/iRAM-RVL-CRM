@@ -12,6 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { put, get, del, list } from '@vercel/blob';
 import type { PickSlipPdfRow } from './pickSlipPdf';
+import { upperName } from './upperName';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -257,10 +258,13 @@ export async function getPickSlipRun(
       }
     } catch { /* empty */ }
   }
-  // Normalize legacy statuses on read
+  // Normalize legacy statuses + uppercase store/vendor names on read
   if (run) {
     for (const slip of run.slips) {
       slip.status = normalizeStatus(slip.status);
+      slip.siteName = upperName(slip.siteName);
+      slip.siteCode = upperName(slip.siteCode);
+      slip.clientName = upperName(slip.clientName);
     }
   }
   return run;

@@ -289,16 +289,17 @@ export default function ReleasePage() {
       return;
     }
 
-    // Vendor lock — a delivery note may only contain one vendor's stock.
-    // Stock is never returned to one vendor from multiple vendors.
+    // Client lock — a delivery note may only contain ONE client/supplier's stock.
+    // Multiple vendor numbers under the SAME client (e.g. Major Tech 2130 + 4394)
+    // are allowed on one note; different clients are not.
     const newSlip = slipMap.get(slipId);
     if (newSlip && discoveredSlips.length > 0) {
       const current = discoveredSlips[0].slip;
-      if (newSlip.vendorNumber !== current.vendorNumber || newSlip.clientId !== current.clientId) {
+      if (newSlip.clientId !== current.clientId) {
         setScanError(
           `This box is ${newSlip.clientName} (vendor ${newSlip.vendorNumber}). ` +
           `The current release is for ${current.clientName} (vendor ${current.vendorNumber}). ` +
-          `Stock from different vendors can't be released on the same delivery note.`,
+          `Stock from different clients/suppliers can't be released on the same delivery note.`,
         );
         setScanBarcode('');
         return;
@@ -631,9 +632,9 @@ export default function ReleasePage() {
                     />
                   </div>
 
-                  {/* Scanned barcodes */}
+                  {/* Scanned barcodes — newest first */}
                   <div className="flex flex-wrap gap-1.5">
-                    {ds.scannedBarcodes.map(bc => (
+                    {[...ds.scannedBarcodes].reverse().map(bc => (
                       <span
                         key={bc}
                         className="inline-flex items-center gap-1 text-xs font-mono bg-gray-100 text-gray-700 px-2 py-1 rounded"
@@ -681,6 +682,7 @@ export default function ReleasePage() {
               {/* Release code */}
               <label className="block text-xs text-gray-600 mb-1">Release Code</label>
               <input
+                type="password"
                 value={releaseCode}
                 onChange={e => setReleaseCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
                 maxLength={4}
@@ -866,6 +868,7 @@ export default function ReleasePage() {
 
                 <label className="block text-xs text-gray-600 mb-1">Manager Release Code</label>
                 <input
+                  type="password"
                   value={managerOverrideCode}
                   onChange={e => setManagerOverrideCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
                   maxLength={4}
@@ -950,6 +953,7 @@ export default function ReleasePage() {
 
             <label className="block text-xs text-gray-600 mb-1">New Rep&apos;s Release Code</label>
             <input
+              type="password"
               value={reassignCode}
               onChange={e => setReassignCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
               maxLength={4}
@@ -1048,6 +1052,7 @@ export default function ReleasePage() {
 
                 <label className="block text-xs text-gray-600 mb-1">Manager Security Code</label>
                 <input
+                  type="password"
                   value={cancelCode}
                   onChange={e => setCancelCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
                   maxLength={4}

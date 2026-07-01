@@ -6,6 +6,7 @@ import { clientScopeFor, filterClientIdsByScope } from '@/lib/clientScope';
 import { listLoads, getLoad } from '@/lib/agedStockData';
 import { loadLinkProducts, type ClientWithLinks } from '@/lib/spLinkData';
 import { listAllPickSlipRuns } from '@/lib/pickSlipData';
+import { upperName } from '@/lib/upperName';
 
 export const dynamic = 'force-dynamic';
 
@@ -217,6 +218,17 @@ export async function GET(req: NextRequest) {
         }
       }
     }
+  }
+
+  // Normalize store + vendor names to UPPERCASE so the dashboard is consistent
+  // (the control file is uppercase; some captured rows arrive in proper case).
+  // This also dedups grouping — e.g. "BWH Erasmus Park" and "BWH ERASMUS PARK"
+  // collapse to one store instead of fragmenting into two rows.
+  for (const r of rows) {
+    r.clientName = upperName(r.clientName);
+    r.vendorNumber = upperName(r.vendorNumber);
+    r.storeName = upperName(r.storeName);
+    r.storeCode = upperName(r.storeCode);
   }
 
   return NextResponse.json(

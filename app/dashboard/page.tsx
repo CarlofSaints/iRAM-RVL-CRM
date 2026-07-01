@@ -930,11 +930,11 @@ export default function DashboardPage() {
     const whRows = subset.filter(r => r.category === 'warehouse' && r.warehouse === drilldownWarehouse);
 
     // Group by storeCode|pickSlipRef
-    const map = new Map<string, { storeName: string; storeCode: string; pickSlipRef: string; qty: number; val: number; bookedAt?: string }>();
+    const map = new Map<string, { storeName: string; storeCode: string; vendorName: string; vendorCode: string; pickSlipRef: string; qty: number; val: number; bookedAt?: string }>();
     for (const r of whRows) {
       const key = `${r.storeCode}|${r.pickSlipRef}`;
       if (!map.has(key)) {
-        map.set(key, { storeName: r.storeName, storeCode: r.storeCode, pickSlipRef: r.pickSlipRef, qty: 0, val: 0, bookedAt: r.bookedAt });
+        map.set(key, { storeName: r.storeName, storeCode: r.storeCode, vendorName: r.clientName, vendorCode: r.vendorNumber, pickSlipRef: r.pickSlipRef, qty: 0, val: 0, bookedAt: r.bookedAt });
       }
       const g = map.get(key)!;
       g.qty += r.qty;
@@ -947,6 +947,8 @@ export default function DashboardPage() {
       return {
         storeName: g.storeName,
         storeCode: g.storeCode,
+        vendorName: g.vendorName,
+        vendorCode: g.vendorCode,
         pickSlipRef: g.pickSlipRef,
         qty: g.qty,
         val: g.val,
@@ -959,6 +961,8 @@ export default function DashboardPage() {
   const warehouseDrillCols: SummaryCol[] = [
     { key: 'storeName', label: 'Store', align: 'left' },
     { key: 'storeCode', label: 'Store Code', align: 'left' },
+    { key: 'vendorName', label: 'Vendor', align: 'left' },
+    { key: 'vendorCode', label: 'Vendor #', align: 'left' },
     { key: 'pickSlipRef', label: 'Pick Slip', align: 'left' },
     { key: 'qty', label: 'Qty', align: 'right', format: 'number' },
     { key: 'val', label: 'Value', align: 'right', format: 'rand' },

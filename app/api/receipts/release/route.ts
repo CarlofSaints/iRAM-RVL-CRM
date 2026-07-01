@@ -87,16 +87,13 @@ export async function POST(req: NextRequest) {
     resolvedSlips.push({ payload: sp, slip });
   }
 
-  // Vendor lock — a delivery note must never mix vendors/clients.
-  // Stock is only ever returned to a single vendor at a time.
-  const firstVendor = resolvedSlips[0].slip.vendorNumber;
+  // Client lock — a delivery note must never mix clients/suppliers, but
+  // multiple vendor numbers belonging to the SAME client are allowed on one note.
   const firstClient = resolvedSlips[0].payload.clientId;
-  const mixedVendors = resolvedSlips.some(
-    r => r.slip.vendorNumber !== firstVendor || r.payload.clientId !== firstClient,
-  );
-  if (mixedVendors) {
+  const mixedClients = resolvedSlips.some(r => r.payload.clientId !== firstClient);
+  if (mixedClients) {
     return NextResponse.json(
-      { error: 'Cannot release stock from multiple vendors on one delivery note' },
+      { error: 'Cannot release stock from multiple clients/suppliers on one delivery note' },
       { status: 400 },
     );
   }
@@ -200,6 +197,7 @@ export async function POST(req: NextRequest) {
             warehouse: slip.warehouse,
             storeRefs: slip.receiptStoreRefs ?? [],
             receiptGrnDate: slip.receiptGrnDate,
+            receiptValue: slip.receiptValue,
             manual: slip.manual,
             rows: (slip.rows ?? []).map(r => ({
               articleCode: r.articleCode,
@@ -229,6 +227,8 @@ export async function POST(req: NextRequest) {
           releaseRepName,
           releasedAt: now,
           storeRefs: slip.receiptStoreRefs ?? [],
+          receiptGrnDate: slip.receiptGrnDate,
+          receiptValue: slip.receiptValue,
           manual: slip.manual,
           rows: (slip.rows ?? []).map(r => ({
             articleCode: r.articleCode,

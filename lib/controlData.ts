@@ -1,11 +1,31 @@
 import fs from 'fs';
 import path from 'path';
 import { put, get } from '@vercel/blob';
+import { upperName } from './upperName';
 
 export type ControlType = 'clients' | 'stores' | 'products' | 'reps' | 'warehouses' | 'channels' | 'sites';
 
 function blobKey(type: ControlType): string {
   return `control/${type}.json`;
+}
+
+/**
+ * Normalize store + vendor/client NAMES (and store codes) to uppercase on read
+ * so they display consistently everywhere. Only touches store/vendor name
+ * fields — never people names (managerName, contact names), products, or reps.
+ */
+function normalizeControl<T>(type: ControlType, items: T[]): T[] {
+  if (type === 'stores') {
+    for (const it of items as Array<Record<string, unknown>>) {
+      if (typeof it.name === 'string') it.name = upperName(it.name);
+      if (typeof it.siteCode === 'string') it.siteCode = upperName(it.siteCode);
+    }
+  } else if (type === 'clients') {
+    for (const it of items as Array<Record<string, unknown>>) {
+      if (typeof it.name === 'string') it.name = upperName(it.name);
+    }
+  }
+  return items;
 }
 
 /**
@@ -19,7 +39,7 @@ export async function loadControl<T>(type: ControlType): Promise<T[]> {
     const localFile = path.join(process.cwd(), 'data', `${type}.json`);
     try {
       if (fs.existsSync(localFile)) {
-        return JSON.parse(fs.readFileSync(localFile, 'utf-8')) as T[];
+        return normalizeControl(type, JSON.parse(fs.readFileSync(localFile, 'utf-8')) as T[]);
       }
     } catch { /* empty */ }
     return [];
@@ -29,7 +49,7 @@ export async function loadControl<T>(type: ControlType): Promise<T[]> {
     const result = await get(key, { access: 'private', useCache: false });
     if (result && result.statusCode === 200) {
       const text = await new Response(result.stream).text();
-      return JSON.parse(text) as T[];
+      return normalizeControl(type, JSON.parse(text) as T[]);
     }
   } catch (err) {
     console.error(`[controlData] Blob read failed for ${key}:`, err instanceof Error ? err.message : err);

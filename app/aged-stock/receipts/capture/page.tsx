@@ -1195,9 +1195,9 @@ export default function ReceiptCapturePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {boxes.map((b, i) => (
+                  {[...boxes].reverse().map((b, i) => (
                     <tr key={b.id} className="border-t border-gray-100">
-                      <td className="py-1.5 text-gray-400">{i + 1}</td>
+                      <td className="py-1.5 text-gray-400">{boxes.length - i}</td>
                       <td className="py-1.5 font-mono font-medium">{b.stickerBarcode}</td>
                       <td className="py-1.5 text-xs text-gray-500">{fmtDateTime(b.scannedAt)}</td>
                       <td className="py-1.5 text-center">
@@ -1582,9 +1582,9 @@ export default function ReceiptCapturePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {releaseBoxes.map((b, i) => (
+                  {[...releaseBoxes].reverse().map((b, i) => (
                     <tr key={b.id} className="border-t border-gray-100">
-                      <td className="py-1.5 text-gray-400">{i + 1}</td>
+                      <td className="py-1.5 text-gray-400">{releaseBoxes.length - i}</td>
                       <td className="py-1.5 font-mono font-medium">{b.stickerBarcode}</td>
                       <td className="py-1.5 text-xs text-gray-500">{fmtDateTime(b.scannedAt)}</td>
                       <td className="py-1.5 text-center">

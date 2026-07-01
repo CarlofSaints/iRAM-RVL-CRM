@@ -7,6 +7,7 @@ import { clientScopeFor } from '@/lib/clientScope';
 import { getClient } from '@/lib/spLinkData';
 import { parseAgedStockFile, type AgedStockParseResult } from '@/lib/agedStockParser';
 import { saveDraft } from '@/lib/agedStockData';
+import { upperName } from '@/lib/upperName';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -133,7 +134,7 @@ export async function POST(req: NextRequest) {
     format: parsed.format,
     rowCount: parsed.rows.length,
     periods: parsed.periods,
-    sampleRows: parsed.rows.slice(0, 5),
+    sampleRows: parsed.rows.slice(0, 5).map(r => ({ ...r, siteName: upperName(r.siteName), siteCode: upperName(r.siteCode) })),
     warnings: parsed.warnings,
   }, { headers: { 'Cache-Control': 'no-store' } });
 }

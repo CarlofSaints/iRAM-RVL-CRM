@@ -169,6 +169,7 @@ export async function POST(req: NextRequest) {
           warehouse: slip.warehouse,
           storeRefs: slip.receiptStoreRefs ?? [],
           receiptGrnDate: slip.receiptGrnDate,
+          receiptValue: slip.receiptValue,
           manual: slip.manual,
           rows: (slip.rows ?? []).map(r => ({
             articleCode: r.articleCode,
@@ -195,6 +196,8 @@ export async function POST(req: NextRequest) {
         releaseRepName: newRepName,
         releasedAt,
         storeRefs: slip.receiptStoreRefs ?? [],
+        receiptGrnDate: slip.receiptGrnDate,
+        receiptValue: slip.receiptValue,
         manual: slip.manual,
         rows: (slip.rows ?? []).map(r => ({
           articleCode: r.articleCode,

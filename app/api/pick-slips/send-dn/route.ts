@@ -84,6 +84,7 @@ export async function POST(req: NextRequest) {
           warehouse: s.warehouse,
           storeRefs: s.receiptStoreRefs ?? [],
           receiptGrnDate: s.receiptGrnDate,
+          receiptValue: s.receiptValue,
           manual: s.manual,
           rows: (s.rows ?? []).map(r => ({
             articleCode: r.articleCode,
@@ -131,6 +132,8 @@ export async function POST(req: NextRequest) {
         releaseRepName: slip.releaseRepName ?? 'Unknown',
         releasedAt: slip.releasedAt ?? new Date().toISOString(),
         storeRefs,
+        receiptGrnDate: slip.receiptGrnDate,
+        receiptValue: slip.receiptValue,
         manual: slip.manual,
         rows: dnRows,
         boxCount,
