@@ -50,6 +50,7 @@ export const DEFAULT_PERMISSIONS: Array<Omit<PermissionDef, 'createdAt' | 'isSys
   { key: 'load_aged_stock', name: 'Load Aged Stock', description: 'Upload & commit aged stock lists', category: 'Aged Stock', proOnly: false },
   { key: 'manage_pick_slips', name: 'Manage Pick Slips', description: 'Edit, send, and delete pick slips', category: 'Aged Stock', proOnly: false },
   { key: 'revert_pick_slips', name: 'Reverse Pick Slip Stages', description: 'Roll a pick slip back to an earlier status — undo a capture/booking/release/delivery mistake', category: 'Aged Stock', proOnly: false },
+  { key: 'edit_captured_pick_slips', name: 'Edit Captured Pick Slips', description: 'Correct the value/quantity on an already-captured pick slip without re-capturing it', category: 'Aged Stock', proOnly: false },
   { key: 'receipt_stock', name: 'Receipt Stock', description: 'Receipt aged stock into warehouses via box scanning', category: 'Aged Stock', proOnly: false },
   { key: 'scan_stock', name: 'Scan Stock', description: 'Scan picking slips and book stock into warehouses', category: 'Aged Stock', proOnly: false },
   { key: 'clear_data', name: 'Clear Data', description: 'Permanently delete aged stock loads, pick slips, stickers, and audit logs', category: 'Admin', proOnly: false },

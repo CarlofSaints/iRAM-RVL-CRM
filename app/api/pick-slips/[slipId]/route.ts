@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requirePermission } from '@/lib/rolesData';
+import { requireLogin } from '@/lib/rolesData';
 import { getPickSlipRun, updateSlipInRun } from '@/lib/pickSlipData';
 import { generatePickSlipPdf, type PickSlipPdfRow } from '@/lib/pickSlipPdf';
 import { renameFile, createFolder, uploadNewFile } from '@/lib/graphIram';
@@ -16,8 +16,16 @@ export async function PATCH(
   { params }: { params: Promise<{ slipId: string }> }
 ) {
   const { slipId } = await params;
-  const guard = await requirePermission(req, 'manage_pick_slips');
+  // Allow either the general pick-slip manager permission, or the narrower
+  // "edit captured pick slips" permission (correct a value without re-capturing).
+  const guard = await requireLogin(req);
   if (guard instanceof NextResponse) return guard;
+  if (
+    !guard.permissions.includes('manage_pick_slips') &&
+    !guard.permissions.includes('edit_captured_pick_slips')
+  ) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
 
   let body: { clientId?: string; loadId?: string; rows?: PickSlipPdfRow[] };
   try { body = await req.json(); }

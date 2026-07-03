@@ -123,6 +123,8 @@ export default function PickingSlipsPage() {
   const canManage = perms.includes('manage_pick_slips');
   const canReceipt = perms.includes('receipt_stock');
   const canRevert = session?.role === 'super-admin' || perms.includes('revert_pick_slips');
+  const canEditCaptured = session?.role === 'super-admin' || perms.includes('edit_captured_pick_slips');
+  const showActions = canManage || canEditCaptured || canReceipt || canRevert;
 
   const [toast, setToast] = useState<ToastData | null>(null);
   const notify = (message: string, type: 'success' | 'error' = 'success') =>
@@ -961,14 +963,14 @@ export default function PickingSlipsPage() {
                     )}
                   </th>
                 ))}
-                {canManage && <th className="px-3 py-2 whitespace-nowrap">Actions</th>}
+                {showActions && <th className="px-3 py-2 whitespace-nowrap">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={canManage ? 11 : 9} className="px-3 py-6 text-center text-gray-500">Loading...</td></tr>
+                <tr><td colSpan={9 + (canManage ? 1 : 0) + (showActions ? 1 : 0)} className="px-3 py-6 text-center text-gray-500">Loading...</td></tr>
               ) : sorted.length === 0 ? (
-                <tr><td colSpan={canManage ? 11 : 9} className="px-3 py-6 text-center text-gray-500">No pick slips match the current filters.</td></tr>
+                <tr><td colSpan={9 + (canManage ? 1 : 0) + (showActions ? 1 : 0)} className="px-3 py-6 text-center text-gray-500">No pick slips match the current filters.</td></tr>
               ) : sorted.map(s => (
                 <tr key={s.id} className="border-t border-gray-100 hover:bg-gray-50">
                   {canManage && (
@@ -1004,11 +1006,11 @@ export default function PickingSlipsPage() {
                       <div className="mt-0.5 text-xs text-rose-600">{s.unsuccessfulReason}</div>
                     )}
                   </td>
-                  {canManage && (
+                  {showActions && (
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       <div className="flex gap-1">
                         {/* generated/sent/unsuccessful: Edit, Send (Send re-sends an unsuccessful slip) */}
-                        {(s.status === 'generated' || s.status === 'sent' || s.status === 'unsuccessful') && (
+                        {canManage && (s.status === 'generated' || s.status === 'sent' || s.status === 'unsuccessful') && (
                           <>
                             <button
                               onClick={() => openEdit(s)}
@@ -1025,7 +1027,7 @@ export default function PickingSlipsPage() {
                           </>
                         )}
                         {/* sent only: an admin can mark the upliftment unsuccessful */}
-                        {s.status === 'sent' && (
+                        {canManage && s.status === 'sent' && (
                           <button
                             onClick={() => openMarkUnsuccessful(s)}
                             className="px-2 py-1 text-xs font-medium text-rose-600 border border-rose-200 rounded hover:bg-rose-50"
@@ -1036,18 +1038,22 @@ export default function PickingSlipsPage() {
                         {/* booked: Edit, Send, Capture */}
                         {s.status === 'booked' && (
                           <>
-                            <button
-                              onClick={() => openEdit(s)}
-                              className="px-2 py-1 text-xs font-medium text-[var(--color-primary)] border border-[var(--color-primary)]/30 rounded hover:bg-[var(--color-primary)]/5"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => openSend([s])}
-                              className="px-2 py-1 text-xs font-medium text-blue-600 border border-blue-200 rounded hover:bg-blue-50"
-                            >
-                              Send
-                            </button>
+                            {canManage && (
+                              <>
+                                <button
+                                  onClick={() => openEdit(s)}
+                                  className="px-2 py-1 text-xs font-medium text-[var(--color-primary)] border border-[var(--color-primary)]/30 rounded hover:bg-[var(--color-primary)]/5"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => openSend([s])}
+                                  className="px-2 py-1 text-xs font-medium text-blue-600 border border-blue-200 rounded hover:bg-blue-50"
+                                >
+                                  Send
+                                </button>
+                              </>
+                            )}
                             {canReceipt && (
                               <button
                                 onClick={() => router.push(`/aged-stock/receipts/capture?slipId=${encodeURIComponent(s.id)}&clientId=${encodeURIComponent(s.clientId)}&loadId=${encodeURIComponent(s.loadId)}`)}
@@ -1057,6 +1063,16 @@ export default function PickingSlipsPage() {
                               </button>
                             )}
                           </>
+                        )}
+                        {/* captured: Edit (correct value/qty without re-capturing) */}
+                        {s.status === 'captured' && canEditCaptured && (
+                          <button
+                            onClick={() => openEdit(s)}
+                            title="Edit — correct the value/quantity on this captured slip"
+                            className="px-2 py-1 text-xs font-medium text-[var(--color-primary)] border border-[var(--color-primary)]/30 rounded hover:bg-[var(--color-primary)]/5"
+                          >
+                            Edit
+                          </button>
                         )}
                         {/* captured: Release */}
                         {(s.status === 'captured' || s.status === 'failed-release') && canReceipt && (
@@ -1068,7 +1084,7 @@ export default function PickingSlipsPage() {
                           </button>
                         )}
                         {/* in-transit/partial-release/delivered: View, Resend */}
-                        {(s.status === 'in-transit' || s.status === 'partial-release' || s.status === 'delivered') && (
+                        {canManage && (s.status === 'in-transit' || s.status === 'partial-release' || s.status === 'delivered') && (
                           <>
                             <button
                               onClick={() => router.push(`/aged-stock/receipts/capture?slipId=${encodeURIComponent(s.id)}&clientId=${encodeURIComponent(s.clientId)}&loadId=${encodeURIComponent(s.loadId)}`)}
