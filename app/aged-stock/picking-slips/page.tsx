@@ -20,6 +20,12 @@ interface PdfRow {
 
 type SlipStatus = 'generated' | 'sent' | 'unsuccessful' | 'booked' | 'captured' | 'in-transit' | 'failed-release' | 'partial-release' | 'delivered';
 
+interface ReceiptBox {
+  id: string;
+  stickerBarcode: string;
+  scannedAt: string;
+}
+
 interface SlipDto {
   id: string;
   loadId: string;
@@ -46,6 +52,8 @@ interface SlipDto {
   channel?: string;
   deliveryNoteSpWebUrl?: string;
   unsuccessfulReason?: string;
+  receiptBoxes?: ReceiptBox[];
+  receiptTotalBoxes?: number;
 }
 
 interface RepDto {
@@ -203,6 +211,12 @@ export default function PickingSlipsPage() {
   const [revertTarget, setRevertTarget] = useState('');
   const [revertReason, setRevertReason] = useState('');
   const [revertSaving, setRevertSaving] = useState(false);
+
+  // Adjust boxes modal (remove phantom box records) — Super Admin only
+  const [boxesSlip, setBoxesSlip] = useState<SlipDto | null>(null);
+  const [boxesRemove, setBoxesRemove] = useState<string[]>([]);
+  const [boxesReason, setBoxesReason] = useState('');
+  const [boxesSaving, setBoxesSaving] = useState(false);
 
   // ── Fetch data ──
 
@@ -623,6 +637,56 @@ export default function PickingSlipsPage() {
       notify('Network error', 'error');
     } finally {
       setRevertSaving(false);
+    }
+  }
+
+  // ── Adjust boxes (remove phantom box records) — Super Admin only ──
+
+  function openBoxes(slip: SlipDto) {
+    setBoxesSlip(slip);
+    setBoxesRemove([]);
+    setBoxesReason('');
+  }
+
+  function toggleBoxRemove(barcode: string) {
+    setBoxesRemove(prev =>
+      prev.includes(barcode) ? prev.filter(b => b !== barcode) : [...prev, barcode],
+    );
+  }
+
+  async function doAdjustBoxes() {
+    if (!boxesSlip || boxesRemove.length === 0) return;
+    if (!boxesReason.trim()) {
+      notify('A reason is required', 'error');
+      return;
+    }
+    setBoxesSaving(true);
+    try {
+      const res = await authFetch(`/api/pick-slips/${boxesSlip.id}/adjust-boxes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: boxesSlip.clientId,
+          loadId: boxesSlip.loadId,
+          removeBarcodes: boxesRemove,
+          reason: boxesReason.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notify(
+          `Removed ${boxesRemove.length} box${boxesRemove.length !== 1 ? 'es' : ''} — ${data.remaining} left on the slip` +
+          (data.stickersUnlinked ? ` (${data.stickersUnlinked} sticker(s) unlinked)` : ''),
+        );
+        setBoxesSlip(null);
+        await fetchSlips();
+      } else {
+        notify(data.error || 'Failed to adjust boxes', 'error');
+      }
+    } catch {
+      notify('Network error', 'error');
+    } finally {
+      setBoxesSaving(false);
     }
   }
 
@@ -1100,6 +1164,18 @@ export default function PickingSlipsPage() {
                             </button>
                           </>
                         )}
+                        {/* Super Admin: fix box count — remove phantom box records so Release stops demanding boxes that were never printed */}
+                        {canRevert
+                          && (s.status === 'booked' || s.status === 'captured' || s.status === 'failed-release')
+                          && (s.receiptBoxes?.length ?? 0) > 0 && (
+                          <button
+                            onClick={() => openBoxes(s)}
+                            title="Boxes — remove box records that don't physically exist (e.g. added by mistake)"
+                            className="px-2 py-1 text-xs font-medium text-indigo-700 border border-indigo-300 rounded hover:bg-indigo-50"
+                          >
+                            Boxes ({s.receiptBoxes!.length})
+                          </button>
+                        )}
                         {/* Super Admin: reverse a mistake — roll back to an earlier status */}
                         {canRevert && validRevertTargets(s).length > 0 && (
                           <button
@@ -1515,6 +1591,88 @@ export default function PickingSlipsPage() {
           </div>
         </div>
       )}
+
+      {/* ── Adjust Boxes Modal (Super Admin) ───────────────────────────────── */}
+      {boxesSlip && (() => {
+        const allBoxes = boxesSlip.receiptBoxes ?? [];
+        const remaining = allBoxes.length - boxesRemove.length;
+        const removingAll = remaining <= 0;
+        return (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-auto">
+              <h2 className="text-lg font-bold text-gray-900 mb-1">Adjust Boxes</h2>
+              <p className="text-sm text-gray-600 mb-4">
+                {boxesSlip.id} — {boxesSlip.siteName} ({boxesSlip.siteCode}). This slip has{' '}
+                <span className="font-medium">{allBoxes.length} box record{allBoxes.length !== 1 ? 's' : ''}</span>.
+                Tick any that don&apos;t physically exist (e.g. added by mistake). Release will then only
+                ask for the boxes that remain.
+              </p>
+
+              <div className="mb-4 border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-56 overflow-auto">
+                {allBoxes.map((b, i) => {
+                  const checked = boxesRemove.includes(b.stickerBarcode);
+                  return (
+                    <label
+                      key={b.id || b.stickerBarcode}
+                      className={`flex items-center gap-3 px-3 py-2 cursor-pointer ${checked ? 'bg-red-50' : 'hover:bg-gray-50'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleBoxRemove(b.stickerBarcode)}
+                        className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                      />
+                      <span className="text-xs text-gray-400 w-6">#{i + 1}</span>
+                      <span className={`font-mono text-sm ${checked ? 'line-through text-red-500' : 'text-gray-800'}`}>
+                        {b.stickerBarcode}
+                      </span>
+                      {checked && <span className="ml-auto text-xs font-medium text-red-600">remove</span>}
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className="mb-4 text-xs text-gray-600">
+                Removing <span className="font-semibold text-red-600">{boxesRemove.length}</span> —{' '}
+                <span className="font-semibold">{Math.max(0, remaining)}</span> box{remaining !== 1 ? 'es' : ''} will remain.
+              </div>
+
+              {removingAll && boxesRemove.length > 0 && (
+                <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+                  You can&apos;t remove every box — at least one must remain. To undo the whole booking, use <strong>Reverse</strong> instead.
+                </div>
+              )}
+
+              <label className="block text-xs font-medium text-gray-600 mb-1">Reason (recorded in the audit log)</label>
+              <textarea
+                value={boxesReason}
+                onChange={e => setBoxesReason(e.target.value)}
+                rows={3}
+                placeholder="e.g. 2 extra boxes added by mistake — only 2 physical labels exist"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+              />
+
+              <div className="flex gap-3">
+                <button
+                  onClick={doAdjustBoxes}
+                  disabled={boxesSaving || boxesRemove.length === 0 || removingAll || !boxesReason.trim()}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {boxesSaving && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  Remove {boxesRemove.length > 0 ? `${boxesRemove.length} ` : ''}Box{boxesRemove.length !== 1 ? 'es' : ''}
+                </button>
+                <button
+                  onClick={() => setBoxesSlip(null)}
+                  disabled={boxesSaving}
+                  className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Reverse Modal (Super Admin) ────────────────────────────────────── */}
       {revertSlip && (() => {

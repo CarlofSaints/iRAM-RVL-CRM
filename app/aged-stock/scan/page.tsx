@@ -106,6 +106,10 @@ export default function ScanPage() {
   const [addRepId, setAddRepId] = useState('');
   const [addSecurityCode, setAddSecurityCode] = useState('');
   const [addingBoxes, setAddingBoxes] = useState(false);
+  // Guard: adding boxes INFLATES the slip's box count — it is not a reprint.
+  // The operator must explicitly acknowledge the new total before printing, so
+  // a status re-scan can never silently add phantom boxes.
+  const [addAck, setAddAck] = useState(false);
 
   // ── Load reps + users on mount ──
   const loadRepsAndUsers = useCallback(async () => {
@@ -341,6 +345,7 @@ export default function ScanPage() {
     setAddBoxCount('');
     setAddRepId('');
     setAddSecurityCode('');
+    setAddAck(false);
     setSlipQuery('');
     setSlipError('');
   }
@@ -536,7 +541,9 @@ export default function ScanPage() {
               <h2 className="text-sm font-bold text-amber-800 uppercase tracking-wide">Add Boxes to Booked Slip</h2>
               <p className="text-xs text-amber-600 mt-0.5">
                 This slip is already booked with {addBoxesSlip.currentBoxes} box{addBoxesSlip.currentBoxes !== 1 ? 'es' : ''}.
-                Print additional stickers if too few boxes were entered at booking. New labels continue the box numbering.
+                Use this <strong>only</strong> when the rep genuinely collected <strong>more</strong> boxes than were booked — it
+                <strong> adds new boxes on top</strong> of the existing {addBoxesSlip.currentBoxes} and the slip will then expect them all at release.
+                It is <strong>not</strong> a reprint: if a label just misprinted, do not add boxes — reprint that label from the sticker batch instead.
               </p>
             </div>
           </div>
@@ -613,14 +620,38 @@ export default function ScanPage() {
             </select>
           </div>
 
+          {/* Explicit acknowledgement — adding boxes raises the total the slip
+              will demand at release, so the operator must confirm the new total. */}
+          {(() => {
+            const extra = parseInt(addBoxCount, 10);
+            const validExtra = !isNaN(extra) && extra > 0;
+            const newTotal = addBoxesSlip.currentBoxes + (validExtra ? extra : 0);
+            return (
+              <label className={`flex items-start gap-2.5 mb-4 px-3 py-2.5 rounded-lg border cursor-pointer ${addAck ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-gray-50'}`}>
+                <input
+                  type="checkbox"
+                  checked={addAck}
+                  onChange={e => setAddAck(e.target.checked)}
+                  className="h-4 w-4 mt-0.5 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                />
+                <span className="text-xs text-gray-700">
+                  I confirm the rep collected extra boxes. This will change the slip from{' '}
+                  <strong>{addBoxesSlip.currentBoxes}</strong> to{' '}
+                  <strong>{validExtra ? newTotal : '…'}</strong> boxes, and all{' '}
+                  <strong>{validExtra ? newTotal : ''}</strong> must be scanned out at release.
+                </span>
+              </label>
+            );
+          })()}
+
           <div className="flex gap-3">
             <button
               onClick={handleAddBoxes}
-              disabled={addingBoxes}
+              disabled={addingBoxes || !addAck}
               className="px-5 py-2.5 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {addingBoxes && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-              Print Additional Stickers
+              Add Boxes &amp; Print
             </button>
             <button
               onClick={cancelAddBoxes}
