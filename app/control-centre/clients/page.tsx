@@ -4,6 +4,8 @@ import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { useTableSort } from '@/lib/useTableSort';
+import SortableTh from '@/components/SortableTh';
 import * as XLSX from 'xlsx';
 
 interface Client {
@@ -131,6 +133,13 @@ export default function ClientsPage() {
     i.vendorNumbers.some(v => v.includes(search))
   );
 
+  // Sortable grid — defaults to Name A–Z.
+  const { sorted, sortCol, sortDir, toggleSort } = useTableSort(filtered, {
+    name: (i) => i.name,
+    vendorNumbers: (i) => (i.vendorNumbers ?? []).join(', '),
+    type: (i) => i.type,
+  }, 'name', 'asc');
+
   return (
     <div className="flex flex-col gap-6">
       {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
@@ -193,14 +202,14 @@ export default function ClientsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Vendor Numbers</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</th>
+                <SortableTh col="name" label="Name" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                <SortableTh col="vendorNumbers" label="Vendor Numbers" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                <SortableTh col="type" label="Type" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                 <th className="px-6 py-3" />
               </tr>
             </thead>
             <tbody>
-              {filtered.map(item => (
+              {sorted.map(item => (
                 <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-3 font-medium">
                     <Link href={`/control-centre/clients/${item.id}`} className="text-[var(--color-primary)] hover:underline">

@@ -1,6 +1,8 @@
 'use client';
 
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { useTableSort } from '@/lib/useTableSort';
+import SortableTh from '@/components/SortableTh';
 import Sidebar from '@/components/Sidebar';
 import { Toast, ToastData } from '@/components/Toast';
 import { useEffect, useState } from 'react';
@@ -264,6 +266,16 @@ export default function AdminUsersPage() {
     }
   }
 
+  // Sortable grid — defaults to Name A–Z.
+  const visibleUsers = users.filter(u => !showPendingOnly || !!u.subscription?.requestedUpgradeAt);
+  const { sorted, sortCol, sortDir, toggleSort } = useTableSort(visibleUsers, {
+    name: (u) => `${u.name} ${u.surname}`,
+    email: (u) => u.email,
+    role: (u) => roleLabel(u.role),
+    plan: (u) => u.subscription?.tier ?? 'standard',
+    firstLogin: (u) => u.firstLoginAt,
+  }, 'name', 'asc');
+
   if (loading || !session) return null;
 
   return (
@@ -386,18 +398,17 @@ export default function AdminUsersPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Role</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Plan</th>
+                  <SortableTh col="name" label="Name" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                  <SortableTh col="email" label="Email" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                  <SortableTh col="role" label="Role" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                  <SortableTh col="plan" label="Plan" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Client Access</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">First Login</th>
+                  <SortableTh col="firstLogin" label="First Login" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                   <th className="px-6 py-3" />
                 </tr>
               </thead>
               <tbody>
-                {users
-                  .filter(u => !showPendingOnly || !!u.subscription?.requestedUpgradeAt)
+                {sorted
                   .map(u => {
                     const tier = u.subscription?.tier ?? 'standard';
                     const pending = !!u.subscription?.requestedUpgradeAt;

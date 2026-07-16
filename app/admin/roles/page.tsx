@@ -1,6 +1,8 @@
 'use client';
 
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { useTableSort } from '@/lib/useTableSort';
+import SortableTh from '@/components/SortableTh';
 import Sidebar from '@/components/Sidebar';
 import { Toast, ToastData } from '@/components/Toast';
 import { useEffect, useMemo, useState } from 'react';
@@ -199,6 +201,21 @@ export default function RolesAdminPage() {
     }
   }
 
+  // Sortable grids — roles default to Name A–Z, permissions to Category A–Z.
+  const rolesSort = useTableSort(roles, {
+    name: (r) => r.name,
+    description: (r) => r.description,
+    permissionCount: (r) => r.permissionKeys.length,
+    type: (r) => (r.isSystem ? 'System' : 'Custom'),
+  }, 'name', 'asc');
+  const permsSort = useTableSort(perms, {
+    key: (p) => p.key,
+    name: (p) => p.name,
+    category: (p) => p.category,
+    pro: (p) => (p.proOnly ? 1 : 0),
+    type: (p) => (p.isSystem ? 'System' : 'Custom'),
+  }, 'category', 'asc');
+
   if (loading || !session) return null;
 
   return (
@@ -249,15 +266,15 @@ export default function RolesAdminPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50">
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Description</th>
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide"># Permissions</th>
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</th>
+                    <SortableTh col="name" label="Name" sortCol={rolesSort.sortCol} sortDir={rolesSort.sortDir} onSort={rolesSort.toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                    <SortableTh col="description" label="Description" sortCol={rolesSort.sortCol} sortDir={rolesSort.sortDir} onSort={rolesSort.toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                    <SortableTh col="permissionCount" label="# Permissions" sortCol={rolesSort.sortCol} sortDir={rolesSort.sortDir} onSort={rolesSort.toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                    <SortableTh col="type" label="Type" sortCol={rolesSort.sortCol} sortDir={rolesSort.sortDir} onSort={rolesSort.toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                     <th className="px-6 py-3" />
                   </tr>
                 </thead>
                 <tbody>
-                  {roles.map(r => (
+                  {rolesSort.sorted.map(r => (
                     <tr key={r.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                       <td className="px-6 py-3 font-medium text-gray-900">{r.name}</td>
                       <td className="px-6 py-3 text-gray-600 text-xs">{r.description}</td>
@@ -297,16 +314,16 @@ export default function RolesAdminPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50">
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Key</th>
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Category</th>
-                    <th className="text-center px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Pro</th>
-                    <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</th>
+                    <SortableTh col="key" label="Key" sortCol={permsSort.sortCol} sortDir={permsSort.sortDir} onSort={permsSort.toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                    <SortableTh col="name" label="Name" sortCol={permsSort.sortCol} sortDir={permsSort.sortDir} onSort={permsSort.toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                    <SortableTh col="category" label="Category" sortCol={permsSort.sortCol} sortDir={permsSort.sortDir} onSort={permsSort.toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                    <SortableTh col="pro" label="Pro" sortCol={permsSort.sortCol} sortDir={permsSort.sortDir} onSort={permsSort.toggleSort} className="text-center px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                    <SortableTh col="type" label="Type" sortCol={permsSort.sortCol} sortDir={permsSort.sortDir} onSort={permsSort.toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                     <th className="px-6 py-3" />
                   </tr>
                 </thead>
                 <tbody>
-                  {perms.map(p => (
+                  {permsSort.sorted.map(p => (
                     <tr key={p.key} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                       <td className="px-6 py-3 font-mono text-xs text-gray-700">{p.key}</td>
                       <td className="px-6 py-3 font-medium text-gray-900">

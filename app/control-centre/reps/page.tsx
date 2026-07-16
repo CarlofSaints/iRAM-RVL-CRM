@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { useTableSort } from '@/lib/useTableSort';
+import SortableTh from '@/components/SortableTh';
 import * as XLSX from 'xlsx';
 
 interface Rep {
@@ -210,6 +212,15 @@ export default function RepsPage() {
     i.region.toLowerCase().includes(search.toLowerCase())
   );
 
+  // Sortable grid — defaults to Name A–Z.
+  const { sorted, sortCol, sortDir, toggleSort } = useTableSort(filtered, {
+    name: (i) => `${i.name} ${i.surname}`,
+    phone: (i) => i.phone,
+    email: (i) => i.email,
+    region: (i) => i.region,
+    releaseCode: (i) => i.releaseCode,
+  }, 'name', 'asc');
+
   return (
     <div className="flex flex-col gap-6">
       {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
@@ -302,17 +313,23 @@ export default function RepsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Phone</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Region</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                <SortableTh col="name" label="Name" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                <SortableTh col="phone" label="Phone" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                <SortableTh col="email" label="Email" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                <SortableTh col="region" label="Region" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                <SortableTh
+                  col="releaseCode"
+                  sortCol={sortCol}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                  className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide"
+                  label={
                   <span className="inline-flex items-center gap-2">
                     Release Code
                     {codesRevealed ? (
                       <button
                         type="button"
-                        onClick={() => setCodesRevealed(false)}
+                        onClick={(e) => { e.stopPropagation(); setCodesRevealed(false); }}
                         title="Hide release codes"
                         className="text-[var(--color-primary)] hover:text-[var(--color-primary-dark)]"
                       >
@@ -324,7 +341,7 @@ export default function RepsPage() {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => { setRevealError(''); setRevealPassword(''); setRevealPromptOpen(true); }}
+                        onClick={(e) => { e.stopPropagation(); setRevealError(''); setRevealPassword(''); setRevealPromptOpen(true); }}
                         title="Reveal release codes"
                         className="text-gray-400 hover:text-gray-600"
                       >
@@ -334,12 +351,13 @@ export default function RepsPage() {
                       </button>
                     )}
                   </span>
-                </th>
+                  }
+                />
                 <th className="px-6 py-3" />
               </tr>
             </thead>
             <tbody>
-              {filtered.map(item => (
+              {sorted.map(item => (
                 <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-3 font-medium text-gray-900">{item.name} {item.surname}</td>
                   <td className="px-6 py-3 text-gray-600">{item.phone}</td>

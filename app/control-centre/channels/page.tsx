@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { useTableSort } from '@/lib/useTableSort';
+import SortableTh from '@/components/SortableTh';
 
 interface Channel {
   id: string;
@@ -113,8 +115,14 @@ export default function ChannelsPage() {
   }
 
   const filtered = items
-    .filter(i => i.name.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .filter(i => i.name.toLowerCase().includes(search.toLowerCase()));
+
+  // Sortable grid — defaults to newest channel first.
+  const { sorted, sortCol, sortDir, toggleSort } = useTableSort(filtered, {
+    name: (i) => i.name,
+    storesUsing: (i) => storeCounts[i.name.toLowerCase()] ?? 0,
+    createdAt: (i) => i.createdAt,
+  }, 'createdAt', 'desc');
 
   return (
     <div className="flex flex-col gap-6">
@@ -155,14 +163,14 @@ export default function ChannelsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Stores Using</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Created</th>
+                <SortableTh col="name" label="Name" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                <SortableTh col="storesUsing" label="Stores Using" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                <SortableTh col="createdAt" label="Created" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                 <th className="px-6 py-3" />
               </tr>
             </thead>
             <tbody>
-              {filtered.map(item => {
+              {sorted.map(item => {
                 const inUse = storeCounts[item.name.toLowerCase()] ?? 0;
                 return (
                   <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">

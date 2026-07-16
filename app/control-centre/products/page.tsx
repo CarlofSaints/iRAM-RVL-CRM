@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { useTableSort } from '@/lib/useTableSort';
+import SortableTh from '@/components/SortableTh';
 
 interface Client {
   id: string;
@@ -308,6 +310,16 @@ function ProductsPageInner() {
     );
   }, [products, searchText]);
 
+  // Sortable grid — defaults to Article # A–Z.
+  const { sorted, sortCol, sortDir, toggleSort } = useTableSort(filtered, {
+    articleNumber: (p) => p.articleNumber,
+    description: (p) => p.description,
+    barcode: (p) => p.barcode,
+    vendorProductCode: (p) => p.vendorProductCode,
+    uom: (p) => p.uom,
+    caseBarcode: (p) => p.caseBarcode,
+  }, 'articleNumber', 'asc');
+
   return (
     <div className="flex flex-col gap-6">
       {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
@@ -443,17 +455,17 @@ function ProductsPageInner() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Article #</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Product Description</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Barcode</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Vendor Product Code</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">UoM</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Case Barcode</th>
+                  <SortableTh col="articleNumber" label="Article #" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                  <SortableTh col="description" label="Product Description" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                  <SortableTh col="barcode" label="Barcode" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                  <SortableTh col="vendorProductCode" label="Vendor Product Code" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                  <SortableTh col="uom" label="UoM" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                  <SortableTh col="caseBarcode" label="Case Barcode" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                   <th className="px-6 py-3" />
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(p => (
+                {sorted.map(p => (
                   <tr key={p.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-3 text-gray-700 font-mono text-xs">{p.articleNumber}</td>
                     <td className="px-6 py-3 font-medium text-gray-900">{p.description}</td>

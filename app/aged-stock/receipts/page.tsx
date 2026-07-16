@@ -46,8 +46,9 @@ export default function ReceiptsListPage() {
   const [slips, setSlips] = useState<SlipDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortCol, setSortCol] = useState<string>('');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  // Default to newest first (by date loaded) so the freshest slips are at the top.
+  const [sortCol, setSortCol] = useState<string>('date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => {
     if (!session) return;

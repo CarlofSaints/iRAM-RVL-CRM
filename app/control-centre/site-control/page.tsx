@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { useTableSort } from '@/lib/useTableSort';
+import SortableTh from '@/components/SortableTh';
 import * as XLSX from 'xlsx';
 
 interface Site {
@@ -194,6 +196,18 @@ export default function SiteControlPage() {
     );
   }, [items, search]);
 
+  // Sortable grid — defaults to Site # A–Z. Sort runs before the 1000-row cap.
+  const { sorted, sortCol, sortDir, toggleSort } = useTableSort(filtered, {
+    siteNum: (i) => i.siteNum,
+    storeName: (i) => i.storeName,
+    channel: (i) => i.channel,
+    subChannel: (i) => i.subChannel,
+    country: (i) => i.country,
+    province: (i) => i.province,
+    status: (i) => i.status,
+    type: (i) => i.type,
+  }, 'siteNum', 'asc');
+
   return (
     <div className="flex flex-col gap-6">
       {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
@@ -236,13 +250,22 @@ export default function SiteControlPage() {
           <table className="w-full text-sm">
             <thead className="sticky top-0 z-[1]">
               <tr className="border-b border-gray-100 bg-gray-50">
-                {['Site #', 'Store Name', 'Channel', 'Sub-Channel', 'Country', 'Province', 'Status', 'Type'].map(h => (
-                  <th key={h} className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                {([
+                  ['siteNum', 'Site #'],
+                  ['storeName', 'Store Name'],
+                  ['channel', 'Channel'],
+                  ['subChannel', 'Sub-Channel'],
+                  ['country', 'Country'],
+                  ['province', 'Province'],
+                  ['status', 'Status'],
+                  ['type', 'Type'],
+                ] as [string, string][]).map(([col, label]) => (
+                  <SortableTh key={col} col={col} label={label} sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-5 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtered.slice(0, 1000).map(item => (
+              {sorted.slice(0, 1000).map(item => (
                 <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                   <td className="px-5 py-2.5 font-mono text-xs text-gray-700">{item.siteNum}</td>
                   <td className="px-5 py-2.5 font-medium text-gray-900">{item.storeName}</td>

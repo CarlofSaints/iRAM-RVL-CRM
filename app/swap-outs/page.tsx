@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { useTableSort } from '@/lib/useTableSort';
+import SortableTh from '@/components/SortableTh';
 
 interface SwapLine { product: string; description?: string; quantity: number }
 interface SwapOutDto {
@@ -118,6 +120,18 @@ export default function SwapOutsListPage() {
     return true;
   });
 
+  // Sortable grid — defaults to newest request date first.
+  const { sorted, sortCol, sortDir, toggleSort } = useTableSort(filtered, {
+    pickingNumber: (r) => r.pickingNumber,
+    client: (r) => clientName(r.clientId),
+    store: (r) => r.storeName,
+    region: (r) => r.region,
+    units: (r) => units(r),
+    rep: (r) => r.assignedRepName,
+    status: (r) => STATUS_LABELS[r.status] ?? r.status,
+    date: (r) => r.requestDate || r.createdAt,
+  }, 'date', 'desc');
+
   if (loading) return <div className="text-gray-500">Loading…</div>;
 
   return (
@@ -219,18 +233,18 @@ export default function SwapOutsListPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-gray-400 border-b border-gray-100">
-              <th className="px-4 py-3 font-medium">Picking #</th>
-              <th className="px-4 py-3 font-medium">Client</th>
-              <th className="px-4 py-3 font-medium">Store</th>
-              <th className="px-4 py-3 font-medium">Region</th>
-              <th className="px-4 py-3 font-medium text-right">Units</th>
-              <th className="px-4 py-3 font-medium">Rep</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Date</th>
+              <SortableTh col="pickingNumber" label="Picking #" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
+              <SortableTh col="client" label="Client" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
+              <SortableTh col="store" label="Store" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
+              <SortableTh col="region" label="Region" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
+              <SortableTh col="units" label="Units" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium text-right" />
+              <SortableTh col="rep" label="Rep" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
+              <SortableTh col="status" label="Status" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
+              <SortableTh col="date" label="Date" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r) => (
+            {sorted.map((r) => (
               <tr key={r.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
                 <td className="px-4 py-3">
                   <Link href={`/swap-outs/${r.id}`} className="text-[var(--color-primary)] font-medium hover:underline">

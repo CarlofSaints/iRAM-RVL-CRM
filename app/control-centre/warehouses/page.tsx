@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { useTableSort } from '@/lib/useTableSort';
+import SortableTh from '@/components/SortableTh';
 
 interface Warehouse {
   id: string;
@@ -91,6 +93,13 @@ export default function WarehousesPage() {
     i.region.toLowerCase().includes(search.toLowerCase())
   );
 
+  // Sortable grid — defaults to Name A–Z.
+  const { sorted, sortCol, sortDir, toggleSort } = useTableSort(filtered, {
+    name: (i) => i.name,
+    code: (i) => i.code,
+    region: (i) => i.region,
+  }, 'name', 'asc');
+
   return (
     <div className="flex flex-col gap-6">
       {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
@@ -142,14 +151,14 @@ export default function WarehousesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Code</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Region</th>
+                <SortableTh col="name" label="Name" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                <SortableTh col="code" label="Code" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                <SortableTh col="region" label="Region" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                 <th className="px-6 py-3" />
               </tr>
             </thead>
             <tbody>
-              {filtered.map(item => (
+              {sorted.map(item => (
                 <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-3 font-medium text-gray-900">{item.name}</td>
                   <td className="px-6 py-3">
