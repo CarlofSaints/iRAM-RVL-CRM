@@ -273,6 +273,14 @@ export default function AdminUsersPage() {
     email: (u) => u.email,
     role: (u) => roleLabel(u.role),
     plan: (u) => u.subscription?.tier ?? 'standard',
+    clientAccess: (u) => {
+      if (u.role === 'super-admin') return 'All clients';
+      if (u.role === 'customer') return clientName(u.linkedClientId);
+      const ids = u.assignedClientIds ?? [];
+      if (ids.length === 0) return 'None';
+      if (ids.length <= 2) return ids.map(clientName).join(', ');
+      return `${ids.length} clients`;
+    },
     firstLogin: (u) => u.firstLoginAt,
   }, 'name', 'asc');
 
@@ -402,7 +410,7 @@ export default function AdminUsersPage() {
                   <SortableTh col="email" label="Email" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                   <SortableTh col="role" label="Role" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                   <SortableTh col="plan" label="Plan" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Client Access</th>
+                  <SortableTh col="clientAccess" label="Client Access" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                   <SortableTh col="firstLogin" label="First Login" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                   <th className="px-6 py-3" />
                 </tr>

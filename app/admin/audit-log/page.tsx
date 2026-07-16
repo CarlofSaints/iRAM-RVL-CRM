@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import Sidebar from '@/components/Sidebar';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { useTableSort } from '@/lib/useTableSort';
+import SortableTh from '@/components/SortableTh';
 
 interface AuditEntry {
   id: string;
@@ -88,16 +90,23 @@ export default function AuditLogPage() {
       .finally(() => setLoading(false));
   }, [session, selectedMonth]);
 
-  if (authLoading || !session) return null;
-
   const q = searchQuery.trim().toLowerCase();
-  const filtered = entries
-    .filter(e => {
-      if (!q) return true;
-      const hay = `${e.userName} ${e.action} ${e.detail} ${e.slipId ?? ''}`.toLowerCase();
-      return hay.includes(q);
-    })
-    .sort((a, b) => b.timestamp.localeCompare(a.timestamp)); // newest first
+  const filtered = entries.filter(e => {
+    if (!q) return true;
+    const hay = `${e.userName} ${e.action} ${e.detail} ${e.slipId ?? ''}`.toLowerCase();
+    return hay.includes(q);
+  });
+
+  // Sortable grid — defaults to newest first.
+  const { sorted, sortCol, sortDir, toggleSort } = useTableSort(filtered, {
+    timestamp: (e) => e.timestamp,
+    userName: (e) => e.userName,
+    action: (e) => ACTION_LABELS[e.action] || e.action,
+    slipId: (e) => e.slipId,
+    detail: (e) => e.detail,
+  }, 'timestamp', 'desc');
+
+  if (authLoading || !session) return null;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -146,11 +155,11 @@ export default function AuditLogPage() {
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr className="text-left text-xs font-semibold text-gray-600 uppercase tracking-wide">
-                  <th className="px-3 py-2">Date & Time</th>
-                  <th className="px-3 py-2">User</th>
-                  <th className="px-3 py-2">Action</th>
-                  <th className="px-3 py-2">Pick Slip</th>
-                  <th className="px-3 py-2">Detail</th>
+                  <SortableTh col="timestamp" label="Date & Time" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-3 py-2" />
+                  <SortableTh col="userName" label="User" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-3 py-2" />
+                  <SortableTh col="action" label="Action" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-3 py-2" />
+                  <SortableTh col="slipId" label="Pick Slip" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-3 py-2" />
+                  <SortableTh col="detail" label="Detail" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-3 py-2" />
                 </tr>
               </thead>
               <tbody>
@@ -158,7 +167,7 @@ export default function AuditLogPage() {
                   <tr><td colSpan={5} className="px-3 py-6 text-center text-gray-500">Loading...</td></tr>
                 ) : filtered.length === 0 ? (
                   <tr><td colSpan={5} className="px-3 py-6 text-center text-gray-500">No audit entries for this period.</td></tr>
-                ) : filtered.map(e => (
+                ) : sorted.map(e => (
                   <tr key={e.id} className="border-t border-gray-100 hover:bg-gray-50">
                     <td className="px-3 py-1.5 whitespace-nowrap text-xs text-gray-500">{fmtDateTime(e.timestamp)}</td>
                     <td className="px-3 py-1.5 whitespace-nowrap font-medium">{e.userName}</td>

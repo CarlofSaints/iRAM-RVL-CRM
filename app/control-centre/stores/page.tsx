@@ -121,8 +121,8 @@ export default function StoresPage() {
   const [channelEditingId, setChannelEditingId] = useState<string | null>(null);
   const [channelEditValue, setChannelEditValue] = useState('');
 
-  // Sort state
-  const [sortCol, setSortCol] = useState<keyof Store | ''>('');
+  // Sort state — default to store name A–Z instead of raw API order.
+  const [sortCol, setSortCol] = useState<keyof Store | ''>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   // Column resize
