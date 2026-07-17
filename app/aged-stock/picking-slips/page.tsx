@@ -54,6 +54,11 @@ interface SlipDto {
   unsuccessfulReason?: string;
   receiptBoxes?: ReceiptBox[];
   receiptTotalBoxes?: number;
+  receiptedAt?: string;
+  receiptValue?: string;
+  receiptStoreRefs?: string[];
+  receiptGrnDate?: string;
+  receiptValueCorrectedAt?: string;
 }
 
 interface RepDto {
@@ -217,6 +222,14 @@ export default function PickingSlipsPage() {
   const [boxesRemove, setBoxesRemove] = useState<string[]>([]);
   const [boxesReason, setBoxesReason] = useState('');
   const [boxesSaving, setBoxesSaving] = useState(false);
+
+  // Correct GRN/GRV modal — fix captured value/refs/date on a released/delivered slip
+  const [correctSlip, setCorrectSlip] = useState<SlipDto | null>(null);
+  const [correctValue, setCorrectValue] = useState('');
+  const [correctRefs, setCorrectRefs] = useState<string[]>(['']);
+  const [correctGrnDate, setCorrectGrnDate] = useState('');
+  const [correctReason, setCorrectReason] = useState('');
+  const [correctSaving, setCorrectSaving] = useState(false);
 
   // ── Fetch data ──
 
@@ -637,6 +650,56 @@ export default function PickingSlipsPage() {
       notify('Network error', 'error');
     } finally {
       setRevertSaving(false);
+    }
+  }
+
+  // ── Correct GRN/GRV (value / refs / date) on an already-captured slip ──
+
+  function openCorrect(slip: SlipDto) {
+    setCorrectSlip(slip);
+    setCorrectValue(slip.receiptValue ?? '');
+    const refs = slip.receiptStoreRefs ?? [];
+    setCorrectRefs(refs.length > 0 ? refs : ['']);
+    setCorrectGrnDate(slip.receiptGrnDate ?? '');
+    setCorrectReason('');
+  }
+
+  async function doCorrect() {
+    if (!correctSlip) return;
+    if (!correctReason.trim()) {
+      notify('A reason is required', 'error');
+      return;
+    }
+    setCorrectSaving(true);
+    try {
+      const res = await authFetch(`/api/pick-slips/${correctSlip.id}/correct-receipt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId: correctSlip.clientId,
+          loadId: correctSlip.loadId,
+          value: correctValue.trim(),
+          storeRefs: correctRefs.map(r => r.trim()).filter(Boolean),
+          grnDate: correctGrnDate,
+          reason: correctReason.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notify(
+          (data.changes?.length ?? 0) > 0
+            ? 'GRN/GRV details corrected'
+            : 'Saved — no field values changed',
+        );
+        setCorrectSlip(null);
+        await fetchSlips();
+      } else {
+        notify(data.error || 'Failed to correct GRN/GRV', 'error');
+      }
+    } catch {
+      notify('Network error', 'error');
+    } finally {
+      setCorrectSaving(false);
     }
   }
 
@@ -1184,6 +1247,19 @@ export default function PickingSlipsPage() {
                             className="px-2 py-1 text-xs font-medium text-amber-700 border border-amber-300 rounded hover:bg-amber-50"
                           >
                             Reverse
+                          </button>
+                        )}
+                        {/* Correct GRN/GRV — fix a captured value/refs/date after the receipt
+                            screen has locked (released / delivered slips). */}
+                        {canEditCaptured && s.receiptedAt
+                          && (s.status === 'in-transit' || s.status === 'partial-release'
+                              || s.status === 'delivered' || s.status === 'failed-release') && (
+                          <button
+                            onClick={() => openCorrect(s)}
+                            title="Correct GRN/GRV — fix the captured value / store refs / GRN date on this slip"
+                            className="px-2 py-1 text-xs font-medium text-amber-700 border border-amber-300 rounded hover:bg-amber-50"
+                          >
+                            Correct GRN/GRV
                           </button>
                         )}
                       </div>
@@ -1738,6 +1814,96 @@ export default function PickingSlipsPage() {
           </div>
         );
       })()}
+
+      {/* ── Correct GRN/GRV Modal ──────────────────────────────────────────── */}
+      {correctSlip && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-auto">
+            <h2 className="text-lg font-bold text-gray-900 mb-1">Correct GRN/GRV</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              {correctSlip.id} — {correctSlip.siteName} ({correctSlip.siteCode}). Status:{' '}
+              <span className="font-medium">{STATUS_LABELS[correctSlip.status] ?? correctSlip.status}</span>.
+              Fix the captured GRN/GRV value, references or date without changing the slip&apos;s status.
+            </p>
+
+            <label className="block text-xs font-medium text-gray-600 mb-1">GRN/GRV Value</label>
+            <input
+              type="text"
+              value={correctValue}
+              onChange={e => setCorrectValue(e.target.value)}
+              placeholder="e.g. R 12,345.00"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+            />
+
+            <label className="block text-xs font-medium text-gray-600 mb-1">GRN/GRV Date</label>
+            <input
+              type="date"
+              value={correctGrnDate}
+              onChange={e => setCorrectGrnDate(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+            />
+
+            <label className="block text-xs font-medium text-gray-600 mb-1">Store References (GRV/GRN)</label>
+            <div className="space-y-2 mb-4">
+              {correctRefs.map((ref, i) => (
+                <div key={i} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={ref}
+                    onChange={e => setCorrectRefs(prev => prev.map((r, j) => (j === i ? e.target.value : r)))}
+                    placeholder={`Reference ${i + 1}`}
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                  />
+                  {correctRefs.length > 1 && (
+                    <button
+                      onClick={() => setCorrectRefs(prev => prev.filter((_, j) => j !== i))}
+                      className="px-2 text-gray-400 hover:text-red-500"
+                      title="Remove reference"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              ))}
+              {correctRefs.length < 4 && (
+                <button
+                  onClick={() => setCorrectRefs(prev => [...prev, ''])}
+                  className="text-xs font-medium text-amber-700 hover:text-amber-800"
+                >
+                  + Add reference
+                </button>
+              )}
+            </div>
+
+            <label className="block text-xs font-medium text-gray-600 mb-1">Reason (recorded in the audit log)</label>
+            <textarea
+              value={correctReason}
+              onChange={e => setCorrectReason(e.target.value)}
+              rows={3}
+              placeholder="e.g. GRN value captured incorrectly — corrected from store paperwork"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+            />
+
+            <div className="flex gap-3">
+              <button
+                onClick={doCorrect}
+                disabled={correctSaving || !correctReason.trim()}
+                className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {correctSaving && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Save Correction
+              </button>
+              <button
+                onClick={() => setCorrectSlip(null)}
+                disabled={correctSaving}
+                className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

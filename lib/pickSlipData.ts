@@ -125,6 +125,11 @@ export interface PickSlipRecord {
   receiptStoreRefs?: string[];
   /** GRN/GRV date entered during receipt capture */
   receiptGrnDate?: string;
+  /** GRN/GRV correction audit — set when the captured value/refs/date are corrected
+   *  after the slip has moved past capture (via the "Correct GRN/GRV" admin action). */
+  receiptValueCorrectedAt?: string;
+  receiptValueCorrectedBy?: string;
+  receiptValueCorrectedByName?: string;
   /** Release fields — populated during warehouse stock release */
   releaseRepId?: string;
   releaseRepName?: string;
