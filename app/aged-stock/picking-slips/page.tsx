@@ -323,28 +323,56 @@ export default function PickingSlipsPage() {
     return Array.from(set).sort();
   }, [slips, channelBySiteCode]);
 
-  const filtered = useMemo(() => {
+  // Everything except the status filter — shared by the grid and the
+  // "hidden delivered" hint so both narrow the list the same way.
+  const passesNonStatus = useCallback((s: SlipDto) => {
     const sq = storeQuery.trim().toLowerCase();
     const rq = refQuery.trim().toLowerCase();
+    if (clientFilter.size > 0 && !clientFilter.has(s.clientId)) return false;
+    if (clientNameFilter && s.clientName !== clientNameFilter) return false;
+    if (vendorFilter && s.vendorNumber !== vendorFilter) return false;
+    if (channelFilter) {
+      const ch = channelBySiteCode.get(s.siteCode.trim().toLowerCase());
+      if (ch !== channelFilter) return false;
+    }
+    if (sq) {
+      const hay = `${s.siteName} ${s.siteCode}`.toLowerCase();
+      if (!hay.includes(sq)) return false;
+    }
+    if (rq && !s.id.toLowerCase().includes(rq)) return false;
+    if (typeFilter === 'manual' && !s.manual) return false;
+    if (typeFilter === 'loaded' && s.manual) return false;
+    return true;
+  }, [clientFilter, clientNameFilter, vendorFilter, channelFilter, channelBySiteCode, storeQuery, refQuery, typeFilter]);
+
+  // A store/ref text search means the user is hunting for a specific slip.
+  const searching = storeQuery.trim() !== '' || refQuery.trim() !== '';
+
+  const filtered = useMemo(() => {
     return slips.filter(s => {
-      if (clientFilter.size > 0 && !clientFilter.has(s.clientId)) return false;
-      if (clientNameFilter && s.clientName !== clientNameFilter) return false;
-      if (vendorFilter && s.vendorNumber !== vendorFilter) return false;
-      if (channelFilter) {
-        const ch = channelBySiteCode.get(s.siteCode.trim().toLowerCase());
-        if (ch !== channelFilter) return false;
+      if (!passesNonStatus(s)) return false;
+      if (statusFilter.size > 0 && !statusFilter.has(s.status)) {
+        // 'delivered' is hidden by default, but post-delivery GRN/GRV
+        // corrections live on delivered slips — so when the user is
+        // searching by store/ref, reveal delivered matches regardless.
+        if (!(searching && s.status === 'delivered')) return false;
       }
-      if (sq) {
-        const hay = `${s.siteName} ${s.siteCode}`.toLowerCase();
-        if (!hay.includes(sq)) return false;
-      }
-      if (rq && !s.id.toLowerCase().includes(rq)) return false;
-      if (statusFilter.size > 0 && !statusFilter.has(s.status)) return false;
-      if (typeFilter === 'manual' && !s.manual) return false;
-      if (typeFilter === 'loaded' && s.manual) return false;
       return true;
     });
-  }, [slips, clientFilter, clientNameFilter, vendorFilter, channelFilter, channelBySiteCode, storeQuery, refQuery, statusFilter, typeFilter]);
+  }, [slips, passesNonStatus, statusFilter, searching]);
+
+  // Delivered slips that match the current narrowing filters but are still
+  // hidden because 'delivered' isn't in the status filter and no text search
+  // is revealing them. Drives the "show delivered" hint below.
+  const hiddenDelivered = useMemo(() => {
+    if (statusFilter.has('delivered') || searching) return 0;
+    return slips.filter(s => s.status === 'delivered' && passesNonStatus(s)).length;
+  }, [slips, passesNonStatus, statusFilter, searching]);
+
+  // Only nudge about hidden delivered slips once the user has narrowed the
+  // list (client/vendor/channel/type) — not on the default full-grid view.
+  const narrowed = clientFilter.size > 0 || !!clientNameFilter || !!vendorFilter
+    || !!channelFilter || typeFilter !== '';
 
   const sorted = useMemo(() => {
     const list = [...filtered];
@@ -1048,6 +1076,23 @@ export default function PickingSlipsPage() {
             className="px-3 py-1.5 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700"
           >
             Delete Selected
+          </button>
+        </div>
+      )}
+
+      {/* Hidden-delivered hint — delivered slips are hidden by default, so a
+          user narrowing to a client won't see completed slips they may need
+          to correct (e.g. a GRN/GRV fix). Offer a one-click reveal. */}
+      {narrowed && hiddenDelivered > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 flex items-center gap-3 text-sm">
+          <span className="text-amber-800">
+            {hiddenDelivered} delivered slip{hiddenDelivered === 1 ? '' : 's'} match your filters but {hiddenDelivered === 1 ? 'is' : 'are'} hidden.
+          </span>
+          <button
+            onClick={() => setStatusFilter(prev => new Set(prev).add('delivered'))}
+            className="px-2 py-1 text-xs font-medium text-amber-800 border border-amber-300 rounded hover:bg-amber-100 whitespace-nowrap"
+          >
+            Show delivered
           </button>
         </div>
       )}
