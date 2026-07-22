@@ -138,15 +138,23 @@ export default function ReleasePage() {
   const [scannedBarcodes, setScannedBarcodes] = useState<string[]>([]);
   const [scanError, setScanError] = useState('');
 
-  // Discovered slips from scanning
+  // Discovered slips from scanning — most recently scanned store FIRST.
+  // The scanner works down a pallet box by box; if the queue kept discovery
+  // order the store you just scanned could be several cards down the page and
+  // you'd have to scroll to see whether it registered (Complete / Partial).
+  // Ordering by the last scan for each slip means the card you just touched is
+  // always the one directly under the scan box. `scannedBarcodes` stays in
+  // chronological order so the per-slip barcode chips still render newest-first.
   const discoveredSlips = useMemo<SlipScanState[]>(() => {
     const slipScans = new Map<string, string[]>();
-    for (const bc of scannedBarcodes) {
+    const lastScanSeq = new Map<string, number>();
+    scannedBarcodes.forEach((bc, i) => {
       const slipId = barcodeIndex[bc];
-      if (!slipId) continue;
+      if (!slipId) return;
       if (!slipScans.has(slipId)) slipScans.set(slipId, []);
       slipScans.get(slipId)!.push(bc);
-    }
+      lastScanSeq.set(slipId, i);
+    });
     const result: SlipScanState[] = [];
     for (const [slipId, bcs] of slipScans) {
       const slip = slipMap.get(slipId);
@@ -157,6 +165,9 @@ export default function ReleasePage() {
         totalBoxes: (slip.receiptBoxes ?? []).length,
       });
     }
+    result.sort(
+      (a, b) => (lastScanSeq.get(b.slip.id) ?? -1) - (lastScanSeq.get(a.slip.id) ?? -1),
+    );
     return result;
   }, [scannedBarcodes, barcodeIndex, slipMap]);
 
@@ -596,19 +607,31 @@ export default function ReleasePage() {
               </div>
             )}
 
-            {discoveredSlips.map(ds => {
+            {discoveredSlips.map((ds, idx) => {
               const isComplete = ds.scannedBarcodes.length >= ds.totalBoxes;
+              // Top card = the store scanned most recently; ring it so the floor
+              // can confirm the scan registered without reading the whole queue.
+              const isLatest = idx === 0;
               return (
                 <div
                   key={ds.slip.id}
-                  className={`bg-white border rounded-lg p-4 ${
+                  className={`bg-white border rounded-lg p-4 transition-all ${
                     isComplete ? 'border-emerald-300' : 'border-amber-300'
+                  } ${
+                    isLatest
+                      ? `ring-2 ring-offset-1 ${isComplete ? 'ring-emerald-400' : 'ring-amber-400'}`
+                      : ''
                   }`}
                 >
                   <div className="flex items-start justify-between mb-3">
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-sm font-bold text-gray-900">{ds.slip.id}</span>
+                        {isLatest && (
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">
+                            Last scanned
+                          </span>
+                        )}
                         {isComplete ? (
                           <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
                             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
