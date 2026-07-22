@@ -27,6 +27,9 @@ interface SlipDto {
   receiptGrnDate?: string;
   manual?: boolean;
   rows?: Array<{ articleCode: string; description: string; qty: number; val: number }>;
+  // Recency timestamps used to order the "Available Slips" list
+  generatedAt?: string;
+  receiptedAt?: string;
   // Release fields — populated once stock has been released
   deliveryToken?: string;
   releaseRepId?: string;
@@ -113,6 +116,21 @@ export default function ReleasePage() {
     const m = new Map<string, SlipDto>();
     for (const s of allSlips) m.set(s.id, s);
     return m;
+  }, [allSlips]);
+
+  // "Available Slips" list — order by how recently the slip became releasable
+  // (i.e. when it was receipted/captured), NOT when it was generated. A slip
+  // from an old aged-stock load that was only just captured is the newest thing
+  // on the release floor, so it must sit at the top — otherwise it sinks to the
+  // bottom behind its old generatedAt. Falls back to generatedAt, then id.
+  const availableSlips = useMemo(() => {
+    const recency = (s: SlipDto) => s.receiptedAt || s.generatedAt || '';
+    return [...allSlips].sort((a, b) => {
+      const ra = recency(a);
+      const rb = recency(b);
+      if (ra !== rb) return ra < rb ? 1 : -1; // newest first
+      return a.id < b.id ? 1 : -1;
+    });
   }, [allSlips]);
 
   // Scanning state
@@ -745,9 +763,9 @@ export default function ReleasePage() {
             <div className="bg-white border border-gray-200 rounded-lg p-4">
               <h2 className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Available Slips</h2>
               <div className="max-h-48 overflow-y-auto space-y-1">
-                {allSlips.length === 0 ? (
+                {availableSlips.length === 0 ? (
                   <p className="text-xs text-gray-400">No slips awaiting release</p>
-                ) : allSlips.map(s => (
+                ) : availableSlips.map(s => (
                   <div key={s.id} className="text-xs flex items-center justify-between">
                     <span className="font-mono text-gray-700">{s.id.slice(-7)}</span>
                     <span className="text-gray-500 truncate ml-2">{s.siteName}</span>
