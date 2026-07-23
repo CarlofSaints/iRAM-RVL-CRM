@@ -6,7 +6,13 @@ import { useAuth, authFetch } from '@/lib/useAuth';
 import { useTableSort } from '@/lib/useTableSort';
 import SortableTh from '@/components/SortableTh';
 
-interface SwapLine { product: string; description?: string; quantity: number }
+interface SwapLine {
+  product: string;
+  description?: string;
+  quantity: number;
+  issuedQty?: number;
+  returnedQty?: number;
+}
 interface SwapOutDto {
   id: string;
   clientId: string;
@@ -49,6 +55,10 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 const units = (s: SwapOutDto) => s.lines.reduce((t, l) => t + (l.quantity || 0), 0);
+/** Good replacement units booked out of the warehouse. */
+const outUnits = (s: SwapOutDto) => s.lines.reduce((t, l) => t + (l.issuedQty || 0), 0);
+/** Faulty units booked back in against the stock issued. */
+const backUnits = (s: SwapOutDto) => s.lines.reduce((t, l) => t + (l.returnedQty || 0), 0);
 const fmtDate = (iso?: string) => {
   if (!iso) return '—';
   try { return new Date(iso).toLocaleDateString('en-GB'); } catch { return iso; }
@@ -127,6 +137,8 @@ export default function SwapOutsListPage() {
     store: (r) => r.storeName,
     region: (r) => r.region,
     units: (r) => units(r),
+    out: (r) => outUnits(r),
+    back: (r) => backUnits(r),
     rep: (r) => r.assignedRepName,
     status: (r) => STATUS_LABELS[r.status] ?? r.status,
     date: (r) => r.requestDate || r.createdAt,
@@ -238,6 +250,8 @@ export default function SwapOutsListPage() {
               <SortableTh col="store" label="Store" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
               <SortableTh col="region" label="Region" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
               <SortableTh col="units" label="Units" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium text-right" />
+              <SortableTh col="out" label="Good out" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium text-right" />
+              <SortableTh col="back" label="Faulty in" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium text-right" />
               <SortableTh col="rep" label="Rep" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
               <SortableTh col="status" label="Status" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
               <SortableTh col="date" label="Date" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
@@ -255,6 +269,12 @@ export default function SwapOutsListPage() {
                 <td className="px-4 py-3 text-gray-700">{r.storeName}</td>
                 <td className="px-4 py-3 text-gray-500">{r.region ?? '—'}</td>
                 <td className="px-4 py-3 text-right text-gray-700">{units(r)}</td>
+                <td className={`px-4 py-3 text-right ${outUnits(r) >= units(r) && units(r) > 0 ? 'text-emerald-600 font-medium' : outUnits(r) > 0 ? 'text-amber-600' : 'text-gray-300'}`}>
+                  {outUnits(r)}
+                </td>
+                <td className={`px-4 py-3 text-right ${outUnits(r) > 0 && backUnits(r) >= outUnits(r) ? 'text-emerald-600 font-medium' : backUnits(r) > 0 ? 'text-amber-600' : 'text-gray-300'}`}>
+                  {backUnits(r)}
+                </td>
                 <td className="px-4 py-3 text-gray-500">{r.assignedRepName ?? '—'}</td>
                 <td className="px-4 py-3">
                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGE[r.status] ?? 'bg-gray-100 text-gray-600'}`}>
@@ -265,7 +285,7 @@ export default function SwapOutsListPage() {
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No swap-outs found.</td></tr>
+              <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400">No swap-outs found.</td></tr>
             )}
           </tbody>
         </table>

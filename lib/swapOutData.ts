@@ -48,7 +48,34 @@ export const SWAPOUT_STATUS_LABELS: Record<SwapOutStatus, string> = {
 export interface SwapOutLine {
   product: string; // product code
   description?: string;
-  quantity: number;
+  quantity: number; // requested — what the store asked to be swapped out
+  /** Good replacement stock booked OUT of the iRam warehouse against this line. */
+  issuedQty?: number;
+  /** Faulty stock booked back IN against the good stock that went out. */
+  returnedQty?: number;
+}
+
+/**
+ * A physical stock movement against a swap-out.
+ *   'issue'  — good replacement stock booked OUT (warehouse → rep → store)
+ *   'return' — faulty stock booked back IN, against the good stock issued
+ * Movements are append-only; a mistake is corrected with a reversing movement
+ * so the ledger always explains the running balance.
+ */
+export interface SwapOutMovement {
+  id: string;
+  type: 'issue' | 'return';
+  product: string;
+  quantity: number; // negative = a reversal of an earlier movement
+  at: string; // ISO
+  byUserId?: string;
+  byName?: string;
+  /** Rep/warehouse the stock moved to/from, captured at the time of the move. */
+  repId?: string;
+  repName?: string;
+  warehouseId?: string;
+  reference?: string; // e.g. Major Tech form number, waybill
+  note?: string;
 }
 
 export interface SwapOutEvent {
@@ -85,8 +112,15 @@ export interface SwapOut {
   assignedRepId?: string;
   assignedRepName?: string;
   history: SwapOutEvent[];
+  /** Append-only good-out / faulty-in ledger. */
+  movements?: SwapOutMovement[];
   signedForm?: SwapOutSignedForm;
+  /** Free-text the supplier wrote in the picking column instead of a number. */
+  pickingNote?: string;
   importBatchId?: string;
+  sourceFileName?: string;
+  /** Sheet store name before mapping — kept so re-imports stay traceable. */
+  sheetStoreName?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -185,4 +219,53 @@ export async function deleteSwapOut(id: string): Promise<void> {
 /** Total physical units across a swap-out's lines. */
 export function unitCount(s: Pick<SwapOut, 'lines'>): number {
   return (s.lines || []).reduce((t, l) => t + (l.quantity || 0), 0);
+}
+
+/** Good replacement units booked out across all lines. */
+export function issuedCount(s: Pick<SwapOut, 'lines'>): number {
+  return (s.lines || []).reduce((t, l) => t + (l.issuedQty || 0), 0);
+}
+
+/** Faulty units booked back in across all lines. */
+export function returnedCount(s: Pick<SwapOut, 'lines'>): number {
+  return (s.lines || []).reduce((t, l) => t + (l.returnedQty || 0), 0);
+}
+
+/**
+ * Recompute per-line issued/returned totals from the movement ledger. The
+ * ledger is the source of truth; the line totals are a cached rollup so grids
+ * don't have to walk every movement.
+ */
+export function rollupMovements(lines: SwapOutLine[], movements: SwapOutMovement[]): SwapOutLine[] {
+  const issued = new Map<string, number>();
+  const returned = new Map<string, number>();
+  for (const m of movements) {
+    const key = m.product.trim().toUpperCase();
+    const target = m.type === 'issue' ? issued : returned;
+    target.set(key, (target.get(key) ?? 0) + m.quantity);
+  }
+  return lines.map((l) => {
+    const key = l.product.trim().toUpperCase();
+    return { ...l, issuedQty: issued.get(key) ?? 0, returnedQty: returned.get(key) ?? 0 };
+  });
+}
+
+/**
+ * Where a swap-out sits in the physical stock cycle, derived from the ledger.
+ *   'none'      — nothing booked out yet
+ *   'partial'   — some good stock out, not all
+ *   'issued'    — all requested good stock booked out, no faulty back yet
+ *   'part_back' — some faulty stock returned against it
+ *   'complete'  — faulty returned for everything issued
+ */
+export type SwapStockPhase = 'none' | 'partial' | 'issued' | 'part_back' | 'complete';
+
+export function stockPhase(s: Pick<SwapOut, 'lines'>): SwapStockPhase {
+  const req = unitCount(s);
+  const out = issuedCount(s);
+  const back = returnedCount(s);
+  if (out <= 0) return 'none';
+  if (back <= 0) return out >= req ? 'issued' : 'partial';
+  if (back >= out) return 'complete';
+  return 'part_back';
 }
