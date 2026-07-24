@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
+import { verifyReleaseCode, masterCodeAuditNote } from '@/lib/releaseCodeAuth';
 import { loadControl } from '@/lib/controlData';
 import { updateSlipInRun, getPickSlipRun, type ReceiptBox, type PickSlipRecord } from '@/lib/pickSlipData';
 import { listSpLinks } from '@/lib/spLinkData';
@@ -113,31 +114,39 @@ export async function POST(req: NextRequest) {
   if (!rep && !repUser) {
     return NextResponse.json({ error: 'Rep/user not found' }, { status: 404 });
   }
-  if (!storedCode) {
-    return NextResponse.json({ error: 'This rep/user does not have a release code configured' }, { status: 400 });
-  }
   const userName = me ? `${me.name} ${me.surname}` : guard.userId;
 
-  // Compare release codes (case-insensitive)
-  const codeMatch = releaseCode.toUpperCase().trim() === storedCode.toUpperCase().trim();
+  // Verify the code — the rep's own code, or a Super Admin's master code.
+  const codeCheck = verifyReleaseCode(releaseCode, storedCode, me, guard.userRole);
+  if (!codeCheck.matched && !storedCode) {
+    return NextResponse.json({ error: 'This rep/user does not have a release code configured' }, { status: 400 });
+  }
+  // A Super Admin completing a rep's release with their own code — flagged in the audit trail.
+  const masterNote = codeCheck.viaMaster ? masterCodeAuditNote(userName, releaseRepName) : '';
 
-  if (codeMatch) {
+  if (codeCheck.matched) {
     const isPartial = !!managerOverrideCode;
 
+    // A Super Admin may also authorise the partial-release manager override with their own code.
+    let managerMasterNote = '';
     if (isPartial && managerOverrideRepId) {
       const manager = users.find(u => u.id === managerOverrideRepId);
-      if (!manager || !manager.releaseCode) {
+      const managerCheck = verifyReleaseCode(managerOverrideCode ?? '', manager?.releaseCode, me, guard.userRole);
+      if (!managerCheck.matched && !manager?.releaseCode) {
         return NextResponse.json(
           { ok: false, error: 'Manager does not have a release code configured' },
           { status: 400, headers: { 'Cache-Control': 'no-store' } },
         );
       }
-      const managerValid = managerOverrideCode.toUpperCase().trim() === manager.releaseCode.toUpperCase().trim();
-      if (!managerValid) {
+      if (!managerCheck.matched) {
         return NextResponse.json(
           { ok: false, error: 'Manager release code does not match' },
           { status: 400, headers: { 'Cache-Control': 'no-store' } },
         );
+      }
+      if (managerCheck.viaMaster) {
+        const managerName = manager ? `${manager.name} ${manager.surname}`.trim() : managerOverrideRepId;
+        managerMasterNote = masterCodeAuditNote(userName, `override manager ${managerName}`);
       }
     }
 
@@ -167,9 +176,9 @@ export async function POST(req: NextRequest) {
         userName,
         slipId: payload.slipId,
         clientId: payload.clientId,
-        detail: isPartial
+        detail: (isPartial
           ? `Partial release of ${(payload.releaseBoxes ?? []).length} boxes (manager override by ${managerOverrideRepId})`
-          : `Stock released — ${(payload.releaseBoxes ?? []).length} boxes in transit. Rep: ${releaseRepName}${isMulti ? ` (multi-slip release, ${resolvedSlips.length} slips)` : ''}`,
+          : `Stock released — ${(payload.releaseBoxes ?? []).length} boxes in transit. Rep: ${releaseRepName}${isMulti ? ` (multi-slip release, ${resolvedSlips.length} slips)` : ''}`) + masterNote + managerMasterNote,
       });
     }
 

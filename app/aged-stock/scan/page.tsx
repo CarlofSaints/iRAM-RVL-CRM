@@ -68,6 +68,7 @@ function downloadAndPrintPdf(base64: string, filename: string) {
 
 export default function ScanPage() {
   const { session } = useAuth('scan_stock');
+  const isSuperAdmin = session?.role === 'super-admin';
 
   const [toast, setToast] = useState<ToastData | null>(null);
   const notify = (message: string, type: 'success' | 'error' = 'success') =>
@@ -605,6 +606,11 @@ export default function ScanPage() {
                 className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm font-mono tracking-widest"
               />
               <span className="text-[10px] text-gray-400 mt-0.5 block">The rep must provide their 4-character release code</span>
+              {isSuperAdmin && (
+                <span className="text-[10px] text-indigo-600 mt-0.5 block">
+                  Super Admin: enter <strong>your own</strong> code to do this on the rep&apos;s behalf (logged in the audit trail).
+                </span>
+              )}
             </div>
           </div>
 
@@ -774,6 +780,11 @@ export default function ScanPage() {
                   className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm font-mono tracking-widest"
                 />
                 <span className="text-[10px] text-gray-400 mt-0.5 block">The rep must provide their 4-character release code</span>
+                {isSuperAdmin && (
+                  <span className="text-[10px] text-indigo-600 mt-0.5 block">
+                    Super Admin: enter <strong>your own</strong> code to book on the rep&apos;s behalf (logged in the audit trail).
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -849,6 +860,11 @@ export default function ScanPage() {
                   className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm font-mono tracking-widest"
                 />
                 <span className="text-[10px] text-gray-400 mt-0.5 block">The rep must provide their 4-character release code</span>
+                {isSuperAdmin && (
+                  <span className="text-[10px] text-indigo-600 mt-0.5 block">
+                    Super Admin: enter <strong>your own</strong> code to do this on the rep&apos;s behalf (logged in the audit trail).
+                  </span>
+                )}
               </div>
             </div>
 

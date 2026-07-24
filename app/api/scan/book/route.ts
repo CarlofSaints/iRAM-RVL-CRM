@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
+import { verifyReleaseCode, masterCodeAuditNote } from '@/lib/releaseCodeAuth';
 import { loadControl } from '@/lib/controlData';
 import { getPickSlipRun, updateSlipInRun, type ReceiptBox } from '@/lib/pickSlipData';
 import {
@@ -142,19 +143,22 @@ export async function POST(req: NextRequest) {
   }
 
   const matchReleaseCode = rep?.releaseCode ?? user?.releaseCode;
-  if (!matchReleaseCode) {
-    return NextResponse.json({ error: 'Selected rep/user does not have a release code' }, { status: 400 });
-  }
 
-  // Validate security code matches (case-insensitive)
-  if (securityCode.toUpperCase() !== matchReleaseCode.toUpperCase()) {
-    return NextResponse.json({ error: 'Security code does not match' }, { status: 403 });
-  }
-
-  // Get booking user info
+  // Get booking user (actor) + rep names first — needed for the master-code check and audit.
   const bookingUser = users.find(u => u.id === guard.userId);
   const bookingUserName = bookingUser ? `${bookingUser.name} ${bookingUser.surname}`.trim() : guard.userId;
   const repName = match ? `${match.name} ${match.surname}`.trim() : repId;
+
+  // Verify the security code — the rep's own code, or a Super Admin master code.
+  const codeCheck = verifyReleaseCode(securityCode, matchReleaseCode, bookingUser, guard.userRole);
+  if (!codeCheck.matched) {
+    return NextResponse.json(
+      { error: matchReleaseCode ? 'Security code does not match' : 'Selected rep/user does not have a release code' },
+      { status: matchReleaseCode ? 403 : 400 },
+    );
+  }
+  // A Super Admin booking on a rep's behalf with their own code — flagged in the audit trail.
+  const masterNote = codeCheck.viaMaster ? masterCodeAuditNote(bookingUserName, repName) : '';
 
   const todayStr = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
@@ -296,11 +300,11 @@ export async function POST(req: NextRequest) {
       userName: bookingUserName,
       slipId: detail.ref.slipId,
       clientId: detail.ref.clientId,
-      detail: nothingToReturn
+      detail: (nothingToReturn
         ? `Stock booked (nothing to return) for ${detail.ref.slipId}. Rep: ${repName}`
         : isMulti
         ? `Multi-slip booking — ${boxCount} sticker${boxCount !== 1 ? 's' : ''} generated for ${detail.ref.slipId} (booked with: ${slipIdsList}). Rep: ${repName}`
-        : `Stock booked — ${boxCount} sticker${boxCount !== 1 ? 's' : ''} generated for ${detail.ref.slipId}. Rep: ${repName}`,
+        : `Stock booked — ${boxCount} sticker${boxCount !== 1 ? 's' : ''} generated for ${detail.ref.slipId}. Rep: ${repName}`) + masterNote,
     });
   }
 

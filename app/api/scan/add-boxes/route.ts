@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
+import { verifyReleaseCode, masterCodeAuditNote } from '@/lib/releaseCodeAuth';
 import { loadControl } from '@/lib/controlData';
 import { getPickSlipRun, updateSlipInRun, type ReceiptBox } from '@/lib/pickSlipData';
 import {
@@ -105,16 +106,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Rep/user not found' }, { status: 404 });
   }
   const matchReleaseCode = rep?.releaseCode ?? user?.releaseCode;
-  if (!matchReleaseCode) {
-    return NextResponse.json({ error: 'Selected rep/user does not have a release code' }, { status: 400 });
-  }
-  if (securityCode.toUpperCase() !== matchReleaseCode.toUpperCase()) {
-    return NextResponse.json({ error: 'Security code does not match' }, { status: 403 });
-  }
 
   const bookingUser = users.find(u => u.id === guard.userId);
   const bookingUserName = bookingUser ? `${bookingUser.name} ${bookingUser.surname}`.trim() : guard.userId;
   const repName = `${match.name} ${match.surname}`.trim();
+
+  // Verify the security code — the rep's own code, or a Super Admin master code.
+  const codeCheck = verifyReleaseCode(securityCode, matchReleaseCode, bookingUser, guard.userRole);
+  if (!codeCheck.matched) {
+    return NextResponse.json(
+      { error: matchReleaseCode ? 'Security code does not match' : 'Selected rep/user does not have a release code' },
+      { status: matchReleaseCode ? 403 : 400 },
+    );
+  }
+  // A Super Admin adding boxes on a rep's behalf with their own code — flagged in the audit trail.
+  const masterNote = codeCheck.viaMaster ? masterCodeAuditNote(bookingUserName, repName) : '';
   const todayStr = new Date().toLocaleDateString('en-ZA', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
   // Resolve warehouse + next barcode sequence
@@ -217,7 +223,7 @@ export async function POST(req: NextRequest) {
     userName: bookingUserName,
     slipId: slip.id,
     clientId,
-    detail: `Added ${additionalBoxes} more box${additionalBoxes !== 1 ? 'es' : ''} to ${slip.id} (now ${newTotal} total). Rep: ${repName}`,
+    detail: `Added ${additionalBoxes} more box${additionalBoxes !== 1 ? 'es' : ''} to ${slip.id} (now ${newTotal} total). Rep: ${repName}` + masterNote,
   });
 
   return NextResponse.json(

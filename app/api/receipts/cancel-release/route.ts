@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
+import { verifyReleaseCode, masterCodeAuditNote } from '@/lib/releaseCodeAuth';
 import { updateSlipInRun, getPickSlipRun, type PickSlipRecord } from '@/lib/pickSlipData';
 import { logAudit } from '@/lib/auditLog';
 
@@ -96,12 +97,13 @@ export async function POST(req: NextRequest) {
   if (manager.role === 'rep') {
     return NextResponse.json({ ok: false, error: 'A manager or admin must authorise a cancellation — a rep cannot' }, { status: 403 });
   }
-  if (!manager.releaseCode) {
+
+  // Verify the code — the selected manager's own code, or a Super Admin master code.
+  const codeCheck = verifyReleaseCode(securityCode, manager.releaseCode, me, guard.userRole);
+  if (!codeCheck.matched && !manager.releaseCode) {
     return NextResponse.json({ ok: false, error: 'The selected manager does not have a release code configured' }, { status: 400 });
   }
-
-  const codeMatch = securityCode.toUpperCase().trim() === manager.releaseCode.toUpperCase().trim();
-  if (!codeMatch) {
+  if (!codeCheck.matched) {
     await logAudit({
       action: 'cancel_release_failed',
       userId: guard.userId,
@@ -115,6 +117,10 @@ export async function POST(req: NextRequest) {
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );
   }
+  // A Super Admin authorising the cancellation with their own code — flagged in the audit trail.
+  const masterNote = codeCheck.viaMaster
+    ? masterCodeAuditNote(actorName, `authoriser ${manager.name} ${manager.surname}`.trim())
+    : '';
 
   // ── Revert every slip in the group back to "captured" ──
   const updatedSlips: PickSlipRecord[] = [];
@@ -140,7 +146,7 @@ export async function POST(req: NextRequest) {
       userName: actorName,
       slipId: ref.slipId,
       clientId: ref.clientId,
-      detail: `Release cancelled — reverted to captured (rep was ${prevRepName}). Authorised by ${manager.name} ${manager.surname}.`,
+      detail: `Release cancelled — reverted to captured (rep was ${prevRepName}). Authorised by ${manager.name} ${manager.surname}.` + masterNote,
     });
   }
 

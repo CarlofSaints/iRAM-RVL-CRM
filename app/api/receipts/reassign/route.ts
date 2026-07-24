@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
+import { verifyReleaseCode, masterCodeAuditNote } from '@/lib/releaseCodeAuth';
 import { loadControl } from '@/lib/controlData';
 import { updateSlipInRun, getPickSlipRun, type PickSlipRecord } from '@/lib/pickSlipData';
 import { listSpLinks } from '@/lib/spLinkData';
@@ -98,24 +99,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'Rep/user not found' }, { status: 404 });
   }
   const storedCode = rep?.releaseCode || repUser?.releaseCode;
-  if (!storedCode) {
-    return NextResponse.json({ ok: false, error: 'This rep/user does not have a release code configured' }, { status: 400 });
-  }
-  const codeMatch = releaseCode.toUpperCase().trim() === storedCode.toUpperCase().trim();
-  if (!codeMatch) {
+
+  // Verify the code — the new rep's own code, or a Super Admin master code.
+  const codeCheck = verifyReleaseCode(releaseCode, storedCode, me, guard.userRole);
+  if (!codeCheck.matched) {
     await logAudit({
       action: 'reassign_rep_failed',
       userId: guard.userId,
       userName,
       slipId: resolvedSlips.map(r => r.slip.id).join(', '),
       clientId: resolvedSlips[0].ref.clientId,
-      detail: `Release code mismatch reassigning to ${newRepName} (${newRepId})`,
+      detail: storedCode
+        ? `Release code mismatch reassigning to ${newRepName} (${newRepId})`
+        : `Reassign blocked — ${newRepName} (${newRepId}) has no release code configured and no master code matched`,
     });
     return NextResponse.json(
-      { ok: false, error: 'Release code does not match the selected rep' },
+      { ok: false, error: storedCode ? 'Release code does not match the selected rep' : 'This rep/user does not have a release code configured' },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );
   }
+  // A Super Admin reassigning with their own code — flagged in the audit trail.
+  const masterNote = codeCheck.viaMaster ? masterCodeAuditNote(userName, newRepName) : '';
 
   const isMulti = resolvedSlips.length > 1;
   const firstSlip = resolvedSlips[0].slip;
@@ -139,7 +143,7 @@ export async function POST(req: NextRequest) {
       userName,
       slipId: ref.slipId,
       clientId: ref.clientId,
-      detail: `Reassigned collecting rep from ${prevRepName} to ${newRepName}${isMulti ? ` (multi-slip release, ${resolvedSlips.length} slips)` : ''}`,
+      detail: `Reassigned collecting rep from ${prevRepName} to ${newRepName}${isMulti ? ` (multi-slip release, ${resolvedSlips.length} slips)` : ''}` + masterNote,
     });
   }
 

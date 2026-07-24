@@ -730,9 +730,15 @@ export default function ReleasePage() {
                 onChange={e => setReleaseCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
                 maxLength={4}
                 placeholder="4-char code"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-4"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-1"
                 autoComplete="off"
               />
+              {session?.role === 'super-admin' && (
+                <p className="text-[11px] text-indigo-600 mb-4">
+                  Super Admin: you may enter <strong>your own</strong> code to complete this on the rep&apos;s behalf — it&apos;s recorded in the audit log.
+                </p>
+              )}
+              {session?.role !== 'super-admin' && <div className="mb-4" />}
 
               {/* Summary */}
               {discoveredSlips.length > 0 && (
@@ -916,9 +922,15 @@ export default function ReleasePage() {
                   onChange={e => setManagerOverrideCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
                   maxLength={4}
                   placeholder="4-char code"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-4"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-1"
                   autoComplete="off"
                 />
+                {session?.role === 'super-admin' && (
+                  <p className="text-[11px] text-indigo-600 mb-4">
+                    Super Admin: enter <strong>your own</strong> code here to authorise — recorded in the audit log.
+                  </p>
+                )}
+                {session?.role !== 'super-admin' && <div className="mb-4" />}
               </>
             )}
 
@@ -1001,9 +1013,15 @@ export default function ReleasePage() {
               onChange={e => setReassignCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
               maxLength={4}
               placeholder="4-char code"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-4"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-1"
               autoComplete="off"
             />
+            {session?.role === 'super-admin' && (
+              <p className="text-[11px] text-indigo-600 mb-4">
+                Super Admin: enter <strong>your own</strong> code to reassign on the rep&apos;s behalf — recorded in the audit log.
+              </p>
+            )}
+            {session?.role !== 'super-admin' && <div className="mb-4" />}
 
             <div className="flex gap-2">
               <button
@@ -1100,9 +1118,15 @@ export default function ReleasePage() {
                   onChange={e => setCancelCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4))}
                   maxLength={4}
                   placeholder="4-char code"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-4"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm font-mono tracking-widest text-center uppercase mb-1"
                   autoComplete="off"
                 />
+                {session?.role === 'super-admin' && (
+                  <p className="text-[11px] text-indigo-600 mb-4">
+                    Super Admin: enter <strong>your own</strong> code to authorise this cancellation — recorded in the audit log.
+                  </p>
+                )}
+                {session?.role !== 'super-admin' && <div className="mb-4" />}
               </>
             )}
 
