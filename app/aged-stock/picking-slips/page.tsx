@@ -222,6 +222,8 @@ export default function PickingSlipsPage() {
   const [boxesRemove, setBoxesRemove] = useState<string[]>([]);
   const [boxesReason, setBoxesReason] = useState('');
   const [boxesSaving, setBoxesSaving] = useState(false);
+  const [boxesReprint, setBoxesReprint] = useState<string[]>([]);
+  const [boxesReprinting, setBoxesReprinting] = useState(false);
 
   // Correct GRN/GRV modal — fix captured value/refs/date on a released/delivered slip
   const [correctSlip, setCorrectSlip] = useState<SlipDto | null>(null);
@@ -737,12 +739,65 @@ export default function PickingSlipsPage() {
     setBoxesSlip(slip);
     setBoxesRemove([]);
     setBoxesReason('');
+    setBoxesReprint([]);
   }
 
   function toggleBoxRemove(barcode: string) {
     setBoxesRemove(prev =>
       prev.includes(barcode) ? prev.filter(b => b !== barcode) : [...prev, barcode],
     );
+    // A box can't be both reprinted and removed in one go — removing wins.
+    setBoxesReprint(prev => prev.filter(b => b !== barcode));
+  }
+
+  function toggleBoxReprint(barcode: string) {
+    setBoxesReprint(prev =>
+      prev.includes(barcode) ? prev.filter(b => b !== barcode) : [...prev, barcode],
+    );
+  }
+
+  async function doReprintLabels() {
+    if (!boxesSlip || boxesReprint.length === 0) return;
+    setBoxesReprinting(true);
+    try {
+      const res = await authFetch(
+        `/api/pick-slips/${boxesSlip.id}/reprint-labels?format=roll`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientId: boxesSlip.clientId,
+            loadId: boxesSlip.loadId,
+            barcodes: boxesReprint,
+          }),
+        },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        notify(data.error || 'Failed to reprint labels', 'error');
+        return;
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') ?? '';
+      const fileMatch = disposition.match(/filename="(.+?)"/);
+      const fileName = fileMatch ? fileMatch[1] : `Reprint - ${boxesSlip.id}.pdf`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+      notify(`Reprinting ${boxesReprint.length} label${boxesReprint.length !== 1 ? 's' : ''} — PDF downloaded`);
+      setBoxesReprint([]);
+    } catch {
+      notify('Network error reprinting labels', 'error');
+    } finally {
+      setBoxesReprinting(false);
+    }
   }
 
   async function doAdjustBoxes() {
@@ -1725,33 +1780,72 @@ export default function PickingSlipsPage() {
               <p className="text-sm text-gray-600 mb-4">
                 {boxesSlip.id} — {boxesSlip.siteName} ({boxesSlip.siteCode}). This slip has{' '}
                 <span className="font-medium">{allBoxes.length} box record{allBoxes.length !== 1 ? 's' : ''}</span>.
-                Tick any that don&apos;t physically exist (e.g. added by mistake). Release will then only
-                ask for the boxes that remain.
+                Tick <span className="text-red-600 font-medium">Remove</span> for any box that doesn&apos;t
+                physically exist (e.g. added by mistake) — Release will then only ask for the boxes that remain.
+                Tick <span className="text-indigo-600 font-medium">Reprint</span> to print a fresh label with the
+                same barcode for a box whose sticker was lost or damaged.
               </p>
 
               <div className="mb-4 border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-56 overflow-auto">
+                <div className="flex items-center gap-3 px-3 py-1.5 bg-gray-50 text-[10px] font-semibold uppercase tracking-wide text-gray-400 sticky top-0">
+                  <span className="w-4 text-center text-red-500">Rem</span>
+                  <span className="w-6">#</span>
+                  <span className="flex-1">Barcode</span>
+                  <span className="text-indigo-500">Reprint</span>
+                </div>
                 {allBoxes.map((b, i) => {
                   const checked = boxesRemove.includes(b.stickerBarcode);
+                  const reprintChecked = boxesReprint.includes(b.stickerBarcode);
                   return (
-                    <label
+                    <div
                       key={b.id || b.stickerBarcode}
-                      className={`flex items-center gap-3 px-3 py-2 cursor-pointer ${checked ? 'bg-red-50' : 'hover:bg-gray-50'}`}
+                      className={`flex items-center gap-3 px-3 py-2 ${checked ? 'bg-red-50' : reprintChecked ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}
                     >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleBoxRemove(b.stickerBarcode)}
-                        className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
-                      />
-                      <span className="text-xs text-gray-400 w-6">#{i + 1}</span>
-                      <span className={`font-mono text-sm ${checked ? 'line-through text-red-500' : 'text-gray-800'}`}>
-                        {b.stickerBarcode}
-                      </span>
-                      {checked && <span className="ml-auto text-xs font-medium text-red-600">remove</span>}
-                    </label>
+                      <label className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleBoxRemove(b.stickerBarcode)}
+                          className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                        />
+                        <span className="text-xs text-gray-400 w-6">#{i + 1}</span>
+                        <span className={`font-mono text-sm truncate ${checked ? 'line-through text-red-500' : 'text-gray-800'}`}>
+                          {b.stickerBarcode}
+                        </span>
+                      </label>
+                      <label
+                        className={`flex items-center gap-1.5 shrink-0 text-xs font-medium ${checked ? 'text-gray-300 cursor-not-allowed' : 'text-indigo-600 cursor-pointer'}`}
+                        title={checked ? 'Being removed — can’t reprint' : 'Reprint this label'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={reprintChecked}
+                          disabled={checked}
+                          onChange={() => toggleBoxReprint(b.stickerBarcode)}
+                          className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-40"
+                        />
+                        Reprint
+                      </label>
+                    </div>
                   );
                 })}
               </div>
+
+              {boxesReprint.length > 0 && (
+                <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2.5">
+                  <span className="text-xs text-indigo-800">
+                    <span className="font-semibold">{boxesReprint.length}</span> label{boxesReprint.length !== 1 ? 's' : ''} selected to reprint (same barcode, one per page).
+                  </span>
+                  <button
+                    onClick={doReprintLabels}
+                    disabled={boxesReprinting}
+                    className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2 shrink-0"
+                  >
+                    {boxesReprinting && <div className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                    Reprint {boxesReprint.length} label{boxesReprint.length !== 1 ? 's' : ''}
+                  </button>
+                </div>
+              )}
 
               <div className="mb-4 text-xs text-gray-600">
                 Removing <span className="font-semibold text-red-600">{boxesRemove.length}</span> —{' '}
