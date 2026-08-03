@@ -1916,10 +1916,25 @@ export default function PickingSlipsPage() {
 
               {cleared.length > 0 && (
                 <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
-                  <p className="text-xs font-semibold text-amber-800 mb-1">This will permanently clear:</p>
+                  <p className="text-xs font-semibold text-amber-800 mb-1">
+                    This will permanently clear — for {revertSlip.siteName} ({revertSlip.siteCode}) only:
+                  </p>
                   <ul className="list-disc list-inside text-xs text-amber-800 space-y-0.5">
                     {cleared.map((c, i) => <li key={i}>{c}</li>)}
                   </ul>
+                  {/* A released slip may share a delivery note (and its QR
+                      confirmation) with other stores. The confirmation writes a
+                      SEPARATE signature onto each slip, so rolling one back
+                      never touches the others — say so, because the list above
+                      reads like it's about the whole delivery. */}
+                  {['in-transit', 'partial-release', 'delivered'].includes(revertSlip.status) && (
+                    <p className="mt-2 border-t border-amber-200 pt-2 text-xs text-amber-900">
+                      <span className="font-semibold">Only this store is rolled back.</span>{' '}
+                      Any other stores released on the same delivery note keep their status,
+                      confirmation and signature. This store then goes back on the Release
+                      screen and gets its own new delivery note when it is released again.
+                    </p>
+                  )}
                 </div>
               )}
 
