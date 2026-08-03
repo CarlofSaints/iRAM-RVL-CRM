@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { updateSlipInRun } from '@/lib/pickSlipData';
 import { logAudit } from '@/lib/auditLog';
+import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,6 +40,15 @@ export async function POST(req: NextRequest) {
   if (existingSlip.status !== 'booked') {
     return NextResponse.json({ error: `Cannot capture a slip with status "${existingSlip.status}"` }, { status: 400 });
   }
+
+  // Warehouse scoping
+  const whAccess = await resolveWarehouseAccess(guard.userId);
+  const whDenied = denyIfOutOfScope(
+    whAccess,
+    [existingSlip.warehouseCode || existingSlip.warehouse],
+    'Receipt capture',
+  );
+  if (whDenied) return whDenied;
 
   // Resolve user name for audit
   const users = await loadUsers();

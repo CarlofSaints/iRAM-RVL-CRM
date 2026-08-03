@@ -4,6 +4,7 @@ import { loadUsers } from '@/lib/userData';
 import { verifyReleaseCode, masterCodeAuditNote } from '@/lib/releaseCodeAuth';
 import { loadControl } from '@/lib/controlData';
 import { getPickSlipRun, updateSlipInRun, type ReceiptBox } from '@/lib/pickSlipData';
+import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 import {
   saveBatch,
   nextStickerSequence,
@@ -95,6 +96,15 @@ export async function POST(req: NextRequest) {
       { status: 409 },
     );
   }
+
+  // Warehouse scoping — checked before any barcode sequence is consumed.
+  const whAccess = await resolveWarehouseAccess(guard.userId);
+  const whDenied = denyIfOutOfScope(
+    whAccess,
+    [slip.warehouseCode || slip.warehouse],
+    'Adding boxes',
+  );
+  if (whDenied) return whDenied;
 
   // Validate rep/user exists and has a release code
   const reps = await loadControl<RepRecord>('reps');

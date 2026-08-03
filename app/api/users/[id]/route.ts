@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { loadUsers, saveUsers } from '@/lib/userData';
+import { loadControl } from '@/lib/controlData';
 import { loadRoles, requirePermission } from '@/lib/rolesData';
 import { sendUpgradeConfirmedEmail } from '@/lib/email';
 
@@ -38,6 +39,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (body.role !== 'customer') users[idx].linkedClientId = undefined;
       // Clear assignedClientIds if user becomes a customer (customers use linkedClientId instead)
       if (body.role === 'customer') users[idx].assignedClientIds = undefined;
+      // Customers have no warehouse screens; drop any restriction they carried
+      if (body.role === 'customer') users[idx].assignedWarehouseIds = undefined;
     }
     if (body.linkedClientId !== undefined) {
       // Only apply if the user is (or is being set to) a customer
@@ -51,6 +54,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         users[idx].assignedClientIds = Array.isArray(body.assignedClientIds)
           ? body.assignedClientIds.filter((x: unknown) => typeof x === 'string')
           : [];
+      }
+    }
+    if (body.assignedWarehouseIds !== undefined) {
+      const finalRole = body.role ?? users[idx].role;
+      if (finalRole === 'customer') {
+        users[idx].assignedWarehouseIds = undefined;
+      } else {
+        const ids = Array.isArray(body.assignedWarehouseIds)
+          ? body.assignedWarehouseIds.filter((x: unknown) => typeof x === 'string')
+          : [];
+        // Reject ids that aren't in the masterfile. Storing a stale id would
+        // scope the user to nothing (see warehouseScopeFor) rather than to the
+        // warehouse the admin thought they picked — fail loudly instead.
+        if (ids.length > 0) {
+          const warehouses = await loadControl<{ id: string }>('warehouses');
+          const known = new Set(warehouses.map(w => w.id));
+          const unknown = ids.filter((id: string) => !known.has(id));
+          if (unknown.length > 0) {
+            return NextResponse.json(
+              { error: `Unknown warehouse id(s): ${unknown.join(', ')}` },
+              { status: 400 },
+            );
+          }
+        }
+        users[idx].assignedWarehouseIds = ids;
       }
     }
     if (body.password) {

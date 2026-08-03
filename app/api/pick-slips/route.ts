@@ -10,6 +10,13 @@ import {
   type PickSlipRunIndex,
 } from '@/lib/pickSlipData';
 import { loadControl } from '@/lib/controlData';
+import {
+  makeWarehouseResolver,
+  makeLenientWarehouseResolver,
+  warehouseScopeFor,
+  isWarehouseAllowed,
+  type WarehouseRecord,
+} from '@/lib/warehouseScope';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,24 +56,16 @@ export async function GET(req: NextRequest) {
   // Build client name lookup for backward compat
   const clientMap = new Map(allClients.map(c => [c.id, c]));
 
-  // Warehouse resolver: raw value → canonical code
-  const warehouses = await loadControl<{ code: string; name: string }>('warehouses');
-  const whCodeSet = new Set(warehouses.map(w => w.code.toUpperCase().trim()));
-  const whNameToCode = new Map(warehouses.map(w => [w.name.toUpperCase().trim(), w.code.toUpperCase().trim()]));
-  function resolveWarehouseCode(raw: string): string {
-    const upper = raw.toUpperCase().trim();
-    if (!upper) return '';
-    if (whCodeSet.has(upper)) return upper;
-    const byName = whNameToCode.get(upper);
-    if (byName) return byName;
-    for (const w of warehouses) {
-      const wCode = w.code.toUpperCase().trim();
-      const wName = w.name.toUpperCase().trim();
-      if (wName.startsWith(upper) || upper.startsWith(wName)) return wCode;
-      if (wCode.startsWith(upper) || upper.startsWith(wCode)) return wCode;
-    }
-    return upper;
-  }
+  // Warehouse resolver: raw value → canonical code. The lenient variant keeps
+  // the previous behaviour for the display/backfill path (unknown value echoes
+  // back); the strict one is what the access check uses.
+  const warehouses = await loadControl<WarehouseRecord>('warehouses');
+  const resolveWarehouseCode = makeLenientWarehouseResolver(warehouses);
+  const resolveStrict = makeWarehouseResolver(warehouses);
+  const whScope = warehouseScopeFor(
+    { role: me.role, assignedWarehouseIds: me.assignedWarehouseIds },
+    warehouses,
+  );
 
   const runs = await listAllPickSlipRuns(scopedIds, listLoads);
 
@@ -130,6 +129,10 @@ export async function GET(req: NextRequest) {
     for (const slip of run.slips) {
       // Manual slips start with 0 qty/val — always include them
       if (!slip.manual && slip.totalQty <= 0 && slip.totalVal <= 0) continue;
+      // Warehouse scoping — drop slips outside the user's warehouses. Check the
+      // canonical code first, falling back to the raw name for slips whose
+      // warehouseCode was never backfilled.
+      if (!isWarehouseAllowed(whScope, slip.warehouseCode || slip.warehouse, resolveStrict)) continue;
       slips.push(slip);
     }
   }

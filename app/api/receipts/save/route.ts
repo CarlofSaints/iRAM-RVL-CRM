@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
 import { updateSlipInRun, getPickSlipRun, type ReceiptBox } from '@/lib/pickSlipData';
 import { findAndLinkSticker, unlinkSticker } from '@/lib/stickerData';
+import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,6 +47,15 @@ export async function POST(req: NextRequest) {
   if (!currentSlip) {
     return NextResponse.json({ error: 'Pick slip not found' }, { status: 404 });
   }
+
+  // Warehouse scoping — checked before any sticker is unlinked below.
+  const whAccess = await resolveWarehouseAccess(guard.userId);
+  const whDenied = denyIfOutOfScope(
+    whAccess,
+    [currentSlip.warehouseCode || currentSlip.warehouse],
+    'Receipt save',
+  );
+  if (whDenied) return whDenied;
 
   // Determine removed boxes — unlink their stickers
   const newBarcodes = new Set((boxes ?? []).map(b => b.stickerBarcode));

@@ -9,6 +9,8 @@ import {
   type StickerBatch,
   type Sticker,
 } from '@/lib/stickerData';
+import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
+import { isWarehouseAllowed } from '@/lib/warehouseScope';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +28,13 @@ export async function GET(req: NextRequest) {
   if (guard instanceof NextResponse) return guard;
 
   const batches = await listBatches();
-  return NextResponse.json({ batches }, { headers: { 'Cache-Control': 'no-store' } });
+
+  const access = await resolveWarehouseAccess(guard.userId);
+  const visible = access.scope.all
+    ? batches
+    : batches.filter(b => isWarehouseAllowed(access.scope, b.warehouseCode, access.resolve));
+
+  return NextResponse.json({ batches: visible }, { headers: { 'Cache-Control': 'no-store' } });
 }
 
 /**
@@ -58,6 +66,12 @@ export async function POST(req: NextRequest) {
   if (!warehouse) {
     return NextResponse.json({ error: 'Warehouse not found' }, { status: 404 });
   }
+
+  // Warehouse scoping — don't let a restricted user mint box labels (and burn
+  // barcode sequence numbers) for a warehouse they don't work in.
+  const access = await resolveWarehouseAccess(guard.userId);
+  const denied = denyIfOutOfScope(access, [warehouse.code], 'Sticker generation');
+  if (denied) return denied;
 
   // Resolve user
   const users = await loadUsers();

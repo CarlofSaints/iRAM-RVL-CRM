@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   const guard = await requirePermission(req, 'manage_users');
   if (guard instanceof NextResponse) return guard;
 
-  const { name, surname, email, password, role, linkedClientId, assignedClientIds, forcePasswordChange, sendWelcome } = await req.json();
+  const { name, surname, email, password, role, linkedClientId, assignedClientIds, assignedWarehouseIds, forcePasswordChange, sendWelcome } = await req.json();
   if (!name || !surname || !email || !password || !role) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
   }
@@ -54,6 +54,11 @@ export async function POST(req: NextRequest) {
     assignedClientIds: role === 'customer'
       ? undefined
       : (Array.isArray(assignedClientIds) ? assignedClientIds.filter((x: unknown) => typeof x === 'string') : []),
+    // Empty = every warehouse (see lib/warehouseScope.ts). Customers never
+    // touch warehouse screens, so the field stays off their record entirely.
+    assignedWarehouseIds: role === 'customer'
+      ? undefined
+      : (Array.isArray(assignedWarehouseIds) ? assignedWarehouseIds.filter((x: unknown) => typeof x === 'string') : []),
     forcePasswordChange: forcePasswordChange !== false,
     firstLoginAt: null,
     createdAt: new Date().toISOString(),

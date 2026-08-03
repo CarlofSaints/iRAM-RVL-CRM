@@ -5,6 +5,14 @@ import { clientScopeFor, filterClientIdsByScope } from '@/lib/clientScope';
 import { loadControl } from '@/lib/controlData';
 import { listLoads } from '@/lib/agedStockData';
 import { listAllPickSlipRuns } from '@/lib/pickSlipData';
+import {
+  makeWarehouseResolver,
+  makeLenientWarehouseResolver,
+  warehouseScopeFor,
+  isWarehouseAllowed,
+  scopeLabel,
+  type WarehouseRecord,
+} from '@/lib/warehouseScope';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,24 +61,14 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Build warehouse resolver
-  const warehouses = await loadControl<{ code: string; name: string }>('warehouses');
-  const whCodeSet = new Set(warehouses.map(w => w.code.toUpperCase().trim()));
-  const whNameToCode = new Map(warehouses.map(w => [w.name.toUpperCase().trim(), w.code.toUpperCase().trim()]));
-  function resolveWarehouseCode(raw: string): string {
-    const upper = raw.toUpperCase().trim();
-    if (!upper) return '';
-    if (whCodeSet.has(upper)) return upper;
-    const byName = whNameToCode.get(upper);
-    if (byName) return byName;
-    for (const w of warehouses) {
-      const wCode = w.code.toUpperCase().trim();
-      const wName = w.name.toUpperCase().trim();
-      if (wName.startsWith(upper) || upper.startsWith(wName)) return wCode;
-      if (wCode.startsWith(upper) || upper.startsWith(wCode)) return wCode;
-    }
-    return upper;
-  }
+  // Build warehouse resolver + the caller's warehouse scope
+  const warehouses = await loadControl<WarehouseRecord>('warehouses');
+  const resolveWarehouseCode = makeLenientWarehouseResolver(warehouses);
+  const resolveStrict = makeWarehouseResolver(warehouses);
+  const whScope = warehouseScopeFor(
+    { role: me.role, assignedWarehouseIds: me.assignedWarehouseIds },
+    warehouses,
+  );
 
   const runs = await listAllPickSlipRuns(scopedIds, listLoads);
 
@@ -88,6 +86,23 @@ export async function GET(req: NextRequest) {
       const slip = run.slips.find(s => s.id === slipId);
       if (slip) {
         matched = true;
+
+        // Warehouse scoping. Say plainly that the slip belongs to another
+        // warehouse — reporting "not found" would send someone hunting the
+        // floor for a barcode that scanned perfectly well.
+        if (!isWarehouseAllowed(whScope, slip.warehouseCode || slip.warehouse, resolveStrict)) {
+          return NextResponse.json(
+            {
+              found: true,
+              bookable: false,
+              status: slip.status,
+              error: `Pick slip ${slipId} belongs to ${slip.warehouse || 'another warehouse'}. ` +
+                `Your access is limited to ${scopeLabel(whScope)}.`,
+            },
+            { headers: { 'Cache-Control': 'no-store' } },
+          );
+        }
+
         if (!bookableStatuses.includes(slip.status)) {
           // A single already-booked slip can enter "add boxes" mode — the
           // booking entered too few boxes and more stickers are needed.

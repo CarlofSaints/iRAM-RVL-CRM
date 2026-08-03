@@ -4,6 +4,7 @@ import { loadUsers } from '@/lib/userData';
 import { verifyReleaseCode, masterCodeAuditNote } from '@/lib/releaseCodeAuth';
 import { updateSlipInRun, getPickSlipRun, type PickSlipRecord } from '@/lib/pickSlipData';
 import { logAudit } from '@/lib/auditLog';
+import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,6 +85,15 @@ export async function POST(req: NextRequest) {
     }
     resolvedSlips.push({ ref, slip });
   }
+
+  // ── Warehouse scoping ──
+  const whAccess = await resolveWarehouseAccess(guard.userId);
+  const whDenied = denyIfOutOfScope(
+    whAccess,
+    resolvedSlips.map(r => r.slip.warehouseCode || r.slip.warehouse),
+    'Cancellation',
+  );
+  if (whDenied) return whDenied;
 
   // ── Verify the authorising manager/admin (non-rep) and their release code ──
   const users = await loadUsers();

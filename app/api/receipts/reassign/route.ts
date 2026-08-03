@@ -9,6 +9,7 @@ import { logAudit } from '@/lib/auditLog';
 import { generateDeliveryNotePdf, generateMultiSlipDeliveryNotePdf } from '@/lib/deliveryNotePdf';
 import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
 import { sendDeliveryNoteEmail } from '@/lib/email';
+import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 
 export const dynamic = 'force-dynamic';
 
@@ -86,6 +87,15 @@ export async function POST(req: NextRequest) {
     }
     resolvedSlips.push({ ref, slip });
   }
+
+  // ── Warehouse scoping ──
+  const whAccess = await resolveWarehouseAccess(guard.userId);
+  const whDenied = denyIfOutOfScope(
+    whAccess,
+    resolvedSlips.map(r => r.slip.warehouseCode || r.slip.warehouse),
+    'Reassignment',
+  );
+  if (whDenied) return whDenied;
 
   // ── Verify the new rep's release code ──
   const users = await loadUsers();

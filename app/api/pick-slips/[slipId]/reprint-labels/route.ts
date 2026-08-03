@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
 import { getPickSlipRun, type ReceiptBox } from '@/lib/pickSlipData';
+import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 import { generateStickerPdf } from '@/lib/stickerPdf';
 import { loadSettings, resolveLayout, profileFor } from '@/lib/settingsData';
 import { loadUsers } from '@/lib/userData';
@@ -56,6 +57,10 @@ export async function POST(
 
   const slip = run.slips.find(s => s.id === slipId);
   if (!slip) return NextResponse.json({ error: 'Slip not found' }, { status: 404 });
+
+  const whAccess = await resolveWarehouseAccess(guard.userId);
+  const whDenied = denyIfOutOfScope(whAccess, [slip.warehouseCode || slip.warehouse], 'Label reprint');
+  if (whDenied) return whDenied;
 
   const currentBoxes: ReceiptBox[] = slip.receiptBoxes ?? [];
 

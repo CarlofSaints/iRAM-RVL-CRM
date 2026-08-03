@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireLogin } from '@/lib/rolesData';
 import { getPickSlipRun, updateSlipInRun } from '@/lib/pickSlipData';
+import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 import { unlinkStickerFromSlip } from '@/lib/stickerData';
 import { loadUsers } from '@/lib/userData';
 import { logAudit } from '@/lib/auditLog';
@@ -65,6 +66,10 @@ export async function POST(
 
   const slip = run.slips.find(s => s.id === slipId);
   if (!slip) return NextResponse.json({ error: 'Slip not found' }, { status: 404 });
+
+  const whAccess = await resolveWarehouseAccess(guard.userId);
+  const whDenied = denyIfOutOfScope(whAccess, [slip.warehouseCode || slip.warehouse], 'Reverse');
+  if (whDenied) return whDenied;
 
   const fromStatus = slip.status;
 

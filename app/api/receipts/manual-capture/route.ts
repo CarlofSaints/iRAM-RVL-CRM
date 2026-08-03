@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { getPickSlipRun, updateSlipInRun } from '@/lib/pickSlipData';
+import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 import { logAudit } from '@/lib/auditLog';
 
 export const dynamic = 'force-dynamic';
@@ -39,6 +40,18 @@ export async function POST(req: NextRequest) {
   // Read existing slip to preserve barcode/vendorProductCode (fallback for older slips that had rows)
   const run = await getPickSlipRun(clientId, loadId);
   const existingSlip = run?.slips.find(s => s.id === slipId);
+
+  // Warehouse scoping
+  if (existingSlip) {
+    const whAccess = await resolveWarehouseAccess(guard.userId);
+    const whDenied = denyIfOutOfScope(
+      whAccess,
+      [existingSlip.warehouseCode || existingSlip.warehouse],
+      'Manual capture',
+    );
+    if (whDenied) return whDenied;
+  }
+
   const existingRowMap = new Map(
     (existingSlip?.rows ?? []).map(r => [r.articleCode, r])
   );

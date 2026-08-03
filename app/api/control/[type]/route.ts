@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { loadControl, saveControl, ControlType } from '@/lib/controlData';
 import { requireLogin, requirePermission } from '@/lib/rolesData';
+import { loadUsers } from '@/lib/userData';
+import { warehouseScopeFor, type WarehouseRecord } from '@/lib/warehouseScope';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +30,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ type
   if (guard instanceof NextResponse) return guard;
 
   const items = await loadControl(type);
+
+  // Warehouse-restricted users only ever see their own warehouses. This is the
+  // single source for every warehouse dropdown in the app (stickers, stores'
+  // linked warehouse, dashboard filters), so scoping it here scopes them all.
+  if (type === 'warehouses') {
+    const users = await loadUsers();
+    const me = users.find(u => u.id === guard.userId);
+    const scope = warehouseScopeFor(
+      { role: me?.role ?? '', assignedWarehouseIds: me?.assignedWarehouseIds },
+      items as WarehouseRecord[],
+    );
+    if (!scope.all) {
+      const visible = (items as WarehouseRecord[]).filter(w =>
+        scope.codes.includes((w.code ?? '').toUpperCase().trim())
+      );
+      return NextResponse.json(visible, { headers: { 'Cache-Control': 'no-store' } });
+    }
+  }
+
   return NextResponse.json(items, {
     headers: { 'Cache-Control': 'no-store' },
   });

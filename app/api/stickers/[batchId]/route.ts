@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
 import { getBatch } from '@/lib/stickerData';
+import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 import { generateStickerPdf } from '@/lib/stickerPdf';
 import { loadSettings, resolveLayout, profileFor } from '@/lib/settingsData';
 
@@ -23,6 +24,12 @@ export async function GET(
   if (!batch) {
     return NextResponse.json({ error: 'Batch not found' }, { status: 404 });
   }
+
+  // Warehouse scoping — otherwise anyone could print another warehouse's labels
+  // straight from a batch id.
+  const access = await resolveWarehouseAccess(guard.userId);
+  const denied = denyIfOutOfScope(access, [batch.warehouseCode], 'Sticker download');
+  if (denied) return denied;
 
   const settings = await loadSettings();
 

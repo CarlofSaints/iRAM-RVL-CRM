@@ -14,9 +14,22 @@ interface Warehouse {
   createdAt: string;
 }
 
+interface UnresolvedEntry {
+  value: string;
+  count: number;
+  samples: string[];
+}
+
+interface WarehouseDiagnostic {
+  stores: { total: number; affected: number; unresolved: UnresolvedEntry[] };
+  pickSlips: { total: number; affected: number; unresolved: UnresolvedEntry[] };
+}
+
 export default function WarehousesPage() {
   useAuth('manage_warehouses');
   const [items, setItems] = useState<Warehouse[]>([]);
+  const [diag, setDiag] = useState<WarehouseDiagnostic | null>(null);
+  const [diagLoading, setDiagLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState<ToastData | null>(null);
 
@@ -39,6 +52,16 @@ export default function WarehousesPage() {
   }
 
   useEffect(() => { fetchItems(); }, []);
+
+  // On demand rather than on load — it walks every pick-slip run.
+  async function runDiagnostic() {
+    setDiagLoading(true);
+    try {
+      const res = await authFetch('/api/warehouse-scope/unresolved', { cache: 'no-store' });
+      if (!res.ok) { notify('Warehouse link check failed', 'error'); return; }
+      setDiag(await res.json());
+    } finally { setDiagLoading(false); }
+  }
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -108,6 +131,61 @@ export default function WarehousesPage() {
         <h1 className="text-xl font-bold text-gray-900">Warehouses</h1>
         <p className="text-sm text-gray-500 mt-0.5">{items.length} records</p>
       </div>
+
+      {/* Warehouse-link health. Stores and pick slips reference a warehouse by
+          free text, so a typo makes a record invisible to any user who has been
+          restricted to specific warehouses. Surface those before they bite. */}
+      <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Warehouse Link Health</h2>
+            <p className="text-xs text-gray-500 mt-1">
+              Stores and pick slips store their warehouse as free text. Anything that doesn&apos;t match a
+              warehouse below is hidden from users restricted to specific warehouses.
+            </p>
+          </div>
+          <button type="button" onClick={runDiagnostic} disabled={diagLoading}
+            className="text-sm font-semibold text-[var(--color-primary)] hover:underline disabled:opacity-50 disabled:no-underline">
+            {diagLoading ? 'Checking…' : diag ? 'Re-check' : 'Check now'}
+          </button>
+        </div>
+
+        {diag && (
+          <div className="mt-4 flex flex-col gap-3">
+            {diag.stores.unresolved.length === 0 && diag.pickSlips.unresolved.length === 0 ? (
+              <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+                All {diag.stores.total} stores and {diag.pickSlips.total} pick slips resolve to a known warehouse.
+              </div>
+            ) : (
+              <>
+                {(['stores', 'pickSlips'] as const).map(kind => {
+                  const section = diag[kind];
+                  if (section.unresolved.length === 0) return null;
+                  const label = kind === 'stores' ? 'Stores' : 'Pick slips';
+                  return (
+                    <div key={kind} className="border border-amber-200 bg-amber-50 rounded-lg px-4 py-3">
+                      <p className="text-sm font-semibold text-amber-900">
+                        {label}: {section.affected} of {section.total} reference an unknown warehouse
+                      </p>
+                      <ul className="mt-2 flex flex-col gap-1">
+                        {section.unresolved.map(u => (
+                          <li key={u.value} className="text-xs text-amber-900">
+                            <span className="font-mono font-semibold">{u.value}</span>
+                            <span className="text-amber-700"> — {u.count} record{u.count === 1 ? '' : 's'}</span>
+                            {u.samples.length > 0 && (
+                              <span className="text-amber-600"> (e.g. {u.samples.join(', ')})</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        )}
+      </section>
 
       {/* Add Form */}
       <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">

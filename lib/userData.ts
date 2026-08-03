@@ -29,6 +29,11 @@ export interface User {
   /** Client access list for non-customer roles. Empty/undefined = no client data access
    *  (unless the user has the view_all_clients permission, which bypasses this). */
   assignedClientIds?: string[];
+  /** Warehouse access list — warehouse record IDs from the warehouses masterfile.
+   *  NOTE the default is the OPPOSITE of assignedClientIds: empty/undefined =
+   *  EVERY warehouse, so existing users are unaffected. Only a non-empty list
+   *  restricts the user. Super Admins ignore it. See lib/warehouseScope.ts. */
+  assignedWarehouseIds?: string[];
   /** Private Blob key for the user's avatar (e.g. users/{id}/avatar-{ts}.png).
    *  Read via /api/account/avatar/[userId] which streams from the private store. */
   avatarKey?: string;

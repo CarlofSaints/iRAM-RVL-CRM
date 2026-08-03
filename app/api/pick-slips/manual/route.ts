@@ -3,6 +3,13 @@ import { randomUUID } from 'crypto';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { clientScopeFor } from '@/lib/clientScope';
+import {
+  warehouseScopeFor,
+  makeWarehouseResolver,
+  isWarehouseAllowed,
+  scopeLabel,
+  type WarehouseRecord,
+} from '@/lib/warehouseScope';
 import { getClient, listSpLinks } from '@/lib/spLinkData';
 import { loadControl } from '@/lib/controlData';
 import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
@@ -86,13 +93,36 @@ export async function POST(req: NextRequest) {
   const storeById = new Map(stores.map(s => [s.id, s]));
 
   // Warehouse resolver
-  const whList = await loadControl<{ code: string; name: string }>('warehouses');
+  const whList = await loadControl<WarehouseRecord>('warehouses');
   const whByCode = new Map(whList.map(w => [w.code.toUpperCase().trim(), w.code.toUpperCase().trim()]));
   const whByName = new Map(whList.map(w => [w.name.toUpperCase().trim(), w.code.toUpperCase().trim()]));
   function toWhCode(raw: string): string {
     const u = raw.toUpperCase().trim();
     if (!u) return '';
     return whByCode.get(u) ?? whByName.get(u) ?? u;
+  }
+
+  // Warehouse scoping — reject up front if any selected store routes to a
+  // warehouse outside the user's access, before any PDF or SharePoint work.
+  const whScope = warehouseScopeFor(
+    { role: me.role, assignedWarehouseIds: me.assignedWarehouseIds },
+    whList,
+  );
+  if (!whScope.all) {
+    const strict = makeWarehouseResolver(whList);
+    const outOfScope = storeIds
+      .map(id => storeById.get(id))
+      .filter((s): s is StoreRecord => !!s)
+      .filter(s => !isWarehouseAllowed(whScope, s.linkedWarehouse, strict));
+    if (outOfScope.length > 0) {
+      return NextResponse.json(
+        {
+          error: `These stores are not in your warehouses: ${outOfScope.map(s => s.name).join(', ')}. ` +
+            `Your access is limited to ${scopeLabel(whScope)}.`,
+        },
+        { status: 403 },
+      );
+    }
   }
 
   // Use first vendor with pick slip folder

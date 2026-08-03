@@ -21,6 +21,8 @@ interface User {
   role: string;
   linkedClientId?: string;
   assignedClientIds?: string[];
+  /** Empty/absent = ALL warehouses. Only a non-empty list restricts the user. */
+  assignedWarehouseIds?: string[];
   releaseCode?: string;
   subscription?: UserSubscription;
   forcePasswordChange: boolean;
@@ -37,6 +39,13 @@ interface ClientOption {
   id: string;
   name: string;
   vendorNumbers?: string[];
+}
+
+interface WarehouseOption {
+  id: string;
+  name: string;
+  code: string;
+  region?: string;
 }
 
 function clientLabel(c: ClientOption): string {
@@ -56,6 +65,7 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<RoleOption[]>([]);
   const [clients, setClients] = useState<ClientOption[]>([]);
+  const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [toast, setToast] = useState<ToastData | null>(null);
 
   // Add user form
@@ -67,6 +77,7 @@ export default function AdminUsersPage() {
   const [addLinkedClient, setAddLinkedClient] = useState('');
   const [addAssignedClients, setAddAssignedClients] = useState<string[]>([]);
   const [addClientSearch, setAddClientSearch] = useState('');
+  const [addAssignedWarehouses, setAddAssignedWarehouses] = useState<string[]>([]);
   const [addForcePwChange, setAddForcePwChange] = useState(true);
   const [showAddPw, setShowAddPw] = useState(false);
   const [sendWelcome, setSendWelcome] = useState(true);
@@ -87,6 +98,7 @@ export default function AdminUsersPage() {
   const [editLinkedClient, setEditLinkedClient] = useState('');
   const [editAssignedClients, setEditAssignedClients] = useState<string[]>([]);
   const [editClientSearch, setEditClientSearch] = useState('');
+  const [editAssignedWarehouses, setEditAssignedWarehouses] = useState<string[]>([]);
   const [editReleaseCode, setEditReleaseCode] = useState('');
   const [editPw, setEditPw] = useState('');
   const [showEditPw, setShowEditPw] = useState(false);
@@ -101,6 +113,14 @@ export default function AdminUsersPage() {
   const availableRoles = isSuperAdmin ? roles : roles.filter(r => r.id !== 'super-admin');
 
   const roleLabel = (id: string) => roles.find(r => r.id === id)?.name ?? id;
+  const warehouseName = (id: string) => warehouses.find(w => w.id === id)?.name ?? id;
+  /** Empty assignment = unrestricted, so "All" is the correct label for it. */
+  const warehouseAccessLabel = (u: User): string => {
+    if (u.role === 'super-admin' || u.role === 'customer') return 'All';
+    const ids = u.assignedWarehouseIds ?? [];
+    if (ids.length === 0) return 'All';
+    return ids.map(warehouseName).join(', ');
+  };
   const clientName = (id?: string) => {
     if (!id) return '—';
     const c = clients.find(x => x.id === id);
@@ -108,14 +128,16 @@ export default function AdminUsersPage() {
   };
 
   async function refresh() {
-    const [uRes, rRes, cRes] = await Promise.all([
+    const [uRes, rRes, cRes, wRes] = await Promise.all([
       authFetch('/api/users', { cache: 'no-store' }),
       authFetch('/api/roles', { cache: 'no-store' }),
       authFetch('/api/control/clients', { cache: 'no-store' }),
+      authFetch('/api/control/warehouses', { cache: 'no-store' }),
     ]);
     if (uRes.ok) setUsers(await uRes.json());
     if (rRes.ok) setRoles(await rRes.json());
     if (cRes.ok) setClients(await cRes.json());
+    if (wRes.ok) setWarehouses(await wRes.json());
   }
 
   useEffect(() => {
@@ -146,6 +168,7 @@ export default function AdminUsersPage() {
           password: addPw, role: addRole,
           linkedClientId: addRole === 'customer' ? addLinkedClient : undefined,
           assignedClientIds: addRole === 'customer' ? undefined : addAssignedClients,
+          assignedWarehouseIds: addRole === 'customer' ? undefined : addAssignedWarehouses,
           forcePasswordChange: addForcePwChange, sendWelcome,
         }),
       });
@@ -162,6 +185,7 @@ export default function AdminUsersPage() {
       notify(`User ${addName} ${addSurname} created${sendWelcome ? ' — welcome email sent' : ''}`);
       setAddName(''); setAddSurname(''); setAddEmail(''); setAddPw('');
       setAddRole('rep'); setAddLinkedClient(''); setAddAssignedClients([]); setAddClientSearch('');
+      setAddAssignedWarehouses([]);
       setAddForcePwChange(true); setSendWelcome(true);
       refresh();
     } finally {
@@ -178,6 +202,7 @@ export default function AdminUsersPage() {
     setEditLinkedClient(user.linkedClientId ?? '');
     setEditAssignedClients(user.assignedClientIds ?? []);
     setEditClientSearch('');
+    setEditAssignedWarehouses(user.assignedWarehouseIds ?? []);
     setEditReleaseCode(user.releaseCode ?? '');
     setEditPw('');
     setShowEditPw(false);
@@ -197,6 +222,7 @@ export default function AdminUsersPage() {
         name: editName, surname: editSurname, email: editEmail, role: editRole,
         linkedClientId: editRole === 'customer' ? editLinkedClient : null,
         assignedClientIds: editRole === 'customer' ? [] : editAssignedClients,
+        assignedWarehouseIds: editRole === 'customer' ? [] : editAssignedWarehouses,
       };
       // Release code only applies to non-customer roles (managers/admins/reps)
       if (editRole !== 'customer') body.releaseCode = editReleaseCode;
@@ -207,7 +233,11 @@ export default function AdminUsersPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!res.ok) { notify('Failed to update user', 'error'); return; }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        notify(data.error || 'Failed to update user', 'error');
+        return;
+      }
 
       if (editPw && sendReset) {
         await authFetch(`/api/users/${editUser.id}/notify`, {
@@ -281,6 +311,7 @@ export default function AdminUsersPage() {
       if (ids.length <= 2) return ids.map(clientName).join(', ');
       return `${ids.length} clients`;
     },
+    warehouseAccess: (u) => warehouseAccessLabel(u),
     firstLogin: (u) => u.firstLoginAt,
   }, 'name', 'asc');
 
@@ -359,6 +390,16 @@ export default function AdminUsersPage() {
                 />
               </div>
             )}
+            {addRole !== 'customer' && (
+              <div className="sm:col-span-2">
+                <WarehouseAssignmentPicker
+                  warehouses={warehouses}
+                  selected={addAssignedWarehouses}
+                  onChange={setAddAssignedWarehouses}
+                  disabled={addRole === 'super-admin'}
+                />
+              </div>
+            )}
             <div className="flex flex-col gap-3 justify-end sm:col-span-2">
               <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
                 <input type="checkbox" checked={addForcePwChange} onChange={e => setAddForcePwChange(e.target.checked)}
@@ -411,6 +452,7 @@ export default function AdminUsersPage() {
                   <SortableTh col="role" label="Role" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                   <SortableTh col="plan" label="Plan" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                   <SortableTh col="clientAccess" label="Client Access" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
+                  <SortableTh col="warehouseAccess" label="Warehouse Access" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                   <SortableTh col="firstLogin" label="First Login" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" />
                   <th className="px-6 py-3" />
                 </tr>
@@ -461,6 +503,15 @@ export default function AdminUsersPage() {
                             if (n <= 2) return (u.assignedClientIds ?? []).map(clientName).join(', ');
                             return `${n} clients`;
                           })()}
+                        </td>
+                        <td className="px-6 py-3 text-xs">
+                          {(u.assignedWarehouseIds?.length ?? 0) === 0 || u.role === 'super-admin' ? (
+                            <span className="text-gray-400">All</span>
+                          ) : (
+                            <span className="font-semibold text-amber-800 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">
+                              {warehouseAccessLabel(u)}
+                            </span>
+                          )}
                         </td>
                         <td className="px-6 py-3 text-gray-500 text-xs">
                           {u.firstLoginAt ? new Date(u.firstLoginAt).toLocaleDateString() : 'Never'}
@@ -556,6 +607,14 @@ export default function AdminUsersPage() {
                 />
               )}
               {editRole !== 'customer' && (
+                <WarehouseAssignmentPicker
+                  warehouses={warehouses}
+                  selected={editAssignedWarehouses}
+                  onChange={setEditAssignedWarehouses}
+                  disabled={editRole === 'super-admin'}
+                />
+              )}
+              {editRole !== 'customer' && (
                 <div className="flex flex-col gap-1">
                   <label className="text-xs text-gray-500 font-medium">
                     Release Code
@@ -608,6 +667,85 @@ export default function AdminUsersPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+interface WarehouseAssignmentPickerProps {
+  warehouses: WarehouseOption[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+  /** Super Admins bypass warehouse scoping entirely — say so instead of pretending. */
+  disabled?: boolean;
+}
+
+/**
+ * Warehouse restriction picker.
+ *
+ * Deliberately worded around "restrict", not "assign": the stored default is
+ * empty = every warehouse, so ticking nothing is the permissive state. There
+ * are only a handful of warehouses, so a plain checkbox list beats the
+ * search-driven client picker here.
+ */
+function WarehouseAssignmentPicker({
+  warehouses, selected, onChange, disabled,
+}: WarehouseAssignmentPickerProps) {
+  const selectedSet = new Set(selected);
+  const restricted = selected.length > 0;
+
+  function toggle(id: string) {
+    if (selectedSet.has(id)) onChange(selected.filter(x => x !== id));
+    else onChange([...selected, id]);
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <label className="text-xs text-gray-500 font-medium">
+          Warehouse Access
+          <span className={`ml-2 font-normal ${restricted ? 'text-amber-700' : 'text-gray-400'}`}>
+            {disabled
+              ? 'Super Admin — all warehouses'
+              : restricted
+                ? `restricted to ${selected.length} warehouse${selected.length === 1 ? '' : 's'}`
+                : 'all warehouses'}
+          </span>
+        </label>
+        {restricted && !disabled && (
+          <button type="button" onClick={() => onChange([])}
+            className="text-xs text-blue-600 hover:text-blue-800 font-medium">
+            Remove restriction
+          </button>
+        )}
+      </div>
+      <div className={`border rounded-lg bg-gray-50/40 ${restricted && !disabled ? 'border-amber-300' : 'border-gray-200'}`}>
+        {warehouses.length === 0 ? (
+          <div className="px-3 py-4 text-xs text-gray-400 text-center">
+            No warehouses defined yet
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-x-6 gap-y-2 px-3 py-3">
+            {warehouses.map(w => (
+              <label key={w.id}
+                className={`flex items-center gap-2 text-sm ${disabled ? 'text-gray-400 cursor-not-allowed' : 'text-gray-700 cursor-pointer'}`}>
+                <input
+                  type="checkbox"
+                  disabled={disabled}
+                  checked={selectedSet.has(w.id)}
+                  onChange={() => toggle(w.id)}
+                  className="accent-[var(--color-primary)]"
+                />
+                <span>{w.name}</span>
+                <span className="text-xs text-gray-400 font-mono">{w.code}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-gray-400">
+        Tick nothing to leave this user unrestricted. Ticking one or more warehouses limits
+        what they can see <em>and</em> what they can book, receipt, release or print labels for.
+      </p>
     </div>
   );
 }

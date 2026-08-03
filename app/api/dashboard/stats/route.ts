@@ -7,6 +7,13 @@ import { listLoads, getLoad } from '@/lib/agedStockData';
 import { loadLinkProducts, type ClientWithLinks } from '@/lib/spLinkData';
 import { listAllPickSlipRuns } from '@/lib/pickSlipData';
 import { upperName } from '@/lib/upperName';
+import {
+  makeWarehouseResolver,
+  makeLenientWarehouseResolver,
+  warehouseScopeFor,
+  isWarehouseAllowed,
+  type WarehouseRecord,
+} from '@/lib/warehouseScope';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,9 +64,9 @@ export async function GET(req: NextRequest) {
 
   // ── Control counts ──────────────────────────────────────────────────────
   const clients = await loadControl<ClientWithLinks>('clients');
-  const stores = await loadControl('stores');
+  const stores = await loadControl<{ siteCode?: string; linkedWarehouse?: string }>('stores');
   const reps = await loadControl('reps');
-  const warehouses = await loadControl<{ code: string; name: string }>('warehouses');
+  const warehouses = await loadControl<WarehouseRecord>('warehouses');
 
   // Products: aggregate from SP link caches (not the empty legacy masterfile)
   let productsCount = 0;
@@ -93,23 +100,30 @@ export async function GET(req: NextRequest) {
   const scopedClientIds = filterClientIdsByScope(scope, clients.map(c => c.id));
   const clientsById = new Map(clients.map(c => [c.id, c]));
 
-  // Warehouse code resolver (fuzzy — linkedWarehouse is free-text)
-  const whCodeSet = new Set(warehouses.map(w => w.code.toUpperCase().trim()));
-  const whNameToCode = new Map(warehouses.map(w => [w.name.toUpperCase().trim(), w.code.toUpperCase().trim()]));
-  function resolveWarehouseCode(raw: string): string {
-    const upper = raw.toUpperCase().trim();
-    if (!upper) return '';
-    if (whCodeSet.has(upper)) return upper;
-    const byName = whNameToCode.get(upper);
-    if (byName) return byName;
-    for (const w of warehouses) {
-      const wCode = w.code.toUpperCase().trim();
-      const wName = w.name.toUpperCase().trim();
-      if (wName.startsWith(upper) || upper.startsWith(wName)) return wCode;
-      if (wCode.startsWith(upper) || upper.startsWith(wCode)) return wCode;
-    }
-    return upper;
-  }
+  // Warehouse code resolver (fuzzy — linkedWarehouse is free-text).
+  // Lenient = display/grouping (unknown value echoes back, as before).
+  // Strict  = access checks (unknown value is a miss, never a silent pass).
+  const resolveWarehouseCode = makeLenientWarehouseResolver(warehouses);
+  const resolveStrict = makeWarehouseResolver(warehouses);
+
+  // ── Warehouse scope ───────────────────────────────────────────────────
+  const whScope = warehouseScopeFor(
+    { role: me.role, assignedWarehouseIds: me.assignedWarehouseIds },
+    warehouses,
+  );
+  // Aged-stock rows carry no warehouse of their own — stock is still in-store
+  // until a pick slip is generated. Scope them via the store's linkedWarehouse
+  // so a warehouse-restricted user's dashboard doesn't show the whole country's
+  // aged stock. Keyed the same way pick-slip generation keys it.
+  const storeWarehouseByCode = new Map(
+    stores
+      .filter(s => !!s.siteCode)
+      .map(s => [String(s.siteCode).trim().toLowerCase(), s.linkedWarehouse ?? ''])
+  );
+  // The masterfile count tile should reflect what this user can actually reach.
+  controlCounts.warehouses = whScope.all
+    ? warehouses.length
+    : warehouses.filter(w => whScope.codes.includes((w.code ?? '').toUpperCase().trim())).length;
 
   // ── Build denormalized rows ───────────────────────────────────────────
   const rows: DashboardRow[] = [];
@@ -125,6 +139,10 @@ export async function GET(req: NextRequest) {
       if (!full) continue;
       const clientVendors = (client as ClientWithLinks).vendorNumbers ?? [];
       for (const r of full.rows) {
+        if (!whScope.all) {
+          const storeWh = storeWarehouseByCode.get((r.siteCode ?? '').trim().toLowerCase());
+          if (!isWarehouseAllowed(whScope, storeWh, resolveStrict)) continue;
+        }
         rows.push({
           clientId: client.id,
           clientName: client.name,
@@ -163,6 +181,11 @@ export async function GET(req: NextRequest) {
       } else {
         continue; // generated/sent/picked/etc. — not counted on dashboard
       }
+
+      // Scope check runs for every category — a transit/delivered row still
+      // belongs to the warehouse it was released from, even though the row's
+      // `warehouse` field is deliberately left blank for those categories.
+      if (!isWarehouseAllowed(whScope, slip.warehouseCode || slip.warehouse, resolveStrict)) continue;
 
       const wh = category === 'warehouse' ? resolveWarehouseCode(slip.warehouse || 'UNKNOWN') : '';
 
@@ -234,7 +257,10 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(
     {
       controlCounts,
-      warehouses: warehouses.map(w => ({ code: w.code, name: w.name })),
+      // Only offer the user's own warehouses in the dashboard filter dropdown.
+      warehouses: warehouses
+        .filter(w => whScope.all || whScope.codes.includes((w.code ?? '').toUpperCase().trim()))
+        .map(w => ({ code: w.code, name: w.name })),
       rows,
     },
     { headers: { 'Cache-Control': 'no-store' } }

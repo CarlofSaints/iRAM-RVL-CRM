@@ -20,6 +20,10 @@ export interface Session {
    *  dashboard / data views to scope what they see. Super Admins ignore this
    *  because they have the `view_all_clients` permission. */
   assignedClientIds?: string[];
+  /** Warehouses this user is restricted to (warehouse record IDs). EMPTY OR
+   *  ABSENT MEANS ALL WAREHOUSES — the opposite default to assignedClientIds.
+   *  UI hint only; every API re-reads the user server-side and enforces there. */
+  assignedWarehouseIds?: string[];
   /** ISO timestamp of last avatar change — when set, avatar is available via the proxy URL. */
   avatarUpdatedAt?: string;
   /** Current subscription tier. Defaults to 'standard'. */

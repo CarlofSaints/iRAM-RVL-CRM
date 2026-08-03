@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
     proPermissions,
     linkedClientId: user.linkedClientId,
     assignedClientIds: user.assignedClientIds ?? [],
+    assignedWarehouseIds: user.assignedWarehouseIds ?? [],
     avatarUpdatedAt: user.avatarUpdatedAt,
     subscriptionTier: user.subscription?.tier ?? 'standard',
     forcePasswordChange: user.forcePasswordChange,

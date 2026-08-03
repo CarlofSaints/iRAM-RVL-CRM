@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireLogin } from '@/lib/rolesData';
 import { getPickSlipRun, updateSlipInRun } from '@/lib/pickSlipData';
+import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 import { generatePickSlipPdf, type PickSlipPdfRow } from '@/lib/pickSlipPdf';
 import { renameFile, createFolder, uploadNewFile } from '@/lib/graphIram';
 
@@ -52,6 +53,10 @@ export async function PATCH(
 
   const slip = run.slips.find(s => s.id === slipId);
   if (!slip) return NextResponse.json({ error: 'Slip not found' }, { status: 404 });
+
+  const whAccess = await resolveWarehouseAccess(guard.userId);
+  const whDenied = denyIfOutOfScope(whAccess, [slip.warehouseCode || slip.warehouse], 'Slip edit');
+  if (whDenied) return whDenied;
 
   const totalQty = rows.reduce((s, r) => s + r.qty, 0);
   const totalVal = rows.reduce((s, r) => s + r.val, 0);

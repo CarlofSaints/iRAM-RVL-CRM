@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
 import { findStickerByBarcode } from '@/lib/stickerData';
+import { resolveWarehouseAccess } from '@/lib/warehouseScopeServer';
+import { isWarehouseAllowed, scopeLabel } from '@/lib/warehouseScope';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +32,23 @@ export async function GET(req: NextRequest) {
   if (!sticker) {
     return NextResponse.json(
       { found: false, barcode },
+      { headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+
+  // Warehouse scoping — a box label from another warehouse is reported as such
+  // rather than as "not found", so a scan that worked isn't mistaken for a bad
+  // barcode. `found` stays false so existing callers keep treating it as
+  // unusable; the message explains why.
+  const access = await resolveWarehouseAccess(guard.userId);
+  if (!isWarehouseAllowed(access.scope, sticker.warehouseCode, access.resolve)) {
+    return NextResponse.json(
+      {
+        found: false,
+        barcode,
+        error: `Barcode ${barcode} belongs to ${sticker.warehouseName || sticker.warehouseCode}. ` +
+          `Your access is limited to ${scopeLabel(access.scope)}.`,
+      },
       { headers: { 'Cache-Control': 'no-store' } },
     );
   }

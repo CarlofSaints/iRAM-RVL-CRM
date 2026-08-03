@@ -11,6 +11,7 @@ import { generateDeliveryNotePdf } from '@/lib/deliveryNotePdf';
 import { generateMultiSlipDeliveryNotePdf } from '@/lib/deliveryNotePdf';
 import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
 import { sendDeliveryNoteEmail } from '@/lib/email';
+import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 
 export const dynamic = 'force-dynamic';
 
@@ -87,6 +88,16 @@ export async function POST(req: NextRequest) {
     }
     resolvedSlips.push({ payload: sp, slip });
   }
+
+  // Warehouse scoping — checked across EVERY slip in the batch before anything
+  // is written, so a mixed multi-slip release can't slip one through.
+  const whAccess = await resolveWarehouseAccess(guard.userId);
+  const whDenied = denyIfOutOfScope(
+    whAccess,
+    resolvedSlips.map(r => r.slip.warehouseCode || r.slip.warehouse),
+    'Release',
+  );
+  if (whDenied) return whDenied;
 
   // Supplier lock — a delivery note must never mix suppliers, but a supplier
   // may be split across several client records sharing the same NAME with
