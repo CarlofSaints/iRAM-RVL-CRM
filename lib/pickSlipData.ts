@@ -154,6 +154,28 @@ export interface PickSlipRecord {
   deliveryNoteSignedSpWebUrl?: string;
   /** ISO timestamp when delivery note was generated */
   deliveryNoteGeneratedAt?: string;
+  /** ── Short-delivery audit ──────────────────────────────────────────────
+   *  Set when this store was on a delivery note but its boxes were NOT
+   *  physically handed over at sign-off (the vendor rep left it unticked).
+   *  The slip is rolled back to `captured` so the stock is released again on
+   *  its own delivery note, and these fields record why it fell off.
+   *
+   *  Deliberately NOT cleared by a later successful delivery or by a Reverse —
+   *  they are the audit trail for a stock discrepancy, so they stay on the
+   *  record. The full history is also in the audit log under
+   *  `delivery_not_delivered`. */
+  deliveryShortAt?: string;
+  /** Reason the vendor rep gave for not accepting this store's stock. */
+  deliveryShortReason?: string;
+  /** Vendor rep who signed the delivery that excluded this store. */
+  deliveryShortSignedByName?: string;
+  /** Collecting rep on that delivery. */
+  deliveryShortRepName?: string;
+  /** The delivery token this store was dropped from — traces back to the
+   *  signed delivery note that recorded the shortfall. */
+  deliveryShortToken?: string;
+  /** How many times this slip has been short-delivered. */
+  deliveryShortCount?: number;
   /** Vendor signature — base64 PNG from canvas pad */
   deliverySignature?: string;
   /** Name of vendor rep who signed */

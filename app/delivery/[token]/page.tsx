@@ -66,6 +66,12 @@ export default function DeliveryConfirmationPage() {
   const [submitError, setSubmitError] = useState('');
   const [success, setSuccess] = useState(false);
 
+  // Per-store physical check. Every store starts ticked (the normal case is a
+  // complete delivery); unticking one means its boxes were not handed over.
+  const [deliveredIds, setDeliveredIds] = useState<string[]>([]);
+  const [shortReasons, setShortReasons] = useState<Record<string, string>>({});
+  const [shortResult, setShortResult] = useState<Array<{ siteName: string; siteCode: string; boxCount: number }>>([]);
+
   // Signature pad state
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -80,6 +86,7 @@ export default function DeliveryConfirmationPage() {
         const data = await res.json();
         if (res.ok) {
           setSlip(data);
+          setDeliveredIds(((data.slips ?? []) as SlipBreakdown[]).map(s => s.slipId));
         } else {
           setError(data.error || 'Failed to load delivery details');
         }
@@ -188,6 +195,26 @@ export default function DeliveryConfirmationPage() {
       return;
     }
 
+    // Per-store checks (only shown for a multi-store delivery note)
+    const allSlips = slip?.slips ?? [];
+    if (allSlips.length > 1) {
+      if (deliveredIds.length === 0) {
+        setSubmitError(
+          'Tick at least one store. If nothing was delivered, do not sign — ask the office to cancel the release instead.'
+        );
+        return;
+      }
+      const missingReason = allSlips
+        .filter(s => !deliveredIds.includes(s.slipId))
+        .filter(s => !(shortReasons[s.slipId] ?? '').trim());
+      if (missingReason.length > 0) {
+        setSubmitError(
+          `Please give a reason for ${missingReason.map(s => `${s.siteName} (${s.siteCode})`).join(', ')}.`
+        );
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
       const res = await fetch(`/api/delivery/${token}`, {
@@ -197,11 +224,14 @@ export default function DeliveryConfirmationPage() {
           securityCode: securityCode.trim(),
           vendorName: vendorName.trim(),
           signature: getSignatureBase64(),
+          // Omitted for a single-store note, which keeps the all-or-nothing path.
+          ...(allSlips.length > 1 ? { deliveredSlipIds: deliveredIds, shortReasons } : {}),
         }),
       });
 
       const data = await res.json();
       if (res.ok) {
+        setShortResult(data.notDelivered ?? []);
         setSuccess(true);
       } else {
         setSubmitError(data.error || 'Failed to confirm delivery');
@@ -280,6 +310,24 @@ export default function DeliveryConfirmationPage() {
           <p className="text-gray-500 text-sm">
             Thank you. The delivery has been confirmed and recorded.
           </p>
+
+          {shortResult.length > 0 && (
+            <div className="mt-5 text-left border border-amber-200 bg-amber-50 rounded-lg px-4 py-3">
+              <p className="text-sm font-semibold text-amber-900 mb-2">
+                {shortResult.length} store{shortResult.length === 1 ? '' : 's'} recorded as not delivered
+              </p>
+              <ul className="text-xs text-amber-900 space-y-1">
+                {shortResult.map(s => (
+                  <li key={`${s.siteCode}-${s.siteName}`}>
+                    {s.siteName} ({s.siteCode}) — {s.boxCount} box{s.boxCount === 1 ? '' : 'es'}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-amber-800 mt-2">
+                This stock stays with iRam and will be re-delivered on its own delivery note.
+              </p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -374,30 +422,87 @@ export default function DeliveryConfirmationPage() {
             </div>
           </div>
 
-          {/* Multi-slip breakdown */}
+          {/* Per-store physical check. Tick each store as its boxes are
+              physically counted off; anything left unticked is recorded as not
+              delivered and its stock stays with iRam. */}
           {slip.slips && slip.slips.length > 1 && (
             <div className="mt-4 border-t border-gray-100 pt-3">
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Per-Slip Breakdown</h3>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-left text-gray-500">
-                    <th className="py-1 pr-2">Slip</th>
-                    <th className="py-1 pr-2">Store</th>
-                    <th className="py-1 text-right">Qty</th>
-                    <th className="py-1 text-right">Boxes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {slip.slips.map(s => (
-                    <tr key={s.slipId} className="border-t border-gray-50">
-                      <td className="py-1.5 pr-2 font-mono">{s.slipId.slice(-7)}</td>
-                      <td className="py-1.5 pr-2">{s.siteName} ({s.siteCode})</td>
-                      <td className="py-1.5 text-right">{s.totalQty.toLocaleString()}</td>
-                      <td className="py-1.5 text-right">{s.boxCount}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                Physical Check — tick each store as you count it off
+              </h3>
+              <p className="text-xs text-gray-500 mb-3">
+                Leave a store unticked if its boxes are not here. You will still sign for
+                everything you have received.
+              </p>
+
+              <div className="flex flex-col gap-2">
+                {slip.slips.map(s => {
+                  const ticked = deliveredIds.includes(s.slipId);
+                  return (
+                    <div key={s.slipId}
+                      className={`rounded-lg border px-3 py-2.5 transition-colors ${
+                        ticked ? 'border-gray-200 bg-white' : 'border-amber-300 bg-amber-50'
+                      }`}>
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={ticked}
+                          onChange={() => {
+                            setSubmitError('');
+                            setDeliveredIds(prev =>
+                              prev.includes(s.slipId)
+                                ? prev.filter(id => id !== s.slipId)
+                                : [...prev, s.slipId]
+                            );
+                          }}
+                          className="mt-0.5 h-5 w-5 accent-green-600 shrink-0"
+                        />
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-sm font-medium text-gray-900">
+                            {s.siteName} ({s.siteCode})
+                          </span>
+                          <span className="block text-xs text-gray-500 font-mono">{s.slipId}</span>
+                          <span className="block text-xs text-gray-500 mt-0.5">
+                            {s.totalQty.toLocaleString()} units · {s.boxCount} box{s.boxCount === 1 ? '' : 'es'}
+                          </span>
+                        </span>
+                        {!ticked && (
+                          <span className="text-[10px] font-bold uppercase tracking-wide text-amber-800 bg-amber-200 px-2 py-0.5 rounded-full shrink-0">
+                            Not delivered
+                          </span>
+                        )}
+                      </label>
+
+                      {!ticked && (
+                        <div className="mt-2 pl-8">
+                          <label className="block text-xs font-medium text-amber-900 mb-1">
+                            Reason (required)
+                          </label>
+                          <input
+                            type="text"
+                            value={shortReasons[s.slipId] ?? ''}
+                            onChange={e => {
+                              setSubmitError('');
+                              setShortReasons(prev => ({ ...prev, [s.slipId]: e.target.value }));
+                            }}
+                            placeholder="e.g. boxes left at the warehouse"
+                            className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {slip.slips.length > deliveredIds.length && (
+                <p className="mt-3 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  <strong>{slip.slips.length - deliveredIds.length} store
+                  {slip.slips.length - deliveredIds.length === 1 ? '' : 's'} marked as not delivered.</strong>{' '}
+                  That stock stays with iRam and will come back on a separate delivery note.
+                  The shortfall is printed on the delivery note you are signing.
+                </p>
+              )}
             </div>
           )}
         </div>

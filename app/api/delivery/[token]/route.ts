@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { loadControl } from '@/lib/controlData';
 import { listLoads } from '@/lib/agedStockData';
 import { findAllSlipsByDeliveryToken, updateSlipInRun } from '@/lib/pickSlipData';
+import { buildRevertPatch } from '@/lib/pickSlipRevert';
 import { getClient, listSpLinks } from '@/lib/spLinkData';
 import { loadUsers } from '@/lib/userData';
 import { logAudit } from '@/lib/auditLog';
@@ -114,6 +115,15 @@ export async function POST(
     signature: string; // base64 PNG
   };
 
+  // Per-store confirmation. `deliveredSlipIds` lists the stores physically
+  // handed over; anything else on the token was left behind. Omitting the field
+  // entirely means "all delivered" so older clients keep working unchanged.
+  const deliveredSlipIds: string[] | null = Array.isArray(body.deliveredSlipIds)
+    ? body.deliveredSlipIds.filter((x: unknown) => typeof x === 'string')
+    : null;
+  const shortReasons: Record<string, string> =
+    body.shortReasons && typeof body.shortReasons === 'object' ? body.shortReasons : {};
+
   if (!securityCode?.trim()) {
     return NextResponse.json({ error: 'Security code is required' }, { status: 400 });
   }
@@ -165,12 +175,32 @@ export async function POST(
 
   const repName = results[0].slip.releaseRepName || 'Unknown Rep';
   const now = new Date().toISOString();
-  const isMulti = results.length > 1;
-  const firstSlip = results[0].slip;
-  const firstClientId = results[0].clientId;
 
-  // Update ALL slips to delivered
-  for (const { slip, clientId, loadId } of results) {
+  // ── Split the delivery into what arrived and what didn't ──
+  const deliveredSet = deliveredSlipIds ? new Set(deliveredSlipIds) : null;
+  const delivered = deliveredSet ? results.filter(r => deliveredSet.has(r.slip.id)) : results;
+  const short = deliveredSet ? results.filter(r => !deliveredSet.has(r.slip.id)) : [];
+
+  // A sign-off with nothing delivered isn't a delivery — the release should be
+  // cancelled instead, which is a different (code-authorised) flow.
+  if (delivered.length === 0) {
+    return NextResponse.json(
+      { error: 'Tick at least one store. If nothing was delivered, cancel the release instead of signing for it.' },
+      { status: 400 },
+    );
+  }
+
+  // The signed paperwork covers only the stores actually handed over — so the
+  // SharePoint folder and customer contacts must be resolved from a DELIVERED
+  // slip, not from results[0], which may itself be one of the short stores.
+  // (One supplier can span several client records sharing a name with
+  // different vendor numbers, so these are not always interchangeable.)
+  const isMulti = delivered.length > 1;
+  const firstSlip = delivered[0].slip;
+  const firstClientId = delivered[0].clientId;
+
+  // ── Stores that WERE delivered ──
+  for (const { slip, clientId, loadId } of delivered) {
     await updateSlipInRun(clientId, loadId, slip.id, {
       status: 'delivered',
       deliveredAt: now,
@@ -186,7 +216,41 @@ export async function POST(
       userName: repName,
       slipId: slip.id,
       clientId,
-      detail: `Delivery confirmed by vendor rep "${vendorName.trim()}" via QR code${isMulti ? ` (multi-slip: ${results.length} slips)` : ''}`,
+      detail: `Delivery confirmed by vendor rep "${vendorName.trim()}" via QR code`
+        + (isMulti ? ` (multi-slip: ${delivered.length} slips)` : '')
+        + (short.length > 0 ? ` — ${short.length} store(s) on this delivery note were NOT delivered` : ''),
+    });
+  }
+
+  // ── Stores that were NOT handed over ──
+  // Roll each back to `captured` using the same field-clearing model as the
+  // Reverse action, so it drops off this delivery note, loses the delivery
+  // token, and reappears on the Release screen for a fresh release. Booking
+  // and receipt data (including linked box labels) are untouched, so nothing
+  // needs re-scanning or reprinting.
+  for (const { slip, clientId, loadId } of short) {
+    const reason = (shortReasons[slip.id] ?? '').trim();
+    await updateSlipInRun(clientId, loadId, slip.id, {
+      ...buildRevertPatch('captured'),
+      deliveryShortAt: now,
+      deliveryShortReason: reason || 'No reason given',
+      deliveryShortSignedByName: vendorName.trim(),
+      deliveryShortRepName: repName,
+      deliveryShortToken: token,
+      deliveryShortCount: (slip.deliveryShortCount ?? 0) + 1,
+    });
+
+    await logAudit({
+      action: 'delivery_not_delivered',
+      userId: releaseRepId,
+      userName: repName,
+      slipId: slip.id,
+      clientId,
+      detail: `NOT delivered — ${slip.siteName} (${slip.siteCode}), `
+        + `${(slip.releaseBoxes ?? []).length} box(es). `
+        + `Vendor rep "${vendorName.trim()}" signed for the rest of the delivery without it. `
+        + `Reason: ${reason || 'none given'}. `
+        + `Rolled back to Captured — stock retained, must be released again.`,
     });
   }
 
@@ -195,15 +259,27 @@ export async function POST(
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://iram-rvl-crm.vercel.app';
   const qrUrl = `${siteUrl}/delivery/${token}`;
 
+  // Use the multi-slip layout whenever anything was short, even for a single
+  // delivered store — it is the only generator that can print the
+  // NOT DELIVERED block, and that block has to be on the signed document.
+  const useMultiPdf = isMulti || short.length > 0;
+
   try {
-    if (isMulti) {
+    if (useMultiPdf) {
       signedPdfBuffer = await generateMultiSlipDeliveryNotePdf({
         clientName: firstSlip.clientName,
-        vendorNumber: [...new Set(results.map(r => r.slip.vendorNumber).filter(Boolean))].join(' / ') || firstSlip.vendorNumber,
+        vendorNumber: [...new Set(delivered.map(r => r.slip.vendorNumber).filter(Boolean))].join(' / ') || firstSlip.vendorNumber,
         releaseRepName: firstSlip.releaseRepName ?? '',
         releasedAt: firstSlip.releasedAt ?? now,
         qrUrl,
-        slips: results.map(({ slip }) => ({
+        notDelivered: short.map(({ slip }) => ({
+          pickSlipId: slip.id,
+          siteName: slip.siteName,
+          siteCode: slip.siteCode,
+          boxCount: (slip.releaseBoxes ?? []).length,
+          reason: (shortReasons[slip.id] ?? '').trim() || undefined,
+        })),
+        slips: delivered.map(({ slip }) => ({
           pickSlipId: slip.id,
           siteName: slip.siteName,
           siteCode: slip.siteCode,
@@ -267,16 +343,22 @@ export async function POST(
         let pdfFileName: string;
         if (isMulti) {
           const dateFmt = now.slice(0, 10);
-          const last3s = results.map(r => r.slip.id.slice(-3)).join(', ');
+          const last3s = delivered.map(r => r.slip.id.slice(-3)).join(', ');
           pdfFileName = `${firstSlip.clientName} - ${dateFmt} (${last3s}) - SIGNED.pdf`;
         } else {
           pdfFileName = `${firstSlip.siteName} ${firstSlip.siteCode} - DN-${firstSlip.id} - SIGNED.pdf`;
         }
+        // Flag a short delivery in the filename so it stands out in SharePoint.
+        if (short.length > 0) {
+          pdfFileName = pdfFileName.replace(/ - SIGNED\.pdf$/, ` - SIGNED (${short.length} NOT DELIVERED).pdf`);
+        }
 
         const uploaded = await uploadNewFile(resolved.driveId, signedFolder.id, pdfFileName, signedPdfBuffer, 'application/pdf');
 
-        // Save signed URL on ALL slips
-        for (const { slip, clientId, loadId } of results) {
+        // Save signed URL on the DELIVERED slips only — a short store has had
+        // its delivery-note fields cleared by the rollback and does not belong
+        // to this signed note any more.
+        for (const { slip, clientId, loadId } of delivered) {
           await updateSlipInRun(clientId, loadId, slip.id, {
             deliveryNoteSignedSpWebUrl: uploaded.webUrl,
           });
@@ -299,21 +381,42 @@ export async function POST(
       const toAddresses = dnContacts.map(c => c.email);
       const confirmedAt = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Johannesburg' });
 
-      const slipRows = results.map(r =>
+      const slipRows = delivered.map(r =>
         `<tr><td style="padding:4px 12px 4px 0;font-size:13px;font-family:monospace;">${r.slip.id}</td><td style="font-size:13px;">${r.slip.siteName} (${r.slip.siteCode})</td><td style="font-size:13px;">${r.slip.totalQty}</td></tr>`
       ).join('');
 
+      // Short stores get their own block so the customer can see immediately
+      // what is still outstanding rather than reconciling the PDF by hand.
+      const shortHtml = short.length === 0 ? '' : `
+        <div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:14px 16px;margin-bottom:20px;">
+          <p style="margin:0 0 8px;font-size:14px;font-weight:bold;color:#92400E;">
+            ${short.length} store${short.length === 1 ? '' : 's'} on this delivery note ${short.length === 1 ? 'was' : 'were'} NOT delivered
+          </p>
+          <p style="margin:0 0 10px;font-size:13px;color:#92400E;">
+            This stock has been retained and will be re-delivered on a separate delivery note.
+          </p>
+          <table style="width:100%;">
+            ${short.map(r => `<tr>
+              <td style="padding:3px 12px 3px 0;font-size:13px;font-family:monospace;">${r.slip.id}</td>
+              <td style="font-size:13px;">${r.slip.siteName} (${r.slip.siteCode})</td>
+              <td style="font-size:13px;">${(r.slip.releaseBoxes ?? []).length} box(es)</td>
+              <td style="font-size:13px;color:#92400E;">${(shortReasons[r.slip.id] ?? '').trim() || 'No reason given'}</td>
+            </tr>`).join('')}
+          </table>
+        </div>`;
+
       const bodyHtml = `
         <p style="margin:0 0 14px;font-size:14px;">Stock has been delivered and signed for. The signed delivery note is attached.</p>
+        ${shortHtml}
         <table style="background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:14px 16px;width:100%;margin-bottom:20px;">
-          ${isMulti ? `<tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Slips</td><td style="font-size:13px;"><strong>${results.length}</strong></td></tr>` : ''}
+          ${isMulti ? `<tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Slips</td><td style="font-size:13px;"><strong>${delivered.length}</strong></td></tr>` : ''}
           ${isMulti
             ? `<tr><td colspan="2" style="padding:4px 0;"><table style="width:100%;">${slipRows}</table></td></tr>`
             : `<tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Pick Slip</td><td style="font-size:13px;font-family:monospace;"><strong>${firstSlip.id}</strong></td></tr>
                <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Store</td><td style="font-size:13px;">${firstSlip.siteName} (${firstSlip.siteCode})</td></tr>`
           }
           <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Warehouse</td><td style="font-size:13px;">${firstSlip.warehouse}</td></tr>
-          <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Total Qty</td><td style="font-size:13px;">${results.reduce((s, r) => s + r.slip.totalQty, 0)}</td></tr>
+          <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Total Qty</td><td style="font-size:13px;">${delivered.reduce((s, r) => s + r.slip.totalQty, 0)}</td></tr>
           <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Collecting Rep</td><td style="font-size:13px;">${repName}</td></tr>
           <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Received By</td><td style="font-size:13px;font-weight:bold;">${vendorName.trim()}</td></tr>
           <tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Confirmed At</td><td style="font-size:13px;">${confirmedAt}</td></tr>
@@ -324,14 +427,15 @@ export async function POST(
       const attachments: Array<{ filename: string; content: Buffer }> = [];
       if (signedPdfBuffer) {
         const filename = isMulti
-          ? `Delivery Note - ${results.length} slips - SIGNED.pdf`
+          ? `Delivery Note - ${delivered.length} slips - SIGNED.pdf`
           : `Delivery Note - ${firstSlip.id} - SIGNED.pdf`;
         attachments.push({ filename, content: signedPdfBuffer });
       }
 
-      const subject = isMulti
-        ? `Delivery Confirmed — ${results.length} slips — ${firstSlip.clientName}`
-        : `Delivery Confirmed — ${firstSlip.id} — ${firstSlip.siteName} (${firstSlip.siteCode})`;
+      const shortTag = short.length > 0 ? ` — ${short.length} NOT DELIVERED` : '';
+      const subject = (isMulti
+        ? `Delivery Confirmed — ${delivered.length} slips — ${firstSlip.clientName}`
+        : `Delivery Confirmed — ${firstSlip.id} — ${firstSlip.siteName} (${firstSlip.siteCode})`) + shortTag;
 
       await sendPickSlipEmail({
         to: toAddresses,
@@ -344,5 +448,17 @@ export async function POST(
     console.error('[delivery] Failed to email customer contacts:', err instanceof Error ? err.message : err);
   }
 
-  return NextResponse.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } });
+  return NextResponse.json(
+    {
+      ok: true,
+      deliveredCount: delivered.length,
+      notDelivered: short.map(({ slip }) => ({
+        slipId: slip.id,
+        siteName: slip.siteName,
+        siteCode: slip.siteCode,
+        boxCount: (slip.releaseBoxes ?? []).length,
+      })),
+    },
+    { headers: { 'Cache-Control': 'no-store' } },
+  );
 }

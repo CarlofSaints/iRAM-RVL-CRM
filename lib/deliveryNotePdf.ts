@@ -349,6 +349,16 @@ export interface MultiSlipDeliveryNotePdfParams {
   signature?: string;
   signedByName?: string;
   deliveredAt?: string;
+  /** Stores that were on this delivery note but NOT physically handed over.
+   *  Rendered immediately above the signature block so the document the vendor
+   *  signs is itself the record of what was short. */
+  notDelivered?: Array<{
+    pickSlipId: string;
+    siteName: string;
+    siteCode: string;
+    boxCount: number;
+    reason?: string;
+  }>;
 }
 
 /**
@@ -359,7 +369,7 @@ export interface MultiSlipDeliveryNotePdfParams {
 export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDeliveryNotePdfParams): Promise<Buffer> {
   const {
     clientName, vendorNumber, releaseRepName, releasedAt, qrUrl,
-    slips, signature, signedByName, deliveredAt,
+    slips, signature, signedByName, deliveredAt, notDelivered,
   } = params;
 
   // Parse signature image if provided
@@ -560,6 +570,38 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
     doc.text(qrUrl, marginL, y, { width: usableW, align: 'center' });
     doc.fillColor('#000000');
     y += 15;
+  }
+
+  // ── Stores NOT delivered ──
+  // Sits directly above the signature so the vendor is signing off on the
+  // shortfall as well as on what they received.
+  if (notDelivered && notDelivered.length > 0) {
+    ensureSpace(60 + notDelivered.length * 14);
+    y += 10;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#B45309');
+    doc.text('NOT DELIVERED — stock retained', tableX, y);
+    y += 14;
+    doc.font('Helvetica').fontSize(8).fillColor('#666666');
+    doc.text(
+      'The following stores appear on this delivery note but were not physically handed over. '
+      + 'This stock remains with iRam and will be re-delivered on a separate delivery note.',
+      tableX, y, { width: usableW },
+    );
+    y += 22;
+    doc.fillColor('#000000').font('Helvetica').fontSize(8);
+    for (const nd of notDelivered) {
+      const label = `${nd.siteName} (${nd.siteCode})  —  ${nd.pickSlipId}  —  ${nd.boxCount} box${nd.boxCount === 1 ? '' : 'es'}`;
+      doc.text(label, tableX + 6, y, { width: usableW - 12 });
+      y += 11;
+      if (nd.reason) {
+        doc.fillColor('#666666');
+        doc.text(`Reason: ${nd.reason}`, tableX + 14, y, { width: usableW - 20 });
+        doc.fillColor('#000000');
+        y += 11;
+      }
+      y += 2;
+    }
+    y += 6;
   }
 
   // ── Physical signature block ──
