@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { loadControl } from '@/lib/controlData';
 import { listLoads } from '@/lib/agedStockData';
 import { findAllSlipsByDeliveryToken, updateSlipInRun } from '@/lib/pickSlipData';
-import { buildRevertPatch } from '@/lib/pickSlipRevert';
+import { buildRevertPatch, revertUndoesBooking } from '@/lib/pickSlipRevert';
+import { unlinkStickerFromSlip } from '@/lib/stickerData';
+import { resolveShortfall } from '@/lib/deliveryShortfall';
 import { getClient, listSpLinks } from '@/lib/spLinkData';
 import { loadUsers } from '@/lib/userData';
 import { logAudit } from '@/lib/auditLog';
@@ -121,7 +123,9 @@ export async function POST(
   const deliveredSlipIds: string[] | null = Array.isArray(body.deliveredSlipIds)
     ? body.deliveredSlipIds.filter((x: unknown) => typeof x === 'string')
     : null;
-  const shortReasons: Record<string, string> =
+  // Per-store shortfall detail, keyed by slip id. Current clients send
+  // { reasonKey, note }; a plain string is accepted as legacy free text.
+  const shortReasons: Record<string, string | { reasonKey?: string; note?: string }> =
     body.shortReasons && typeof body.shortReasons === 'object' ? body.shortReasons : {};
 
   if (!securityCode?.trim()) {
@@ -229,11 +233,29 @@ export async function POST(
   // and receipt data (including linked box labels) are untouched, so nothing
   // needs re-scanning or reprinting.
   for (const { slip, clientId, loadId } of short) {
-    const reason = (shortReasons[slip.id] ?? '').trim();
+    const { def, text } = resolveShortfall(shortReasons[slip.id]);
+    const rollbackTo = def.rollbackTo;
+
+    // "Never collected from store" rolls back past the booking stage, which
+    // means the box labels were never really packed — free those barcodes so
+    // they can be re-used, exactly as the Reverse action does.
+    if (revertUndoesBooking(rollbackTo)) {
+      const barcodes = new Set<string>();
+      for (const b of slip.receiptBoxes ?? []) if (b.stickerBarcode) barcodes.add(b.stickerBarcode);
+      for (const b of slip.releaseBoxes ?? []) if (b.stickerBarcode) barcodes.add(b.stickerBarcode);
+      for (const barcode of barcodes) {
+        try {
+          await unlinkStickerFromSlip(barcode, slip.id);
+        } catch (err) {
+          console.error('[delivery] failed to unlink sticker', barcode, err instanceof Error ? err.message : err);
+        }
+      }
+    }
+
     await updateSlipInRun(clientId, loadId, slip.id, {
-      ...buildRevertPatch('captured'),
+      ...buildRevertPatch(rollbackTo),
       deliveryShortAt: now,
-      deliveryShortReason: reason || 'No reason given',
+      deliveryShortReason: text,
       deliveryShortSignedByName: vendorName.trim(),
       deliveryShortRepName: repName,
       deliveryShortToken: token,
@@ -249,8 +271,10 @@ export async function POST(
       detail: `NOT delivered — ${slip.siteName} (${slip.siteCode}), `
         + `${(slip.releaseBoxes ?? []).length} box(es). `
         + `Vendor rep "${vendorName.trim()}" signed for the rest of the delivery without it. `
-        + `Reason: ${reason || 'none given'}. `
-        + `Rolled back to Captured — stock retained, must be released again.`,
+        + `Reason: ${text}. `
+        + (rollbackTo === 'sent'
+          ? 'Rolled back to Sent — never collected, so the pick slip is outstanding again and its box labels were unlinked.'
+          : 'Rolled back to Captured — stock retained in the warehouse, must be released again.'),
     });
   }
 
@@ -277,7 +301,7 @@ export async function POST(
           siteName: slip.siteName,
           siteCode: slip.siteCode,
           boxCount: (slip.releaseBoxes ?? []).length,
-          reason: (shortReasons[slip.id] ?? '').trim() || undefined,
+          reason: resolveShortfall(shortReasons[slip.id]).text,
         })),
         slips: delivered.map(({ slip }) => ({
           pickSlipId: slip.id,
@@ -393,14 +417,16 @@ export async function POST(
             ${short.length} store${short.length === 1 ? '' : 's'} on this delivery note ${short.length === 1 ? 'was' : 'were'} NOT delivered
           </p>
           <p style="margin:0 0 10px;font-size:13px;color:#92400E;">
-            This stock has been retained and will be re-delivered on a separate delivery note.
+            This stock was not handed over. Anything retained in the warehouse will be
+            re-delivered on a separate delivery note; anything never collected has been
+            returned to outstanding for collection.
           </p>
           <table style="width:100%;">
             ${short.map(r => `<tr>
               <td style="padding:3px 12px 3px 0;font-size:13px;font-family:monospace;">${r.slip.id}</td>
               <td style="font-size:13px;">${r.slip.siteName} (${r.slip.siteCode})</td>
               <td style="font-size:13px;">${(r.slip.releaseBoxes ?? []).length} box(es)</td>
-              <td style="font-size:13px;color:#92400E;">${(shortReasons[r.slip.id] ?? '').trim() || 'No reason given'}</td>
+              <td style="font-size:13px;color:#92400E;">${resolveShortfall(shortReasons[r.slip.id]).text}</td>
             </tr>`).join('')}
           </table>
         </div>`;

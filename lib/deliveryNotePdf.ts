@@ -579,12 +579,12 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
     ensureSpace(60 + notDelivered.length * 14);
     y += 10;
     doc.font('Helvetica-Bold').fontSize(10).fillColor('#B45309');
-    doc.text('NOT DELIVERED — stock retained', tableX, y);
+    doc.text('NOT DELIVERED', tableX, y);
     y += 14;
     doc.font('Helvetica').fontSize(8).fillColor('#666666');
     doc.text(
       'The following stores appear on this delivery note but were not physically handed over. '
-      + 'This stock remains with iRam and will be re-delivered on a separate delivery note.',
+      + 'This stock has not been received by the vendor and is excluded from the totals signed for above.',
       tableX, y, { width: usableW },
     );
     y += 22;

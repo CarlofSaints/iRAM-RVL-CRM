@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
+import { SHORTFALL_REASONS } from '@/lib/deliveryShortfall';
 
 interface ContactDto {
   name: string;
@@ -69,7 +70,7 @@ export default function DeliveryConfirmationPage() {
   // Per-store physical check. Every store starts ticked (the normal case is a
   // complete delivery); unticking one means its boxes were not handed over.
   const [deliveredIds, setDeliveredIds] = useState<string[]>([]);
-  const [shortReasons, setShortReasons] = useState<Record<string, string>>({});
+  const [shortReasons, setShortReasons] = useState<Record<string, { reasonKey: string; note: string }>>({});
   const [shortResult, setShortResult] = useState<Array<{ siteName: string; siteCode: string; boxCount: number }>>([]);
 
   // Signature pad state
@@ -204,12 +205,21 @@ export default function DeliveryConfirmationPage() {
         );
         return;
       }
-      const missingReason = allSlips
-        .filter(s => !deliveredIds.includes(s.slipId))
-        .filter(s => !(shortReasons[s.slipId] ?? '').trim());
+      const unticked = allSlips.filter(s => !deliveredIds.includes(s.slipId));
+      const missingReason = unticked.filter(s => !shortReasons[s.slipId]?.reasonKey);
       if (missingReason.length > 0) {
         setSubmitError(
-          `Please give a reason for ${missingReason.map(s => `${s.siteName} (${s.siteCode})`).join(', ')}.`
+          `Please select a reason for ${missingReason.map(s => `${s.siteName} (${s.siteCode})`).join(', ')}.`
+        );
+        return;
+      }
+      const missingNote = unticked.filter(s => {
+        const def = SHORTFALL_REASONS.find(r => r.key === shortReasons[s.slipId]?.reasonKey);
+        return def?.requiresNote && !(shortReasons[s.slipId]?.note ?? '').trim();
+      });
+      if (missingNote.length > 0) {
+        setSubmitError(
+          `Please add a note for ${missingNote.map(s => `${s.siteName} (${s.siteCode})`).join(', ')}.`
         );
         return;
       }
@@ -324,7 +334,8 @@ export default function DeliveryConfirmationPage() {
                 ))}
               </ul>
               <p className="text-xs text-amber-800 mt-2">
-                This stock stays with iRam and will be re-delivered on its own delivery note.
+                This stock has not been signed for. The office has been notified and it is
+                recorded against each store.
               </p>
             </div>
           )}
@@ -473,23 +484,50 @@ export default function DeliveryConfirmationPage() {
                         )}
                       </label>
 
-                      {!ticked && (
-                        <div className="mt-2 pl-8">
-                          <label className="block text-xs font-medium text-amber-900 mb-1">
-                            Reason (required)
-                          </label>
-                          <input
-                            type="text"
-                            value={shortReasons[s.slipId] ?? ''}
-                            onChange={e => {
-                              setSubmitError('');
-                              setShortReasons(prev => ({ ...prev, [s.slipId]: e.target.value }));
-                            }}
-                            placeholder="e.g. boxes left at the warehouse"
-                            className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/40"
-                          />
-                        </div>
-                      )}
+                      {!ticked && (() => {
+                        const entry = shortReasons[s.slipId] ?? { reasonKey: '', note: '' };
+                        const def = SHORTFALL_REASONS.find(r => r.key === entry.reasonKey);
+                        const setEntry = (patch: Partial<{ reasonKey: string; note: string }>) => {
+                          setSubmitError('');
+                          setShortReasons(prev => ({
+                            ...prev,
+                            [s.slipId]: { ...(prev[s.slipId] ?? { reasonKey: '', note: '' }), ...patch },
+                          }));
+                        };
+                        return (
+                          <div className="mt-2 pl-8 flex flex-col gap-2">
+                            <div>
+                              <label className="block text-xs font-medium text-amber-900 mb-1">
+                                Why not? (required)
+                              </label>
+                              <select
+                                value={entry.reasonKey}
+                                onChange={e => setEntry({ reasonKey: e.target.value })}
+                                className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+                              >
+                                <option value="">— Select a reason —</option>
+                                {SHORTFALL_REASONS.map(r => (
+                                  <option key={r.key} value={r.key}>{r.label}</option>
+                                ))}
+                              </select>
+                              {def && <p className="text-xs text-amber-800 mt-1">{def.hint}</p>}
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-amber-900 mb-1">
+                                Note {def?.requiresNote ? '(required)' : '(optional)'}
+                              </label>
+                              <input
+                                type="text"
+                                value={entry.note}
+                                onChange={e => setEntry({ note: e.target.value })}
+                                placeholder="Anything the office should know"
+                                className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+                              />
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
@@ -499,8 +537,8 @@ export default function DeliveryConfirmationPage() {
                 <p className="mt-3 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                   <strong>{slip.slips.length - deliveredIds.length} store
                   {slip.slips.length - deliveredIds.length === 1 ? '' : 's'} marked as not delivered.</strong>{' '}
-                  That stock stays with iRam and will come back on a separate delivery note.
-                  The shortfall is printed on the delivery note you are signing.
+                  This stock is excluded from what you are signing for, and the shortfall is
+                  printed on the delivery note itself.
                 </p>
               )}
             </div>
