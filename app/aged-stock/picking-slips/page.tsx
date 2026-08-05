@@ -350,31 +350,28 @@ export default function PickingSlipsPage() {
   // A store/ref text search means the user is hunting for a specific slip.
   const searching = storeQuery.trim() !== '' || refQuery.trim() !== '';
 
+  // The status filter is absolute — nothing overrides it. Delivered slips a
+  // search would otherwise surface are offered via the amber hint below.
   const filtered = useMemo(() => {
     return slips.filter(s => {
       if (!passesNonStatus(s)) return false;
-      if (statusFilter.size > 0 && !statusFilter.has(s.status)) {
-        // 'delivered' is hidden by default, but post-delivery GRN/GRV
-        // corrections live on delivered slips — so when the user is
-        // searching by store/ref, reveal delivered matches regardless.
-        if (!(searching && s.status === 'delivered')) return false;
-      }
+      if (statusFilter.size > 0 && !statusFilter.has(s.status)) return false;
       return true;
     });
-  }, [slips, passesNonStatus, statusFilter, searching]);
+  }, [slips, passesNonStatus, statusFilter]);
 
-  // Delivered slips that match the current narrowing filters but are still
-  // hidden because 'delivered' isn't in the status filter and no text search
-  // is revealing them. Drives the "show delivered" hint below.
+  // Delivered slips that match the current narrowing filters but are hidden
+  // because 'delivered' isn't ticked. Drives the "show delivered" hint below.
   const hiddenDelivered = useMemo(() => {
-    if (statusFilter.has('delivered') || searching) return 0;
+    if (statusFilter.has('delivered')) return 0;
     return slips.filter(s => s.status === 'delivered' && passesNonStatus(s)).length;
-  }, [slips, passesNonStatus, statusFilter, searching]);
+  }, [slips, passesNonStatus, statusFilter]);
 
   // Only nudge about hidden delivered slips once the user has narrowed the
-  // list (client/vendor/channel/type) — not on the default full-grid view.
+  // list (client/vendor/channel/type or a store/ref search) — not on the
+  // default full-grid view.
   const narrowed = clientFilter.size > 0 || !!clientNameFilter || !!vendorFilter
-    || !!channelFilter || typeFilter !== '';
+    || !!channelFilter || typeFilter !== '' || searching;
 
   const sorted = useMemo(() => {
     const list = [...filtered];
@@ -1136,8 +1133,9 @@ export default function PickingSlipsPage() {
       )}
 
       {/* Hidden-delivered hint — delivered slips are hidden by default, so a
-          user narrowing to a client won't see completed slips they may need
-          to correct (e.g. a GRN/GRV fix). Offer a one-click reveal. */}
+          user narrowing to a client or searching a store won't see completed
+          slips they may need to correct (e.g. a GRN/GRV fix). The status
+          filter is never overridden — offer a one-click reveal instead. */}
       {narrowed && hiddenDelivered > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 flex items-center gap-3 text-sm">
           <span className="text-amber-800">
