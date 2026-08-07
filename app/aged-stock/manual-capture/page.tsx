@@ -41,7 +41,9 @@ export default function ManualCapturePage() {
   const [selectedStores, setSelectedStores] = useState<Set<string>>(new Set());
   const [storeSearch, setStoreSearch] = useState('');
   const [generating, setGenerating] = useState(false);
-  const [result, setResult] = useState<{ generated: number; uploaded: number } | null>(null);
+  const [result, setResult] = useState<{ generated: number; uploaded: number; warnings?: string[] } | null>(null);
+  /** Failure shown on the page, not a toast — these messages are too long to read in 4s. */
+  const [genError, setGenError] = useState<string[] | null>(null);
 
   // Load control data
   useEffect(() => {
@@ -121,6 +123,7 @@ export default function ManualCapturePage() {
 
     setGenerating(true);
     setResult(null);
+    setGenError(null);
     try {
       const res = await authFetch('/api/pick-slips/manual', {
         method: 'POST',
@@ -133,16 +136,18 @@ export default function ManualCapturePage() {
       });
       const data = await res.json();
       if (res.ok && data.ok) {
-        setResult({ generated: data.generated, uploaded: data.uploaded });
+        setResult({
+          generated: data.generated,
+          uploaded: data.uploaded,
+          warnings: data.uploadErrors,
+        });
         notify(`Generated ${data.generated} manual pick slip${data.generated !== 1 ? 's' : ''}`);
-        if (data.uploadErrors?.length > 0) {
-          notify(`Some uploads failed: ${data.uploadErrors.join('; ')}`, 'error');
-        }
       } else {
-        notify(data.error || 'Generation failed', 'error');
+        const details = (data.details as string[] | undefined) ?? [];
+        setGenError(details.length > 0 ? details : [data.error || 'Generation failed']);
       }
     } catch {
-      notify('Network error generating pick slips', 'error');
+      setGenError(['Network error generating pick slips. Check your connection and try again.']);
     } finally {
       setGenerating(false);
     }
@@ -270,20 +275,42 @@ export default function ManualCapturePage() {
           </div>
 
           {/* Generate button */}
-          <div className="flex items-center gap-4">
-            <button
-              onClick={handleGenerate}
-              disabled={generating || !selectedClient || !selectedChannel || selectedStores.size === 0}
-              className="px-6 py-2.5 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              {generating && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-              Generate Manual Pick Slips
-            </button>
+          <div className="space-y-3">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={handleGenerate}
+                disabled={generating || !selectedClient || !selectedChannel || selectedStores.size === 0}
+                className="px-6 py-2.5 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {generating && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                Generate Manual Pick Slips
+              </button>
 
-            {result && (
-              <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-2 text-sm text-green-700">
-                Generated <strong>{result.generated}</strong> pick slip{result.generated !== 1 ? 's' : ''}
-                {result.uploaded > 0 && <> ({result.uploaded} uploaded to SharePoint)</>}
+              {result && (
+                <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-2 text-sm text-green-700">
+                  Generated <strong>{result.generated}</strong> pick slip{result.generated !== 1 ? 's' : ''}
+                  {result.uploaded > 0 && <> ({result.uploaded} uploaded to SharePoint)</>}
+                </div>
+              )}
+            </div>
+
+            {/* Slips exist but SharePoint didn't get them — say so, don't let it read as a clean run */}
+            {(result?.warnings?.length ?? 0) > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900">
+                <p className="font-medium mb-2">Generated, but not everything reached SharePoint</p>
+                <div className="text-xs space-y-1.5">
+                  {result!.warnings!.map((e, i) => <p key={i}>{e}</p>)}
+                </div>
+              </div>
+            )}
+
+            {/* Failure — stays on screen, says what to go and fix */}
+            {genError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-800">
+                <p className="font-medium mb-2">No pick slips were generated</p>
+                <div className="text-xs space-y-1.5">
+                  {genError.map((e, i) => <p key={i}>{e}</p>)}
+                </div>
               </div>
             )}
           </div>

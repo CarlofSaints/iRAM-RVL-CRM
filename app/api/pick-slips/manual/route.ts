@@ -131,6 +131,7 @@ export async function POST(req: NextRequest) {
 
   // Resolve SP folder
   let dateFolder: { driveId: string; folderId: string } | null = null;
+  const folderErrors: string[] = [];
   const now = new Date();
   const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
   const dateDash = now.toISOString().slice(0, 10);
@@ -141,6 +142,12 @@ export async function POST(req: NextRequest) {
     dateFolder = { driveId: resolved.driveId, folderId: folder.id };
   } catch (err) {
     console.error('[manual-capture] SP folder resolve failed:', err);
+    // Slips are still generated without SharePoint, but say so — a silently
+    // un-uploaded batch looks identical to a successful one.
+    folderErrors.push(
+      `The Pick Slip Folder in SharePoint could not be opened for vendor number ${vendorNumber}, so the PDFs were not uploaded: ` +
+      (err instanceof Error ? err.message : String(err))
+    );
   }
 
   // Gather ALL existing runs (load-based + manual) for sequence numbering
@@ -235,9 +242,12 @@ export async function POST(req: NextRequest) {
   }
 
   if (slips.length === 0) {
+    const reasons = [...uploadErrors, ...folderErrors];
     return NextResponse.json({
-      error: 'No pick slips could be generated',
-      details: uploadErrors,
+      error: reasons.length > 0
+        ? `No pick slips could be generated — all ${storeIds.length} selected store${storeIds.length === 1 ? '' : 's'} failed. ${reasons.join(' ')}`
+        : `No pick slips could be generated — none of the ${storeIds.length} selected store${storeIds.length === 1 ? '' : 's'} could be found in Store Control.`,
+      details: reasons,
     }, { status: 500 });
   }
 
@@ -265,6 +275,8 @@ export async function POST(req: NextRequest) {
     generated: slips.length,
     uploaded: slips.filter(s => s.spWebUrl).length,
     slips,
-    ...(uploadErrors.length > 0 ? { uploadErrors } : {}),
+    ...(uploadErrors.length > 0 || folderErrors.length > 0
+      ? { uploadErrors: [...uploadErrors, ...folderErrors] }
+      : {}),
   }, { headers: { 'Cache-Control': 'no-store' } });
 }

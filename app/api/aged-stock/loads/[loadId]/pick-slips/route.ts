@@ -92,6 +92,9 @@ export async function POST(
   if (!client) {
     return NextResponse.json({ error: 'Client not found' }, { status: 404 });
   }
+  // Hoisted so the skip summariser below can close over it — TS drops the
+  // non-null narrowing of `client` inside a function declaration.
+  const clientName = client.name;
 
   const spLinks = await listSpLinks(clientId);
   const linksWithPickSlipFolder = spLinks.filter(l => l.pickSlipFolderUrl);
@@ -108,6 +111,10 @@ export async function POST(
       vendorToLink.set(link.vendorNumber, link);
     }
   }
+
+  // Every vendor number that appears on ANY SP link (with or without a pick slip
+  // folder) — lets us tell "wrong vendor number" apart from "folder not set".
+  const vendorsWithAnyLink = new Set(spLinks.map(l => l.vendorNumber));
 
   // Build article → vendorNumber lookup from SP link products so we can
   // split rows by vendor number (a client like Genkem may have 2+ vendor numbers)
@@ -207,14 +214,27 @@ export async function POST(
   const uploadErrors: string[] = [];
   const seqCounters = new Map<string, number>(); // key: vendorNumber-dateStr → next sequence
 
+  // Skipped store/vendor groups, so a zero-slip (or short) run can explain itself
+  // instead of returning a bare "No pick slips could be generated".
+  interface SkippedGroup { siteCode: string; vendorNumber: string; rowCount: number }
+  const skippedNoVendorLink: SkippedGroup[] = [];
+  const skippedNoFolder: SkippedGroup[] = [];
+  const skippedEmptyRows: SkippedGroup[] = [];
+
   for (const [, group] of rowsBySiteVendor) {
     const { siteCode, vendorNumber, rows: siteRows } = group;
 
     const link = vendorToLink.get(vendorNumber);
-    if (!link?.pickSlipFolderUrl) continue;
+    if (!link?.pickSlipFolderUrl) {
+      skippedNoVendorLink.push({ siteCode, vendorNumber, rowCount: siteRows.length });
+      continue;
+    }
 
     const dateFolder = dateFolders.get(link.pickSlipFolderUrl);
-    if (!dateFolder) continue;
+    if (!dateFolder) {
+      skippedNoFolder.push({ siteCode, vendorNumber, rowCount: siteRows.length });
+      continue;
+    }
 
     // Look up warehouse from store control
     const storeRec = storeByCode.get(siteCode.trim().toLowerCase());
@@ -234,7 +254,10 @@ export async function POST(
       .filter(r => r.qty > 0 || r.val > 0);
 
     // Skip entire store if no rows remain after filter
-    if (pdfRows.length === 0) continue;
+    if (pdfRows.length === 0) {
+      skippedEmptyRows.push({ siteCode, vendorNumber, rowCount: siteRows.length });
+      continue;
+    }
 
     // Generate sequence
     const seqKey = `${vendorNumber}-${dateStr}`;
@@ -267,7 +290,7 @@ export async function POST(
     }
 
     // Build filename: {StoreName} {SiteCode} {ClientName} ({VendorNumber}) - {YYYYMMDD} - {pickSlipId}.pdf
-    const fileName = `${siteName} ${siteCode} ${client.name} (${vendorNumber}) - ${dateStr} - ${pickSlipId}.pdf`;
+    const fileName = `${siteName} ${siteCode} ${clientName} (${vendorNumber}) - ${dateStr} - ${pickSlipId}.pdf`;
 
     // Upload to SP
     let spWebUrl: string | undefined;
@@ -309,11 +332,68 @@ export async function POST(
     });
   }
 
+  // Turn the skipped groups into plain-English, actionable sentences. A single
+  // mistyped vendor number on an SP link silently skips every store on the load,
+  // so name the vendor numbers involved and where to fix them.
+  function summariseSkips(): string[] {
+    const out: string[] = [];
+
+    if (skippedNoVendorLink.length > 0) {
+      const byVendor = new Map<string, { rows: number; stores: number }>();
+      for (const s of skippedNoVendorLink) {
+        const agg = byVendor.get(s.vendorNumber) ?? { rows: 0, stores: 0 };
+        agg.rows += s.rowCount;
+        agg.stores += 1;
+        byVendor.set(s.vendorNumber, agg);
+      }
+      for (const [vendor, agg] of byVendor) {
+        const what = `${agg.rows} row${agg.rows === 1 ? '' : 's'} across ${agg.stores} store${agg.stores === 1 ? '' : 's'}`;
+        if (vendorsWithAnyLink.has(vendor)) {
+          out.push(
+            `Vendor number ${vendor} (${what}): the SharePoint link for this vendor has no Pick Slip Folder URL configured.`
+          );
+        } else {
+          const configured = [...vendorsWithAnyLink].filter(Boolean);
+          out.push(
+            `Vendor number ${vendor} (${what}): no SharePoint link on ${clientName} has this vendor number. ` +
+            `Vendor numbers on its SP links are: ${configured.length ? configured.join(', ') : 'none'}.`
+          );
+        }
+      }
+      out.push(
+        `Fix this at Control Centre → Clients → ${clientName} → edit the SharePoint link and correct its Vendor Number, then generate again.`
+      );
+    }
+
+    if (skippedNoFolder.length > 0) {
+      const vendors = [...new Set(skippedNoFolder.map(s => s.vendorNumber))].join(', ');
+      out.push(
+        `${skippedNoFolder.length} store${skippedNoFolder.length === 1 ? '' : 's'} skipped: the Pick Slip Folder in SharePoint could not be opened for vendor number ${vendors}.`
+      );
+    }
+
+    if (skippedEmptyRows.length > 0) {
+      const codes = skippedEmptyRows.map(s => s.siteCode).join(', ');
+      out.push(
+        `${skippedEmptyRows.length} store${skippedEmptyRows.length === 1 ? '' : 's'} skipped because every row had zero quantity and zero value: ${codes}.`
+      );
+    }
+
+    return out;
+  }
+
+  const skipReasons = summariseSkips();
+
   if (slips.length === 0) {
+    const headline = skipReasons.length > 0
+      ? `No pick slips could be generated — all ${rowsBySiteVendor.size} store/vendor group${rowsBySiteVendor.size === 1 ? ' was' : 's were'} skipped. ${skipReasons.join(' ')}`
+      : 'No pick slips could be generated — the load has no rows to put on a pick slip.';
+    const hadRealErrors = folderErrors.length > 0 || uploadErrors.length > 0;
     return NextResponse.json({
-      error: 'No pick slips could be generated',
-      details: [...folderErrors, ...uploadErrors],
-    }, { status: 500 });
+      error: headline,
+      details: [...skipReasons, ...folderErrors, ...uploadErrors],
+      skipped: skipReasons,
+    }, { status: hadRealErrors ? 500 : 422 });
   }
 
   // Save pick slip run index
@@ -340,5 +420,8 @@ export async function POST(
     slips,
     ...(uploadErrors.length > 0 ? { uploadErrors } : {}),
     ...(folderErrors.length > 0 ? { folderErrors } : {}),
+    // A partial run is the dangerous case — some stores got a slip and the rest
+    // vanished silently. Always report what was left out.
+    ...(skipReasons.length > 0 ? { skipped: skipReasons } : {}),
   }, { headers: { 'Cache-Control': 'no-store' } });
 }

@@ -73,7 +73,11 @@ export default function AgedStockDashboardPage() {
   const [psResult, setPsResult] = useState<{
     generated: number; uploaded: number; failed: number;
     uploadErrors?: string[]; folderErrors?: string[];
+    /** Stores left out of an otherwise successful run, in plain English. */
+    skippedReasons?: string[];
   } | null>(null);
+  /** Failure shown in the modal, not a toast — these messages are too long to read in 4s. */
+  const [psError, setPsError] = useState<string[] | null>(null);
   const [psDuplicate, setPsDuplicate] = useState(false);
 
   // Pick slip generation — all clients
@@ -83,6 +87,8 @@ export default function AgedStockDashboardPage() {
   const [psAllResults, setPsAllResults] = useState<Array<{
     clientName: string; loadFileName: string;
     generated: number; uploaded: number; failed: number; skipped: boolean; error?: string;
+    /** Stores left out of an otherwise successful run, in plain English. */
+    skippedReasons?: string[];
   }>>([]);
 
   const notify = (message: string, type: 'success' | 'error' = 'success') =>
@@ -211,6 +217,7 @@ export default function AgedStockDashboardPage() {
     if (clientFilter.length !== 1 || !loadFilter) return;
     setPsGenerating(true);
     setPsResult(null);
+    setPsError(null);
     setPsDuplicate(false);
     try {
       const res = await authFetch(`/api/aged-stock/loads/${loadFilter}/pick-slips`, {
@@ -224,10 +231,12 @@ export default function AgedStockDashboardPage() {
         return;
       }
       if (!res.ok) {
-        const details = (data.details as string[] | undefined)?.join('; ') ?? '';
-        const msg = (data.error ?? 'Pick slip generation failed') + (details ? ` — ${details}` : '');
-        notify(msg, 'error');
-        setPsModal(false);
+        // Keep the modal open and show the reason in full — these explain a
+        // misconfiguration the user has to go and fix, so they must stay on screen.
+        const details = (data.details as string[] | undefined) ?? [];
+        setPsError(details.length > 0
+          ? details
+          : [data.error ?? 'Pick slip generation failed']);
         return;
       }
       setPsResult({
@@ -236,10 +245,10 @@ export default function AgedStockDashboardPage() {
         failed: data.failed,
         uploadErrors: data.uploadErrors,
         folderErrors: data.folderErrors,
+        skippedReasons: data.skipped,
       });
     } catch (err) {
-      notify('Network error generating pick slips', 'error');
-      setPsModal(false);
+      setPsError(['Network error generating pick slips. Check your connection and try again.']);
     } finally {
       setPsGenerating(false);
     }
@@ -276,6 +285,7 @@ export default function AgedStockDashboardPage() {
           uploaded: data.uploaded ?? 0,
           failed: data.failed ?? 0,
           skipped: false,
+          skippedReasons: data.skipped,
         });
       } catch {
         results.push({ clientName, loadFileName, generated: 0, uploaded: 0, failed: 0, skipped: false, error: 'Network error' });
@@ -342,7 +352,7 @@ export default function AgedStockDashboardPage() {
           )}
           {(session.permissions ?? []).includes('load_aged_stock') && (
             <button
-              onClick={() => { setPsResult(null); setPsDuplicate(false); setPsModal(true); }}
+              onClick={() => { setPsResult(null); setPsError(null); setPsDuplicate(false); setPsModal(true); }}
               disabled={!canGeneratePickSlips}
               title={!canGeneratePickSlips ? 'Select a single client and load first' : ''}
               className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -598,6 +608,11 @@ export default function AgedStockDashboardPage() {
                               : r.error
                                 ? <span className="text-red-600">{r.error}</span>
                                 : <span className="text-green-600">Done</span>}
+                            {(r.skippedReasons?.length ?? 0) > 0 && (
+                              <div className="text-amber-700 mt-0.5">
+                                {r.skippedReasons!.map((e, j) => <p key={j}>{e}</p>)}
+                              </div>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -655,7 +670,7 @@ export default function AgedStockDashboardPage() {
       {/* Pick Slips Modal */}
       {psModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center px-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto">
             {/* Header */}
             <h2 className="text-lg font-bold text-gray-900 mb-4">Generate Pick Slips</h2>
 
@@ -690,6 +705,32 @@ export default function AgedStockDashboardPage() {
               </div>
             )}
 
+            {/* Failure — stays on screen, says what to go and fix */}
+            {psError && !psGenerating && (
+              <div className="mb-4">
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-800 mb-4">
+                  <p className="font-medium mb-2">No pick slips were generated</p>
+                  <div className="text-xs space-y-1.5">
+                    {psError.map((e, i) => <p key={i}>{e}</p>)}
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => handleGeneratePickSlips(false)}
+                    className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90"
+                  >
+                    Try again
+                  </button>
+                  <button
+                    onClick={() => setPsModal(false)}
+                    className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Result */}
             {psResult && !psGenerating && (
               <div className="mb-4">
@@ -708,6 +749,15 @@ export default function AgedStockDashboardPage() {
                     </div>
                   )}
                 </div>
+                {/* Some stores got a slip and the rest did not — never let that pass silently */}
+                {(psResult.skippedReasons?.length ?? 0) > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900 mb-4">
+                    <p className="font-medium mb-2">Some stores were left out</p>
+                    <div className="text-xs space-y-1.5">
+                      {psResult.skippedReasons!.map((e, i) => <p key={i}>{e}</p>)}
+                    </div>
+                  </div>
+                )}
                 <button
                   onClick={() => setPsModal(false)}
                   className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90"
@@ -718,7 +768,7 @@ export default function AgedStockDashboardPage() {
             )}
 
             {/* Confirmation (initial state) */}
-            {!psGenerating && !psResult && !psDuplicate && (
+            {!psGenerating && !psResult && !psDuplicate && !psError && (
               <>
                 <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-700 mb-4 space-y-1">
                   <p><span className="font-medium">Client:</span> {clientOptions.find(c => c.id === clientFilter[0])?.name}</p>
