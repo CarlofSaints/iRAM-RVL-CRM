@@ -36,6 +36,7 @@ export interface ReceiptBox {
 
 export type PickSlipStatus =
   | 'generated'
+  | 'printed'
   | 'sent'
   | 'unsuccessful'
   | 'booked'
@@ -86,6 +87,16 @@ export interface PickSlipRecord {
   channel?: string;
   /** ISO timestamp — set after email send */
   sentAt?: string;
+  /** Print fields — set when the slip is printed from the Picking Slips page.
+   *  Printing is an alternative to emailing it to a rep: the paper slip goes out
+   *  with the driver, so the slip counts as actioned for upliftment. Kept as
+   *  their own fields (not derived from status) so the history survives the slip
+   *  later moving to 'sent' and beyond. */
+  printedAt?: string;
+  printedBy?: string;
+  printedByName?: string;
+  /** How many times this slip has been printed (reprints included). */
+  printCount?: number;
   /** Upliftment-failure fields — set when an admin marks a 'sent' slip 'unsuccessful' */
   unsuccessfulReason?: string;
   unsuccessfulAt?: string;
@@ -424,6 +435,52 @@ export async function bulkRemoveSlips(
     await savePickSlipRun(run);
   }
   return deleted;
+}
+
+/**
+ * Bulk patch slips across multiple runs.
+ *
+ * Grouped by run so each run blob is read once and written once — a per-slip
+ * `updateSlipInRun` loop would re-read and re-write the same blob for every
+ * slip in it, and each of those round trips is a window for a concurrent write
+ * to be lost.
+ *
+ * `patchFor` receives the CURRENT stored slip and returns the patch to apply,
+ * or `null` to leave that slip untouched — so status guards ("only advance a
+ * 'generated' slip") are evaluated against the stored record, not a stale copy
+ * the caller read earlier.
+ *
+ * Returns the ids that were actually patched.
+ */
+export async function bulkPatchSlips(
+  items: Array<{ clientId: string; loadId: string; slipId: string }>,
+  patchFor: (slip: PickSlipRecord) => Partial<PickSlipRecord> | null,
+): Promise<string[]> {
+  const grouped = new Map<string, typeof items>();
+  for (const item of items) {
+    const key = `${item.clientId}|${item.loadId}`;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(item);
+  }
+
+  const patched: string[] = [];
+  for (const [, group] of grouped) {
+    const { clientId, loadId } = group[0];
+    const run = await getPickSlipRun(clientId, loadId);
+    if (!run) continue;
+    let dirty = false;
+    for (const item of group) {
+      const idx = run.slips.findIndex(s => s.id === item.slipId);
+      if (idx === -1) continue;
+      const patch = patchFor(run.slips[idx]);
+      if (!patch) continue;
+      run.slips[idx] = { ...run.slips[idx], ...patch };
+      patched.push(item.slipId);
+      dirty = true;
+    }
+    if (dirty) await savePickSlipRun(run);
+  }
+  return patched;
 }
 
 /**

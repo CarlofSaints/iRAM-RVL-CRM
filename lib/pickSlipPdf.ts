@@ -43,20 +43,50 @@ export interface PickSlipPdfParams {
   manual?: boolean;
 }
 
+// Page geometry — module scope so the document can be created before any slip
+// is rendered into it (a batch print puts several slips in one document).
+const PAGE_W = 595.28; // A4 width in points
+const PAGE_H = 841.89; // A4 height
+const MARGIN = 40;
+
+/** Logos are the same on every slip — read once per document, not per slip. */
+interface SlipLogos { iram: Buffer | null; oj: Buffer | null }
+
+function loadSlipLogos(): SlipLogos {
+  let iram: Buffer | null = null;
+  let oj: Buffer | null = null;
+  try {
+    const iramPath = path.join(process.cwd(), 'public', 'iram-logo.png');
+    if (fs.existsSync(iramPath)) iram = fs.readFileSync(iramPath);
+  } catch { /* skip */ }
+  try {
+    const ojPath = path.join(process.cwd(), 'public', 'oj-logo.jpg');
+    if (fs.existsSync(ojPath)) oj = fs.readFileSync(ojPath);
+  } catch { /* skip */ }
+  return { iram, oj };
+}
+
 /**
- * Generate a single pick slip PDF. Returns the PDF as a Buffer.
+ * Draw one pick slip — one or more pages — into an existing document.
+ *
+ * The caller owns the document and is responsible for the page break BETWEEN
+ * slips; this function only adds the pages a single slip needs to overflow onto.
  */
-export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Buffer> {
+async function renderPickSlip(
+  doc: InstanceType<typeof PDFDocument>,
+  params: PickSlipPdfParams,
+  logos: SlipLogos,
+): Promise<void> {
   const {
     pickSlipId, clientName, vendorNumber, siteName, siteCode,
     warehouse, loadDate, rows, manual,
   } = params;
 
   // Page setup
-  const pageW = 595.28; // A4 width in points
-  const marginL = 40;
-  const marginR = 40;
-  const marginT = 40;
+  const pageW = PAGE_W;
+  const marginL = MARGIN;
+  const marginR = MARGIN;
+  const marginT = MARGIN;
   const usableW = pageW - marginL - marginR;
 
   // Column widths (11 columns) — proportional allocation
@@ -87,17 +117,8 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
     'Not\nFound', 'Damage',
   ];
 
-  // Load logos
-  let iramLogoBuffer: Buffer | null = null;
-  let ojLogoBuffer: Buffer | null = null;
-  try {
-    const iramPath = path.join(process.cwd(), 'public', 'iram-logo.png');
-    if (fs.existsSync(iramPath)) iramLogoBuffer = fs.readFileSync(iramPath);
-  } catch { /* skip */ }
-  try {
-    const ojPath = path.join(process.cwd(), 'public', 'oj-logo.jpg');
-    if (fs.existsSync(ojPath)) ojLogoBuffer = fs.readFileSync(ojPath);
-  } catch { /* skip */ }
+  const iramLogoBuffer = logos.iram;
+  const ojLogoBuffer = logos.oj;
 
   // Generate Code128 barcode image for the pick slip ID
   let barcodeBuffer: Buffer | null = null;
@@ -120,8 +141,8 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
   const tableHeaderH = 30;
   const rowH = 28; // enough for 2-line product descriptions
   const footerH = 150; // total row + boxes row + signature + branding (logo is 40pt tall)
-  const pageH = 841.89; // A4 height
-  const marginB = 40;
+  const pageH = PAGE_H;
+  const marginB = MARGIN;
   const contentAreaFirstPage = pageH - marginT - marginB - headerBlockH - tableHeaderH - footerH;
   const contentAreaNextPage = pageH - marginT - marginB - tableHeaderH - footerH;
   const rowsPerFirstPage = Math.max(1, Math.floor(contentAreaFirstPage / rowH));
@@ -131,20 +152,6 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
   if (!isEmptyManual && rows.length > rowsPerFirstPage) {
     totalPages = 1 + Math.ceil((rows.length - rowsPerFirstPage) / rowsPerNextPage);
   }
-
-  // Start building PDF
-  const doc = new PDFDocument({
-    size: 'A4',
-    margins: { top: marginT, bottom: marginB, left: marginL, right: marginR },
-    bufferPages: true,
-    info: {
-      Title: `Pick Slip ${pickSlipId}`,
-      Author: 'iRamFlow — OuterJoin',
-    },
-  });
-
-  const chunks: Buffer[] = [];
-  doc.on('data', (chunk: Buffer) => chunks.push(chunk));
 
   const totalQty = rows.reduce((sum, r) => sum + r.qty, 0);
 
@@ -430,6 +437,46 @@ export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Bu
   while (rowIdx < rows.length) {
     doc.addPage();
     drawPage();
+  }
+}
+
+/**
+ * Generate a single pick slip PDF. Returns the PDF as a Buffer.
+ */
+export async function generatePickSlipPdf(params: PickSlipPdfParams): Promise<Buffer> {
+  return generatePickSlipsPdf([params]);
+}
+
+/**
+ * Generate ONE PDF containing several pick slips, each starting on a fresh
+ * page. Used by batch printing so a whole selection is a single print job in
+ * the correct order — the pages are byte-for-byte the same as the single-slip
+ * PDF that gets emailed.
+ */
+export async function generatePickSlipsPdf(slips: PickSlipPdfParams[]): Promise<Buffer> {
+  if (slips.length === 0) {
+    throw new Error('generatePickSlipsPdf: no pick slips supplied');
+  }
+
+  const doc = new PDFDocument({
+    size: 'A4',
+    margins: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN },
+    bufferPages: true,
+    info: {
+      Title: slips.length === 1
+        ? `Pick Slip ${slips[0].pickSlipId}`
+        : `Pick Slips (${slips.length})`,
+      Author: 'iRamFlow — OuterJoin',
+    },
+  });
+
+  const chunks: Buffer[] = [];
+  doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+  const logos = loadSlipLogos();
+  for (let i = 0; i < slips.length; i++) {
+    if (i > 0) doc.addPage(); // every slip starts on its own page
+    await renderPickSlip(doc, slips[i], logos);
   }
 
   doc.end();

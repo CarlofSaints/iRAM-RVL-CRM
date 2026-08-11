@@ -58,10 +58,11 @@ export async function POST(
   const whDenied = denyIfOutOfScope(whAccess, [slip.warehouseCode || slip.warehouse], 'Marking unsuccessful');
   if (whDenied) return whDenied;
 
-  // Only a sent slip can be marked unsuccessful.
-  if (slip.status !== 'sent') {
+  // Only a slip that has actually gone out for upliftment can fail at the store —
+  // emailed to a rep ('sent') or printed and handed over on paper ('printed').
+  if (slip.status !== 'sent' && slip.status !== 'printed') {
     return NextResponse.json(
-      { error: `Only a 'Sent' pick slip can be marked Unsuccessful (current status: ${slip.status})` },
+      { error: `Only a 'Sent' or 'Printed' pick slip can be marked Unsuccessful (current status: ${slip.status})` },
       { status: 409 }
     );
   }

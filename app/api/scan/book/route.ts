@@ -94,7 +94,9 @@ export async function POST(req: NextRequest) {
   }
 
   // Validate all slips exist and are bookable BEFORE making changes
-  const bookableStatuses = ['generated', 'sent'];
+  // 'printed' is bookable for the same reason 'sent' is — the slip has gone out
+  // for upliftment, just on paper rather than by email.
+  const bookableStatuses = ['generated', 'printed', 'sent'];
   interface SlipDetail {
     ref: SlipRef;
     clientName: string;

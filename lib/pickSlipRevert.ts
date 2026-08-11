@@ -21,6 +21,7 @@ import type { PickSlipRecord, PickSlipStatus } from './pickSlipData';
 
 const STATUS_STAGE: Record<PickSlipStatus, number> = {
   'generated': 0,
+  'printed': 0.5,
   'sent': 1,
   'unsuccessful': 1.5,
   'booked': 2,
@@ -37,6 +38,7 @@ export function stageIndexFor(status: string): number {
 
 export const STATUS_LABELS: Record<string, string> = {
   'generated': 'Generated',
+  'printed': 'Printed',
   'sent': 'Sent',
   'unsuccessful': 'Unsuccessful',
   'booked': 'Booked',
@@ -60,6 +62,11 @@ interface FieldGroup {
 }
 
 const FIELD_GROUPS: FieldGroup[] = [
+  {
+    idx: 0.5,
+    label: 'Printed record (when, by whom, how many times)',
+    fields: ['printedAt', 'printedBy', 'printedByName', 'printCount'],
+  },
   {
     idx: 1,
     label: 'Sent-to-rep timestamp',
@@ -112,6 +119,7 @@ const FIELD_GROUPS: FieldGroup[] = [
 
 const TARGET_CANDIDATES: Array<{ status: PickSlipStatus; idx: number }> = [
   { status: 'generated', idx: 0 },
+  { status: 'printed', idx: 0.5 },
   { status: 'sent', idx: 1 },
   { status: 'booked', idx: 2 },
   { status: 'captured', idx: 3 },
@@ -126,19 +134,25 @@ export interface RevertTarget {
 /**
  * Earlier statuses a slip can be rolled back to, newest-first
  * (closest rollback listed first). `sent` is only offered when the slip was
- * actually sent (some slips are booked straight from `generated`).
+ * actually sent (some slips are booked straight from `generated`), and
+ * `printed` only when it was actually printed — the two are alternative ways of
+ * getting the slip to whoever does the upliftment, so most slips have one or
+ * neither.
  */
-export function validRevertTargets(slip: Pick<PickSlipRecord, 'status' | 'sentAt'>): RevertTarget[] {
+export function validRevertTargets(
+  slip: Pick<PickSlipRecord, 'status' | 'sentAt' | 'printedAt'>,
+): RevertTarget[] {
   const currentIdx = stageIndexFor(slip.status);
   return TARGET_CANDIDATES
     .filter(c => c.idx < currentIdx)
     .filter(c => (c.status === 'sent' ? !!slip.sentAt : true))
+    .filter(c => (c.status === 'printed' ? !!slip.printedAt : true))
     .sort((a, b) => b.idx - a.idx)
     .map(c => ({ status: c.status, label: STATUS_LABELS[c.status] ?? c.status }));
 }
 
 export function isValidRevertTarget(
-  slip: Pick<PickSlipRecord, 'status' | 'sentAt'>,
+  slip: Pick<PickSlipRecord, 'status' | 'sentAt' | 'printedAt'>,
   target: string,
 ): boolean {
   return validRevertTargets(slip).some(t => t.status === target);

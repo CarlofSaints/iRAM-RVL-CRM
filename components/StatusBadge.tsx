@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 
 export const STATUS_LABELS: Record<string, string> = {
   'generated': 'Generated',
+  'printed': 'Printed',
   'sent': 'Sent',
   'unsuccessful': 'Unsuccessful',
   'booked': 'Booked',
@@ -16,6 +17,7 @@ export const STATUS_LABELS: Record<string, string> = {
 
 export const STATUS_COLORS: Record<string, string> = {
   'generated': 'bg-gray-100 text-gray-700',
+  'printed': 'bg-indigo-100 text-indigo-700',
   'sent': 'bg-blue-100 text-blue-700',
   'unsuccessful': 'bg-rose-100 text-rose-700',
   'booked': 'bg-teal-100 text-teal-700',
@@ -28,6 +30,7 @@ export const STATUS_COLORS: Record<string, string> = {
 
 export const STATUS_TOOLTIPS: Record<string, string> = {
   'generated': 'Aged stock has been loaded into the system and picking slip has been generated.',
+  'printed': 'Pick slip has been printed from the Picking Slips page — the paper slip has gone out for upliftment. It can still be emailed to a rep.',
   'sent': 'Pick slip has been sent to the rep via email.',
   'unsuccessful': 'The upliftment could not be completed at the store. The slip can be edited and re-sent to the same or a new rep.',
   'booked': 'Stock has been scanned into the iRam warehouse.',

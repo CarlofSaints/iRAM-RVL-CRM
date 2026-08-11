@@ -72,7 +72,9 @@ export async function GET(req: NextRequest) {
 
   const runs = await listAllPickSlipRuns(scopedIds, listLoads);
 
-  const bookableStatuses = ['generated', 'sent'];
+  // Must match `bookableStatuses` in /api/scan/book — a slip the rep can look up
+  // but not book (or vice versa) reads as a broken scanner.
+  const bookableStatuses = ['generated', 'printed', 'sent'];
   const foundSlips: Array<{
     id: string; loadId: string; clientId: string; clientName: string;
     vendorNumber: string; siteCode: string; siteName: string;

@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
-import { listLoads, getLoad } from '@/lib/agedStockData';
+import { listLoads } from '@/lib/agedStockData';
 import { listAllPickSlipRuns, updateSlipInRun, type PickSlipRecord } from '@/lib/pickSlipData';
 import { loadUsers } from '@/lib/userData';
 import { clientScopeFor, filterClientIdsByScope } from '@/lib/clientScope';
 import { loadControl } from '@/lib/controlData';
-import { generatePickSlipPdf, type PickSlipPdfRow } from '@/lib/pickSlipPdf';
+import { generatePickSlipPdf } from '@/lib/pickSlipPdf';
+import { resolvePickSlipRows } from '@/lib/pickSlipRows';
 import { sendPickSlipEmail } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
@@ -86,25 +87,15 @@ export async function POST(req: NextRequest) {
   let failed = 0;
   const errors: string[] = [];
 
-  // Helper: resolve rows for a slip, backfilling from load data if needed
-  async function resolveRows(slip: PickSlipRecord): Promise<PickSlipPdfRow[]> {
-    if (slip.rows?.length) return slip.rows;
-    // Manual slips start with empty rows — that's intentional (blank pick slip)
-    if (slip.manual) return [];
-    const load = await getLoad(slip.clientId, slip.loadId);
-    if (!load) return [];
-    return load.rows
-      .filter(r => r.siteCode === slip.siteCode)
-      .map(r => ({ barcode: r.barcode, articleCode: r.articleCode, vendorProductCode: r.vendorProductCode, description: r.description, qty: r.qty, val: r.val }))
-      .filter(r => r.qty > 0 || r.val > 0);
-  }
+  // Rows come from the shared resolver (`lib/pickSlipRows`) so an emailed slip
+  // and a printed slip can never render different lines.
 
   if (sendMode === 'combined') {
     // One email with all PDFs as attachments
     const attachments: Array<{ filename: string; content: Buffer }> = [];
     for (const slip of targetSlips) {
       try {
-        const rows = await resolveRows(slip);
+        const rows = await resolvePickSlipRows(slip);
         if (rows.length === 0 && !slip.manual) {
           errors.push(`${slip.id}: no rows to generate PDF`);
           failed++;
@@ -168,7 +159,7 @@ export async function POST(req: NextRequest) {
     // Individual mode — one email per slip
     for (const slip of targetSlips) {
       try {
-        const rows = await resolveRows(slip);
+        const rows = await resolvePickSlipRows(slip);
         if (rows.length === 0 && !slip.manual) {
           errors.push(`${slip.id}: no rows to generate PDF`);
           failed++;
@@ -213,12 +204,14 @@ export async function POST(req: NextRequest) {
   }
 
   // Update status to 'sent' for successfully processed slips.
-  // Advance from 'generated' → 'sent', and re-send an 'unsuccessful' slip back to
-  // 'sent' (clearing the failure reason). Never regress later statuses.
+  // Advance from 'generated' or 'printed' → 'sent', and re-send an 'unsuccessful'
+  // slip back to 'sent' (clearing the failure reason). Never regress later
+  // statuses. A printed slip may still be emailed — `printedAt` is left in place
+  // so the print history survives the move to 'sent'.
   const now = new Date().toISOString();
   for (const slip of targetSlips) {
     const hadError = errors.some(e => e.startsWith(slip.id));
-    if (!hadError && (slip.status === 'generated' || slip.status === 'unsuccessful')) {
+    if (!hadError && (slip.status === 'generated' || slip.status === 'printed' || slip.status === 'unsuccessful')) {
       try {
         await updateSlipInRun(slip._clientId, slip._loadId, slip.id, {
           status: 'sent',

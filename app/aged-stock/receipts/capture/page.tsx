@@ -114,6 +114,7 @@ function resolveMode(status: string): PageMode {
 
 const STATUS_BADGE: Record<string, string> = {
   'generated': 'bg-gray-100 text-gray-700',
+  'printed': 'bg-indigo-100 text-indigo-700',
   'sent': 'bg-blue-100 text-blue-700',
   'booked': 'bg-teal-100 text-teal-700',
   'captured': 'bg-green-100 text-green-700',
@@ -125,6 +126,7 @@ const STATUS_BADGE: Record<string, string> = {
 
 const STATUS_LABEL: Record<string, string> = {
   'generated': 'Generated',
+  'printed': 'Printed',
   'sent': 'Sent',
   'booked': 'Booked',
   'captured': 'Captured',

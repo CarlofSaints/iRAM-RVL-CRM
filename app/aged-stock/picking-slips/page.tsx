@@ -18,7 +18,7 @@ interface PdfRow {
   val: number;
 }
 
-type SlipStatus = 'generated' | 'sent' | 'unsuccessful' | 'booked' | 'captured' | 'in-transit' | 'failed-release' | 'partial-release' | 'delivered';
+type SlipStatus = 'generated' | 'printed' | 'sent' | 'unsuccessful' | 'booked' | 'captured' | 'in-transit' | 'failed-release' | 'partial-release' | 'delivered';
 
 interface ReceiptBox {
   id: string;
@@ -44,6 +44,8 @@ interface SlipDto {
   status: SlipStatus;
   rows: PdfRow[];
   sentAt?: string;
+  printedAt?: string;
+  printCount?: number;
   editedAt?: string;
   spWebUrlEdited?: string;
   spDriveId?: string;
@@ -102,6 +104,7 @@ function fmtCurrency(v: number): string {
 
 const STATUS_LABELS: Record<string, string> = {
   'generated': 'Generated',
+  'printed': 'Printed',
   'sent': 'Sent',
   'unsuccessful': 'Unsuccessful',
   'booked': 'Booked',
@@ -114,6 +117,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 const STATUS_COLORS: Record<string, string> = {
   'generated': 'bg-gray-100 text-gray-700',
+  'printed': 'bg-indigo-100 text-indigo-700',
   'sent': 'bg-blue-100 text-blue-700',
   'unsuccessful': 'bg-rose-100 text-rose-700',
   'booked': 'bg-teal-100 text-teal-700',
@@ -204,6 +208,12 @@ export default function PickingSlipsPage() {
 
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteDeleting, setDeleteDeleting] = useState(false);
+
+  // Print — failures and partial batches go in persistent panels, never a toast:
+  // the toast auto-closes after 4s and a print problem needs reading.
+  const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
+  const [printWarning, setPrintWarning] = useState<string | null>(null);
 
   // Mark Unsuccessful modal
   const [unsuccessfulSlip, setUnsuccessfulSlip] = useState<SlipDto | null>(null);
@@ -553,6 +563,93 @@ export default function PickingSlipsPage() {
       notify('Network error sending', 'error');
     } finally {
       setSendSending(false);
+    }
+  }
+
+  // ── Print ──
+  // The paper route to the same slip. One request → one PDF (one print job), and
+  // slips still waiting to go out come back as 'Printed' so the grid shows what
+  // has actually been actioned for upliftment.
+
+  async function doPrint(slipsToPrint: SlipDto[]) {
+    if (slipsToPrint.length === 0 || printing) return;
+    setPrintError(null);
+    setPrintWarning(null);
+    setPrinting(true);
+
+    // Open the tab NOW, inside the click, and fill it in once the PDF lands —
+    // a window.open() after an await is treated as a popup and blocked.
+    const win = window.open('', '_blank');
+
+    try {
+      const res = await authFetch('/api/pick-slips/print', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slipIds: slipsToPrint.map(s => s.id) }),
+      });
+
+      if (!res.ok) {
+        win?.close();
+        const data = await res.json().catch(() => ({}));
+        setPrintError(data.error || `Print failed (${res.status}) — nothing was printed.`);
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+
+      if (win) {
+        win.location.href = url;
+      } else {
+        // Popup blocked — download instead so the print isn't simply lost.
+        const disposition = res.headers.get('Content-Disposition') ?? '';
+        const fileMatch = disposition.match(/filename="(.+?)"/);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileMatch ? fileMatch[1] : `Pick Slips - ${slipsToPrint.length}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setPrintWarning(
+          'Your browser blocked the new tab, so the PDF was downloaded instead — ' +
+          'open it and print from there. The statuses were still updated.',
+        );
+      }
+      // Give the viewer/download time to read the blob before releasing it.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+
+      // Counts + any per-slip skips ride in a header, since the body is the PDF.
+      let printed = slipsToPrint.length;
+      let advanced = 0;
+      let skipped: Array<{ slipId: string; reason: string }> = [];
+      try {
+        const raw = res.headers.get('X-Print-Result');
+        if (raw) {
+          const parsed = JSON.parse(decodeURIComponent(raw));
+          printed = parsed.printed ?? printed;
+          advanced = parsed.advanced ?? 0;
+          skipped = Array.isArray(parsed.skipped) ? parsed.skipped : [];
+        }
+      } catch { /* counts are cosmetic — the PDF is already open */ }
+
+      if (skipped.length > 0) {
+        setPrintWarning(
+          prev => (prev ? prev + ' ' : '') +
+            `${skipped.length} of ${slipsToPrint.length} selected slip${slipsToPrint.length !== 1 ? 's' : ''} ` +
+            `could not be printed: ${skipped.map(s => `${s.slipId} — ${s.reason}`).join('; ')}.`,
+        );
+      }
+
+      notify(
+        `Printing ${printed} pick slip${printed !== 1 ? 's' : ''}` +
+        (advanced > 0 ? ` — ${advanced} marked Printed` : ' — no status changes (reprints)'),
+      );
+      await fetchSlips();
+    } catch {
+      win?.close();
+      setPrintError('Network error printing — nothing was printed.');
+    } finally {
+      setPrinting(false);
     }
   }
 
@@ -1124,10 +1221,50 @@ export default function PickingSlipsPage() {
             Send Selected
           </button>
           <button
+            onClick={() => doPrint(sorted.filter(s => selected.has(s.id)))}
+            disabled={printing}
+            title="Print the selected slips as one PDF — slips still waiting to go out are marked Printed"
+            className="px-3 py-1.5 bg-indigo-600 text-white rounded-md text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {printing && <div className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            Print Selected
+          </button>
+          <button
             onClick={() => setDeleteConfirm(true)}
             className="px-3 py-1.5 bg-red-600 text-white rounded-md text-sm font-medium hover:bg-red-700"
           >
             Delete Selected
+          </button>
+        </div>
+      )}
+
+      {/* Print failure / partial batch — persistent panels. A print problem must
+          survive longer than a 4-second toast. */}
+      {printError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 mb-4 flex items-start gap-3">
+          <div className="flex-1 text-sm text-red-800">
+            <div className="font-semibold mb-0.5">Print failed</div>
+            {printError}
+          </div>
+          <button
+            onClick={() => setPrintError(null)}
+            className="px-2 py-1 text-xs font-medium text-red-800 border border-red-300 rounded hover:bg-red-100 whitespace-nowrap"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+      {printWarning && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-4 flex items-start gap-3">
+          <div className="flex-1 text-sm text-amber-800">
+            <div className="font-semibold mb-0.5">Some slips were left out of the print</div>
+            {printWarning}
+          </div>
+          <button
+            onClick={() => setPrintWarning(null)}
+            className="px-2 py-1 text-xs font-medium text-amber-800 border border-amber-300 rounded hover:bg-amber-100 whitespace-nowrap"
+          >
+            Dismiss
           </button>
         </div>
       )}
@@ -1234,14 +1371,27 @@ export default function PickingSlipsPage() {
                   {showActions && (
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       <div className="flex gap-1">
-                        {/* generated/sent/unsuccessful: Edit, Send (Send re-sends an unsuccessful slip) */}
-                        {canManage && (s.status === 'generated' || s.status === 'sent' || s.status === 'unsuccessful') && (
+                        {/* generated/printed/sent/unsuccessful: Edit, Print, Send
+                            (Send re-sends an unsuccessful slip) */}
+                        {canManage && (s.status === 'generated' || s.status === 'printed' || s.status === 'sent' || s.status === 'unsuccessful') && (
                           <>
                             <button
                               onClick={() => openEdit(s)}
                               className="px-2 py-1 text-xs font-medium text-[var(--color-primary)] border border-[var(--color-primary)]/30 rounded hover:bg-[var(--color-primary)]/5"
                             >
                               Edit
+                            </button>
+                            <button
+                              onClick={() => doPrint([s])}
+                              disabled={printing}
+                              title={
+                                s.printedAt
+                                  ? `Last printed ${fmtDate(s.printedAt)}${s.printCount ? ` (${s.printCount}×)` : ''}`
+                                  : 'Print this slip — it will be marked Printed'
+                              }
+                              className="px-2 py-1 text-xs font-medium text-indigo-700 border border-indigo-300 rounded hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {s.printedAt ? 'Reprint' : 'Print'}
                             </button>
                             <button
                               onClick={() => openSend([s])}
@@ -1251,8 +1401,9 @@ export default function PickingSlipsPage() {
                             </button>
                           </>
                         )}
-                        {/* sent only: an admin can mark the upliftment unsuccessful */}
-                        {canManage && s.status === 'sent' && (
+                        {/* sent or printed: the slip is out with someone, so an admin
+                            can mark the upliftment unsuccessful */}
+                        {canManage && (s.status === 'sent' || s.status === 'printed') && (
                           <button
                             onClick={() => openMarkUnsuccessful(s)}
                             className="px-2 py-1 text-xs font-medium text-rose-600 border border-rose-200 rounded hover:bg-rose-50"
@@ -1260,7 +1411,7 @@ export default function PickingSlipsPage() {
                             Mark Unsuccessful
                           </button>
                         )}
-                        {/* booked: Edit, Send, Capture */}
+                        {/* booked: Edit, Print, Send, Capture */}
                         {s.status === 'booked' && (
                           <>
                             {canManage && (
@@ -1270,6 +1421,14 @@ export default function PickingSlipsPage() {
                                   className="px-2 py-1 text-xs font-medium text-[var(--color-primary)] border border-[var(--color-primary)]/30 rounded hover:bg-[var(--color-primary)]/5"
                                 >
                                   Edit
+                                </button>
+                                <button
+                                  onClick={() => doPrint([s])}
+                                  disabled={printing}
+                                  title="Print a copy — a booked slip keeps its status"
+                                  className="px-2 py-1 text-xs font-medium text-indigo-700 border border-indigo-300 rounded hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {s.printedAt ? 'Reprint' : 'Print'}
                                 </button>
                                 <button
                                   onClick={() => openSend([s])}
