@@ -189,12 +189,9 @@ export async function POST(req: NextRequest) {
         };
         if (stored.status === 'generated' || stored.status === 'unsuccessful') {
           patch.status = 'printed';
-          // Printing re-issues the slip, exactly as a resend does — the previous
-          // upliftment failure no longer applies.
-          patch.unsuccessfulReason = undefined;
-          patch.unsuccessfulAt = undefined;
-          patch.unsuccessfulBy = undefined;
-          patch.unsuccessfulByName = undefined;
+          // Re-issuing a failed slip does NOT erase why it failed the first time
+          // — the reason stays on the record and the grid keeps showing it under
+          // the new status. (Resend still clears it; that path is untouched.)
           advanced.push(stored.id);
         }
         return patch;

@@ -1364,8 +1364,33 @@ export default function PickingSlipsPage() {
                         Manual
                       </span>
                     )}
-                    {s.status === 'unsuccessful' && s.unsuccessfulReason && (
-                      <div className="mt-0.5 text-xs text-rose-600">{s.unsuccessfulReason}</div>
+                    {/* A slip can go out on paper AND by email. The badge shows the
+                        stage it reached; this line keeps the other route visible
+                        instead of it being overwritten by the next status. */}
+                    {s.printedAt && s.status !== 'printed' && (
+                      <div
+                        className="mt-0.5 text-[11px] leading-tight text-indigo-600"
+                        title={`Printed ${fmtDate(s.printedAt)}${(s.printCount ?? 0) > 1 ? ` · ${s.printCount} times` : ''}`}
+                      >
+                        Printed too
+                      </div>
+                    )}
+                    {s.status === 'printed' && s.sentAt && (
+                      <div
+                        className="mt-0.5 text-[11px] leading-tight text-blue-600"
+                        title={`Emailed to a rep ${fmtDate(s.sentAt)}`}
+                      >
+                        Sent too
+                      </div>
+                    )}
+                    {/* The failure reason survives the slip being re-issued by
+                        printing, so it is shown under whatever status follows. */}
+                    {s.unsuccessfulReason && (
+                      <div className="mt-0.5 text-xs text-rose-600">
+                        {s.status === 'unsuccessful'
+                          ? s.unsuccessfulReason
+                          : `Was unsuccessful: ${s.unsuccessfulReason}`}
+                      </div>
                     )}
                   </td>
                   {showActions && (
