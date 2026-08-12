@@ -58,7 +58,10 @@ export async function GET(
   const totalVal = results.reduce((s, r) => s + r.slip.totalVal, 0);
   const boxCount = results.reduce((s, r) => s + (r.slip.releaseBoxes ?? []).length, 0);
 
-  // Build per-slip breakdown
+  // Build per-slip breakdown.
+  // storeRefs/receiptGrnDate are the GRN/GRV document number(s) and date captured
+  // at receipt. They appear in the "GRN/GRV & Date" column of the printed delivery
+  // note, so the digital sign-off shows the same numbers the vendor is holding.
   const slipsArray = results.map(r => ({
     slipId: r.slip.id,
     siteName: r.slip.siteName,
@@ -69,6 +72,8 @@ export async function GET(
     boxCount: (r.slip.releaseBoxes ?? []).length,
     status: r.slip.status,
     manual: r.slip.manual ?? false,
+    storeRefs: r.slip.receiptStoreRefs ?? [],
+    receiptGrnDate: r.slip.receiptGrnDate,
   }));
 
   return NextResponse.json({
@@ -86,6 +91,8 @@ export async function GET(
     totalVal,
     boxCount,
     manual: slip.manual ?? false,
+    storeRefs: slip.receiptStoreRefs ?? [],
+    receiptGrnDate: slip.receiptGrnDate,
     contacts,
     deliveredAt: slip.deliveredAt,
     deliverySignedByName: slip.deliverySignedByName,

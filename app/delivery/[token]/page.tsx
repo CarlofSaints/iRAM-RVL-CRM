@@ -19,6 +19,10 @@ interface SlipBreakdown {
   boxCount: number;
   status: string;
   manual: boolean;
+  /** GRN/GRV document number(s) captured at receipt */
+  storeRefs?: string[];
+  /** GRN/GRV document date captured at receipt */
+  receiptGrnDate?: string;
 }
 
 interface SlipSummary {
@@ -35,6 +39,8 @@ interface SlipSummary {
   totalVal: number;
   boxCount: number;
   manual: boolean;
+  storeRefs?: string[];
+  receiptGrnDate?: string;
   contacts?: ContactDto[];
   deliveredAt?: string;
   deliverySignedByName?: string;
@@ -433,6 +439,22 @@ export default function DeliveryConfirmationPage() {
             </div>
           </div>
 
+          {/* GRN/GRV document number(s). Single-store notes only — on a
+              multi-store note each store carries its own, shown on its card
+              below. Always rendered, "—" when nothing was captured, so a blank
+              never reads as the app having dropped it. */}
+          {!(slip.slips && slip.slips.length > 1) && (
+            <div className="mt-4 border-t border-gray-100 pt-3">
+              <span className="text-gray-500 text-xs block">GRN/GRV Document No</span>
+              <span className="font-mono font-medium text-sm break-words">
+                {(slip.storeRefs ?? []).filter(Boolean).join(', ') || '—'}
+              </span>
+              {slip.receiptGrnDate && (
+                <span className="text-gray-500 text-xs block mt-0.5">Date: {slip.receiptGrnDate}</span>
+              )}
+            </div>
+          )}
+
           {/* Per-store physical check. Tick each store as its boxes are
               physically counted off; anything left unticked is recorded as not
               delivered and its stock stays with iRam. */}
@@ -473,6 +495,15 @@ export default function DeliveryConfirmationPage() {
                             {s.siteName} ({s.siteCode})
                           </span>
                           <span className="block text-xs text-gray-500 font-mono">{s.slipId}</span>
+                          <span className="block text-xs text-gray-600 mt-0.5">
+                            <span className="text-gray-500">GRN/GRV: </span>
+                            <span className="font-mono break-words">
+                              {(s.storeRefs ?? []).filter(Boolean).join(', ') || '—'}
+                            </span>
+                            {s.receiptGrnDate && (
+                              <span className="text-gray-500"> · {s.receiptGrnDate}</span>
+                            )}
+                          </span>
                           <span className="block text-xs text-gray-500 mt-0.5">
                             {s.totalQty.toLocaleString()} units · {s.boxCount} box{s.boxCount === 1 ? '' : 'es'}
                           </span>
