@@ -43,7 +43,13 @@ interface SlipDto {
   spWebUrl?: string;
   generatedAt: string;
   status: SlipStatus;
+  /**
+   * Empty in the grid's summary fetch — product rows are the bulk of the
+   * payload and only the Edit modal needs them, so they are pulled per slip on
+   * demand. `productCount` carries the one number the grid does show.
+   */
   rows: PdfRow[];
+  productCount?: number;
   sentAt?: string;
   printedAt?: string;
   printCount?: number;
@@ -62,6 +68,16 @@ interface SlipDto {
   receiptStoreRefs?: string[];
   receiptGrnDate?: string;
   receiptValueCorrectedAt?: string;
+}
+
+/**
+ * Distinct products on a slip. The server sends this as `productCount` in the
+ * grid's summary fetch; the fallback covers a slip whose rows are already in
+ * hand (the Edit modal caches them back onto the row).
+ */
+function productCountOf(s: SlipDto): number {
+  if (typeof s.productCount === 'number') return s.productCount;
+  return new Set((s.rows ?? []).map(r => r.articleCode || r.barcode)).size;
 }
 
 interface RepDto {
@@ -194,6 +210,7 @@ export default function PickingSlipsPage() {
   // Modals
   const [editSlip, setEditSlip] = useState<SlipDto | null>(null);
   const [editRows, setEditRows] = useState<PdfRow[]>([]);
+  const [editRowsLoading, setEditRowsLoading] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
 
   const [sendSlips, setSendSlips] = useState<SlipDto[]>([]);
@@ -250,16 +267,39 @@ export default function PickingSlipsPage() {
 
   const fetchSlips = useCallback(async () => {
     try {
-      const res = await authFetch('/api/pick-slips', { cache: 'no-store' });
+      // Summary mode: no product rows. On live data that is the difference
+      // between a payload of every line item on 959 slips and one of 959 rows.
+      const res = await authFetch('/api/pick-slips?mode=summary', { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
-        setSlips(data.slips ?? []);
+        setSlips((data.slips ?? []).map((s: SlipDto) => ({ ...s, rows: s.rows ?? [] })));
       } else {
         notify('Failed to load pick slips', 'error');
       }
     } catch {
       notify('Network error loading pick slips', 'error');
     }
+  }, []);
+
+  /**
+   * Pull the product rows for one slip. Reads a single run blob (that slip's
+   * client + load), so it is cheap even though the grid holds none of them.
+   */
+  const fetchSlipRows = useCallback(async (slip: SlipDto): Promise<PdfRow[]> => {
+    if (slip.rows && slip.rows.length > 0) return slip.rows;
+    const qs = new URLSearchParams({
+      mode: 'full',
+      clientIds: slip.clientId,
+      loadIds: slip.loadId,
+    }).toString();
+    const res = await authFetch(`/api/pick-slips?${qs}`, { cache: 'no-store' });
+    if (!res.ok) throw new Error('Could not load the products on this slip');
+    const data = await res.json();
+    const found = (data.slips ?? []).find((s: SlipDto) => s.id === slip.id);
+    if (!found) throw new Error('That slip could not be found — the list may be out of date');
+    // Cache back onto the grid row so re-opening the modal is instant.
+    setSlips(prev => prev.map(s => (s.id === slip.id ? { ...s, rows: found.rows ?? [] } : s)));
+    return found.rows ?? [];
   }, []);
 
   useEffect(() => {
@@ -424,7 +464,7 @@ export default function PickingSlipsPage() {
         case 'vendorNumber': av = a.vendorNumber; bv = b.vendorNumber; break;
         case 'store':        av = `${a.siteName} ${a.siteCode}`; bv = `${b.siteName} ${b.siteCode}`; break;
         case 'region':       av = regionOf(a); bv = regionOf(b); break;
-        case 'products':     av = new Set(a.rows.map(r => r.articleCode || r.barcode)).size; bv = new Set(b.rows.map(r => r.articleCode || r.barcode)).size; break;
+        case 'products':     av = productCountOf(a); bv = productCountOf(b); break;
         case 'totalQty':     av = a.totalQty; bv = b.totalQty; break;
         case 'totalVal':     av = a.totalVal; bv = b.totalVal; break;
         case 'generatedAt':  av = a.generatedAt; bv = b.generatedAt; break;
@@ -498,9 +538,19 @@ export default function PickingSlipsPage() {
 
   // ── Edit modal ──
 
-  function openEdit(slip: SlipDto) {
+  async function openEdit(slip: SlipDto) {
     setEditSlip(slip);
-    setEditRows(slip.rows.map(r => ({ ...r })));
+    setEditRows([]);
+    setEditRowsLoading(true);
+    try {
+      const rows = await fetchSlipRows(slip);
+      setEditRows(rows.map(r => ({ ...r })));
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Could not load the products', 'error');
+      setEditSlip(null);
+    } finally {
+      setEditRowsLoading(false);
+    }
   }
 
   function updateEditRow(idx: number, field: 'qty' | 'val', value: number) {
@@ -1399,7 +1449,7 @@ export default function PickingSlipsPage() {
                   <td className="px-3 py-1.5 whitespace-nowrap">{s.vendorNumber}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap">{s.siteName} ({s.siteCode})</td>
                   <td className="px-3 py-1.5 whitespace-nowrap text-gray-600">{regionOf(s) || <span className="text-gray-300">—</span>}</td>
-                  <td className="px-3 py-1.5 text-right whitespace-nowrap">{new Set(s.rows.map(r => r.articleCode || r.barcode)).size}</td>
+                  <td className="px-3 py-1.5 text-right whitespace-nowrap">{productCountOf(s)}</td>
                   <td className="px-3 py-1.5 text-right whitespace-nowrap">{s.totalQty.toLocaleString()}</td>
                   <td className="px-3 py-1.5 text-right whitespace-nowrap">{fmtCurrency(s.totalVal)}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap text-xs text-gray-500">{fmtDate(s.generatedAt)}</td>
@@ -1637,6 +1687,16 @@ export default function PickingSlipsPage() {
                   </tr>
                 </thead>
                 <tbody>
+                  {editRowsLoading && (
+                    <tr><td colSpan={7} className="py-8 text-center text-sm text-gray-500">
+                      Loading the products on this slip…
+                    </td></tr>
+                  )}
+                  {!editRowsLoading && editRows.length === 0 && (
+                    <tr><td colSpan={7} className="py-8 text-center text-sm text-gray-400">
+                      This slip has no product lines.
+                    </td></tr>
+                  )}
                   {editRows.map((r, i) => (
                     <tr key={i} className="border-t border-gray-100">
                       <td className="py-1.5 text-xs">{r.barcode}</td>

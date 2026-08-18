@@ -241,7 +241,14 @@ export default function ReceiptCapturePage() {
     setLoading(true);
     try {
       const [slipsRes, repsRes, usersRes] = await Promise.all([
-        authFetch('/api/pick-slips', { cache: 'no-store' }),
+        // This screen uses exactly one slip. Asking for it by id means the
+        // response is that slip rather than every slip the user can see —
+        // each of which carries a base64 signature image.
+        // `withSignatures=1` because this page renders the delivery signature.
+        authFetch(
+          `/api/pick-slips?mode=full&withSignatures=1&slipIds=${encodeURIComponent(slipId)}`,
+          { cache: 'no-store' }
+        ),
         authFetch('/api/control/reps', { cache: 'no-store' }),
         authFetch('/api/users', { cache: 'no-store' }),
       ]);

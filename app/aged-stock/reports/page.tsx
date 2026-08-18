@@ -1,9 +1,29 @@
 'use client';
 
-import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
-import * as XLSX from 'xlsx';
+/**
+ * Reports.
+ *
+ * Filter-first: the page renders instantly with its filter bar and fetches
+ * NOTHING until the user says what they want. Previously it pulled every pick
+ * slip for every client the user could see — with all product rows — on the
+ * moment a report was opened, which is why it took so long to appear.
+ *
+ * The filter options come from `mode=facets`, which reads only control files
+ * and the per-client load index; no pick-slip blob is touched. Running the
+ * report then fetches `mode=full` narrowed to exactly what was ticked.
+ */
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { MultiSelect, type MultiSelectOption } from '@/components/MultiSelect';
+import { pickSlipQueryToParams } from '@/lib/pickSlipQuery';
+import {
+  exportReport,
+  EXCEL_VIEW_LABELS,
+  type ExcelViewMode,
+  type ReportGroup,
+} from '@/lib/reportExport';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,12 +68,15 @@ interface SlipDto {
   unreturnedSkipped?: boolean;
 }
 
-interface BatchOption {
-  loadId: string;
-  clientId: string;
-  clientName: string;
-  generatedAt: string;
-  slipCount: number;
+interface Facets {
+  clients: Array<{ id: string; name: string; vendorNumbers: string[] }>;
+  batches: Array<{
+    loadId: string; clientId: string; clientName: string;
+    vendorNumbers: string[]; fileName: string; loadedAt: string; rowCount: number;
+  }>;
+  provinces: string[];
+  statuses: string[];
+  warehouses: Array<{ id: string; code: string; name: string }>;
 }
 
 interface ReportRow {
@@ -62,6 +85,8 @@ interface ReportRow {
   grnRef2: string;
   grnRef3: string;
   grnRef4: string;
+  clientName: string;
+  vendorNumber: string;
   storeName: string;
   storeCode: string;
   grnDateTime: string;
@@ -79,13 +104,7 @@ interface ReportRow {
 
 type ReportId = 'uplift-detail';
 
-interface ReportDef {
-  id: ReportId;
-  label: string;
-  description: string;
-}
-
-const REPORTS: ReportDef[] = [
+const REPORTS: Array<{ id: ReportId; label: string; description: string }> = [
   {
     id: 'uplift-detail',
     label: 'Uplift Detail Report',
@@ -93,27 +112,42 @@ const REPORTS: ReportDef[] = [
   },
 ];
 
+/**
+ * How a report is split when exporting to separate sheets or documents.
+ * Only dimensions a report row actually carries — a split on something the row
+ * cannot answer would quietly put everything in one group.
+ */
+type SplitBy = 'client' | 'vendor' | 'store';
+const SPLIT_LABELS: Record<SplitBy, string> = {
+  client: 'Client',
+  vendor: 'Vendor number',
+  store: 'Store',
+};
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function fmtDate(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  } catch { return iso; }
-}
+const fmtDate = (iso: string) => {
+  try { return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }); }
+  catch { return iso; }
+};
 
-function fmtDateTime(iso: string): string {
+const fmtDateTime = (iso: string) => {
   try {
     const d = new Date(iso);
     const tz = 'Africa/Johannesburg';
-    const date = d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz });
-    const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
-    return `${date} ${time}`;
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz })
+      + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
   } catch { return iso; }
-}
+};
 
-function fmtCurrency(v: number): string {
-  return `R ${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtCurrency = (v: number) =>
+  `R ${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** Keep only the ticked values that still exist in the visible options. */
+function pruneToOptions(selected: Set<string>, options: MultiSelectOption[]): Set<string> {
+  const allowed = new Set(options.map((o) => o.value));
+  const next = new Set([...selected].filter((v) => allowed.has(v)));
+  return next.size === selected.size ? selected : next;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -122,198 +156,252 @@ export default function ReportsPage() {
   const { session } = useAuth('view_aged_stock');
 
   const [toast, setToast] = useState<ToastData | null>(null);
-  const notify = (message: string, type: 'success' | 'error' = 'success') =>
-    setToast({ message, type });
+  const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
 
   const [selectedReport, setSelectedReport] = useState<ReportId | null>(null);
-  const [allSlips, setAllSlips] = useState<SlipDto[]>([]);
-  const [loading, setLoading] = useState(false);
 
-  // Batch filter state
-  const [selectedBatches, setSelectedBatches] = useState<Set<string>>(new Set());
-  const [batchDropOpen, setBatchDropOpen] = useState(false);
-  const batchDropRef = useRef<HTMLDivElement>(null);
+  // Filter options — cheap, no pick-slip blobs read.
+  const [facets, setFacets] = useState<Facets | null>(null);
+  const [facetsLoading, setFacetsLoading] = useState(false);
 
-  // Close batch dropdown on click outside
+  // Filter state
+  const [clientIds, setClientIds] = useState<Set<string>>(new Set());
+  const [vendorNumbers, setVendorNumbers] = useState<Set<string>>(new Set());
+  const [loadIds, setLoadIds] = useState<Set<string>>(new Set());
+  const [provinces, setProvinces] = useState<Set<string>>(new Set());
+  const [statuses, setStatuses] = useState<Set<string>>(new Set());
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+
+  // Results — only populated after Run report.
+  const [slips, setSlips] = useState<SlipDto[] | null>(null);
+  const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState('');
+  const [ranWith, setRanWith] = useState('');
+
+  // Export options
+  const [excelMode, setExcelMode] = useState<ExcelViewMode>('combined');
+  const [splitBy, setSplitBy] = useState<SplitBy>('vendor');
+  const [exporting, setExporting] = useState(false);
+
+  // ── Facets ────────────────────────────────────────────────────────────────
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (batchDropRef.current && !batchDropRef.current.contains(e.target as Node)) {
-        setBatchDropOpen(false);
+    if (!session || !selectedReport || facets || facetsLoading) return;
+    setFacetsLoading(true);
+    (async () => {
+      try {
+        const res = await authFetch(`/api/pick-slips?${pickSlipQueryToParams({ mode: 'facets' })}`, { cache: 'no-store' });
+        if (res.ok) setFacets(await res.json());
+        else notify('Could not load the filter options', 'error');
+      } catch {
+        notify('Network error loading the filter options', 'error');
+      } finally {
+        setFacetsLoading(false);
+      }
+    })();
+  }, [session, selectedReport, facets, facetsLoading]);
+
+  // ── Filter options, each following the ones above it ──────────────────────
+  const clientOptions = useMemo<MultiSelectOption[]>(
+    () => (facets?.clients ?? []).map((c) => ({
+      value: c.id,
+      label: c.name,
+      hint: (c.vendorNumbers ?? []).join(', '),
+    })),
+    [facets]
+  );
+
+  // Vendors of the chosen clients. Choosing a client must narrow this list, or
+  // the user can tick a vendor that cannot appear in the result.
+  const vendorOptions = useMemo<MultiSelectOption[]>(() => {
+    const pool = (facets?.clients ?? []).filter((c) => clientIds.size === 0 || clientIds.has(c.id));
+    const byVendor = new Map<string, string[]>();
+    for (const c of pool) {
+      for (const v of c.vendorNumbers ?? []) {
+        if (!v) continue;
+        const names = byVendor.get(v) ?? [];
+        if (!names.includes(c.name)) names.push(c.name);
+        byVendor.set(v, names);
       }
     }
-    if (batchDropOpen) document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [batchDropOpen]);
+    return [...byVendor.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([v, names]) => ({ value: v, label: v, hint: names.join(', ') }));
+  }, [facets, clientIds]);
 
-  // ── Load pick slips when report is selected ──
-  const loadSlips = useCallback(async () => {
-    if (!session) return;
-    setLoading(true);
+  const batchOptions = useMemo<MultiSelectOption[]>(() => {
+    const pool = (facets?.batches ?? []).filter((b) => {
+      if (clientIds.size && !clientIds.has(b.clientId)) return false;
+      if (vendorNumbers.size && !(b.vendorNumbers ?? []).some((v) => vendorNumbers.has(v))) return false;
+      return true;
+    });
+    return pool.map((b) => ({
+      value: b.loadId,
+      label: b.clientName,
+      hint: `${fmtDate(b.loadedAt)} · ${b.rowCount.toLocaleString()} rows${b.fileName ? ` · ${b.fileName}` : ''}`,
+    }));
+  }, [facets, clientIds, vendorNumbers]);
+
+  const provinceOptions = useMemo<MultiSelectOption[]>(
+    () => (facets?.provinces ?? []).map((p) => ({ value: p, label: p })), [facets]
+  );
+  const statusOptions = useMemo<MultiSelectOption[]>(
+    () => (facets?.statuses ?? []).map((s) => ({ value: s, label: s })), [facets]
+  );
+
+  // A ticked option that is no longer visible still filters, silently. Drop it
+  // whenever the list above it changes.
+  useEffect(() => { setVendorNumbers((p) => pruneToOptions(p, vendorOptions)); }, [vendorOptions]);
+  useEffect(() => { setLoadIds((p) => pruneToOptions(p, batchOptions)); }, [batchOptions]);
+
+  const hasFilter =
+    clientIds.size > 0 || vendorNumbers.size > 0 || loadIds.size > 0 ||
+    provinces.size > 0 || Boolean(from) || Boolean(to);
+
+  // ── Run ───────────────────────────────────────────────────────────────────
+  const runReport = useCallback(async () => {
+    setRunning(true);
+    setRunError('');
+    const qs = pickSlipQueryToParams({
+      mode: 'full',
+      clientIds: [...clientIds],
+      vendorNumbers: [...vendorNumbers],
+      loadIds: [...loadIds],
+      provinces: [...provinces],
+      statuses: [...statuses],
+      from, to,
+    });
     try {
-      const res = await authFetch('/api/pick-slips', { cache: 'no-store' });
+      const res = await authFetch(`/api/pick-slips?${qs}`, { cache: 'no-store' });
+      const data = await res.json();
       if (res.ok) {
-        const data = await res.json();
-        setAllSlips(data.slips ?? []);
+        setSlips(data.slips ?? []);
+        setRanWith(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
       } else {
-        notify('Failed to load pick slips', 'error');
+        setRunError(data.error || 'The report could not be run.');
       }
     } catch {
-      notify('Network error loading data', 'error');
+      setRunError('Network error running the report.');
     } finally {
-      setLoading(false);
+      setRunning(false);
     }
-  }, [session]);
+  }, [clientIds, vendorNumbers, loadIds, provinces, statuses, from, to]);
 
-  useEffect(() => {
-    if (selectedReport) loadSlips();
-  }, [selectedReport, loadSlips]);
+  const resetFilters = () => {
+    setClientIds(new Set()); setVendorNumbers(new Set()); setLoadIds(new Set());
+    setProvinces(new Set()); setStatuses(new Set()); setFrom(''); setTo('');
+    setSlips(null); setRunError('');
+  };
 
-  // ── Derive batch options from slips ──
-  const batchOptions = useMemo<BatchOption[]>(() => {
-    const map = new Map<string, BatchOption>();
-    for (const s of allSlips) {
-      const key = `${s.clientId}|${s.loadId}`;
-      if (!map.has(key)) {
-        map.set(key, {
-          loadId: s.loadId,
-          clientId: s.clientId,
-          clientName: s.clientName,
-          generatedAt: s.generatedAt,
-          slipCount: 0,
-        });
-      }
-      map.get(key)!.slipCount++;
-    }
-    return [...map.values()].sort((a, b) => b.generatedAt.localeCompare(a.generatedAt));
-  }, [allSlips]);
-
-  // ── Build report rows ──
+  // ── Rows ──────────────────────────────────────────────────────────────────
   const reportRows = useMemo<ReportRow[]>(() => {
-    if (selectedBatches.size === 0) return [];
-
+    if (!slips) return [];
     const rows: ReportRow[] = [];
-    const filteredSlips = allSlips.filter(s => {
-      const key = `${s.clientId}|${s.loadId}`;
-      return selectedBatches.has(key);
-    });
-
-    for (const slip of filteredSlips) {
+    for (const slip of slips) {
       const refs = slip.receiptStoreRefs ?? [];
       const grnDate = slip.receiptGrnDate || slip.receiptedAt || '';
-
-      for (const row of slip.rows) {
-        // Find matching unreturned stock row
-        const ur = (slip.unreturnedStock ?? []).find(
-          u => u.articleCode === row.articleCode
-        );
-
-        const agedQty = row.qty;
+      for (const row of slip.rows ?? []) {
+        const ur = (slip.unreturnedStock ?? []).find((u) => u.articleCode === row.articleCode);
         const displayQty = ur?.display ?? 0;
         const refusedQty = ur?.storeRefused ?? 0;
         const notFoundQty = ur?.notFound ?? 0;
         const damagedQty = ur?.damaged ?? 0;
-        // Found = pickSlipQty - losses (or agedQty if no unreturned data)
-        const foundQty = ur
-          ? ur.pickSlipQty - (displayQty + refusedQty + notFoundQty + damagedQty)
-          : 0;
-
+        const foundQty = ur ? ur.pickSlipQty - (displayQty + refusedQty + notFoundQty + damagedQty) : 0;
         rows.push({
           pickSlipId: slip.id,
-          grnRef1: refs[0] ?? '',
-          grnRef2: refs[1] ?? '',
-          grnRef3: refs[2] ?? '',
-          grnRef4: refs[3] ?? '',
+          grnRef1: refs[0] ?? '', grnRef2: refs[1] ?? '', grnRef3: refs[2] ?? '', grnRef4: refs[3] ?? '',
+          clientName: slip.clientName,
+          vendorNumber: slip.vendorNumber,
           storeName: slip.siteName,
           storeCode: slip.siteCode,
           grnDateTime: grnDate ? fmtDateTime(grnDate) : '',
           vendorProductCode: row.vendorProductCode || '',
           articleCode: row.articleCode,
           description: row.description,
-          agedQty,
+          agedQty: row.qty,
           agedVal: row.val,
           foundQty: Math.max(0, foundQty),
-          displayQty,
-          refusedQty,
-          notFoundQty,
-          damagedQty,
+          displayQty, refusedQty, notFoundQty, damagedQty,
         });
       }
     }
-
     return rows;
-  }, [allSlips, selectedBatches]);
+  }, [slips]);
 
-  // ── Totals ──
   const totals = useMemo(() => {
     const t = { agedQty: 0, agedVal: 0, foundQty: 0, displayQty: 0, refusedQty: 0, notFoundQty: 0, damagedQty: 0 };
     for (const r of reportRows) {
-      t.agedQty += r.agedQty;
-      t.agedVal += r.agedVal;
-      t.foundQty += r.foundQty;
-      t.displayQty += r.displayQty;
-      t.refusedQty += r.refusedQty;
-      t.notFoundQty += r.notFoundQty;
-      t.damagedQty += r.damagedQty;
+      t.agedQty += r.agedQty; t.agedVal += r.agedVal; t.foundQty += r.foundQty;
+      t.displayQty += r.displayQty; t.refusedQty += r.refusedQty;
+      t.notFoundQty += r.notFoundQty; t.damagedQty += r.damagedQty;
     }
     return t;
   }, [reportRows]);
 
-  // ── Excel export ──
-  function exportToExcel() {
-    if (reportRows.length === 0) {
-      notify('No data to export', 'error');
-      return;
+  // ── Export ────────────────────────────────────────────────────────────────
+  const excelRow = (r: ReportRow) => ({
+    'Picking Slip #': r.pickSlipId,
+    'GRN/GRV #1': r.grnRef1,
+    'GRN/GRV #2': r.grnRef2,
+    'GRN/GRV #3': r.grnRef3,
+    'GRN/GRV #4': r.grnRef4,
+    'Client': r.clientName,
+    'Vendor #': r.vendorNumber,
+    'Store Name': r.storeName,
+    'Store Code': r.storeCode,
+    'GRN/GRV Date/Time': r.grnDateTime,
+    'Product Code': r.vendorProductCode,
+    'Article Number': r.articleCode,
+    'Product Description': r.description,
+    'Aged Qty': r.agedQty,
+    'Aged Stock Value': r.agedVal,
+    'Found Qty': r.foundQty,
+    'Display Qty': r.displayQty,
+    'Refused Qty': r.refusedQty,
+    'Not Found Qty': r.notFoundQty,
+    'Damages Qty': r.damagedQty,
+  });
+
+  const groupKeyOf = (r: ReportRow): string => {
+    switch (splitBy) {
+      case 'client': return r.clientName || 'Unknown client';
+      case 'vendor': return r.vendorNumber || 'No vendor';
+      case 'store': return `${r.storeName}${r.storeCode ? ` ${r.storeCode}` : ''}`.trim() || 'Unknown store';
     }
-    const data = reportRows.map(r => ({
-      'Picking Slip #': r.pickSlipId,
-      'GRN/GRV #1': r.grnRef1,
-      'GRN/GRV #2': r.grnRef2,
-      'GRN/GRV #3': r.grnRef3,
-      'GRN/GRV #4': r.grnRef4,
-      'Store Name': r.storeName,
-      'Store Code': r.storeCode,
-      'GRN/GRV Date/Time': r.grnDateTime,
-      'Product Code': r.vendorProductCode,
-      'Article Number': r.articleCode,
-      'Product Description': r.description,
-      'Aged Qty': r.agedQty,
-      'Aged Stock Value': r.agedVal,
-      'Found Qty': r.foundQty,
-      'Display Qty': r.displayQty,
-      'Refused Qty': r.refusedQty,
-      'Not Found Qty': r.notFoundQty,
-      'Damages Qty': r.damagedQty,
-    }));
+  };
 
-    // Add totals row
-    data.push({
-      'Picking Slip #': '',
-      'GRN/GRV #1': '',
-      'GRN/GRV #2': '',
-      'GRN/GRV #3': '',
-      'GRN/GRV #4': '',
-      'Store Name': '',
-      'Store Code': '',
-      'GRN/GRV Date/Time': '',
-      'Product Code': '',
-      'Article Number': '',
-      'Product Description': 'TOTAL',
-      'Aged Qty': totals.agedQty,
-      'Aged Stock Value': totals.agedVal,
-      'Found Qty': totals.foundQty,
-      'Display Qty': totals.displayQty,
-      'Refused Qty': totals.refusedQty,
-      'Not Found Qty': totals.notFoundQty,
-      'Damages Qty': totals.damagedQty,
-    });
+  async function doExport() {
+    if (reportRows.length === 0) { notify('Run the report first', 'error'); return; }
+    setExporting(true);
+    try {
+      const byGroup = new Map<string, ReportRow[]>();
+      for (const r of reportRows) {
+        const k = groupKeyOf(r);
+        const bucket = byGroup.get(k);
+        if (bucket) bucket.push(r);
+        else byGroup.set(k, [r]);
+      }
+      const groups: ReportGroup[] = [...byGroup.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([name, rs]) => ({ name, rows: rs.map(excelRow) }));
 
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Uplift Detail');
-
-    const date = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `Uplift Detail Report - ${date}.xlsx`);
-    notify('Report exported to Excel');
+      // Combined mode ignores the split entirely unless it needs the label column.
+      const res = await exportReport({
+        mode: excelMode,
+        groups: excelMode === 'combined' ? [{ name: 'Report', rows: reportRows.map(excelRow) }] : groups,
+        baseName: `Uplift Detail Report - ${new Date().toISOString().slice(0, 10)}`,
+        splitColumn: SPLIT_LABELS[splitBy],
+      });
+      notify(
+        res.files === 1
+          ? `Exported ${res.rows.toLocaleString()} rows`
+          : `Exported ${res.rows.toLocaleString()} rows across ${res.files} documents`
+      );
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Export failed', 'error');
+    } finally {
+      setExporting(false);
+    }
   }
 
   if (!session) return null;
@@ -332,7 +420,7 @@ export default function ReportsPage() {
       {/* Report menu */}
       {!selectedReport && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {REPORTS.map(r => (
+          {REPORTS.map((r) => (
             <button
               key={r.id}
               onClick={() => setSelectedReport(r.id)}
@@ -352,13 +440,11 @@ export default function ReportsPage() {
         </div>
       )}
 
-      {/* Selected report */}
       {selectedReport === 'uplift-detail' && (
         <>
-          {/* Report header */}
           <div className="flex items-center gap-3 mb-4">
             <button
-              onClick={() => { setSelectedReport(null); setSelectedBatches(new Set()); }}
+              onClick={() => { setSelectedReport(null); resetFilters(); }}
               className="p-1.5 text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-100"
               title="Back to reports"
             >
@@ -370,101 +456,158 @@ export default function ReportsPage() {
           </div>
 
           {/* Filters */}
-          <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 flex flex-wrap items-end gap-4">
-            {/* Batch selector */}
-            <div className="relative min-w-[280px]" ref={batchDropRef}>
-              <label className="block text-xs text-gray-600 mb-1">Aged Stock Batch</label>
+          <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <MultiSelect
+                label="Client"
+                options={clientOptions}
+                selected={clientIds}
+                onChange={setClientIds}
+                placeholder={facetsLoading ? 'Loading…' : 'All clients'}
+                disabled={facetsLoading}
+                widthClass="min-w-[15rem]"
+              />
+              <MultiSelect
+                label="Vendor number"
+                options={vendorOptions}
+                selected={vendorNumbers}
+                onChange={setVendorNumbers}
+                placeholder="All vendors"
+                disabled={facetsLoading}
+                widthClass="min-w-[12rem]"
+              />
+              <MultiSelect
+                label="Aged stock batch"
+                options={batchOptions}
+                selected={loadIds}
+                onChange={setLoadIds}
+                placeholder="All batches"
+                disabled={facetsLoading}
+                widthClass="min-w-[16rem]"
+              />
+              <MultiSelect
+                label="Province"
+                options={provinceOptions}
+                selected={provinces}
+                onChange={setProvinces}
+                placeholder="All provinces"
+                disabled={facetsLoading}
+                widthClass="min-w-[11rem]"
+              />
+              <MultiSelect
+                label="Status"
+                options={statusOptions}
+                selected={statuses}
+                onChange={setStatuses}
+                placeholder="All statuses"
+                disabled={facetsLoading}
+                widthClass="min-w-[11rem]"
+              />
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Uplifted from</label>
+                <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+                  className="px-3 py-1.5 border border-gray-300 rounded-md text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">to</label>
+                <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
+                  className="px-3 py-1.5 border border-gray-300 rounded-md text-sm" />
+              </div>
+
               <button
-                type="button"
-                onClick={() => setBatchDropOpen(o => !o)}
-                className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm text-left bg-white flex items-center justify-between"
+                onClick={runReport}
+                disabled={running || facetsLoading}
+                className="px-5 py-1.5 rounded-md text-sm font-semibold bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-50"
               >
-                <span className={selectedBatches.size > 0 ? 'text-gray-900' : 'text-gray-500'}>
-                  {selectedBatches.size === 0
-                    ? 'Select batch(es)...'
-                    : `${selectedBatches.size} batch${selectedBatches.size > 1 ? 'es' : ''} selected`}
-                </span>
-                <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
+                {running ? 'Running…' : 'Run report'}
               </button>
-              {batchDropOpen && (
-                <div className="absolute z-30 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-72 overflow-auto">
-                  {selectedBatches.size > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedBatches(new Set())}
-                      className="w-full text-left px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 border-b border-gray-100"
-                    >
-                      Clear all
-                    </button>
-                  )}
-                  {loading ? (
-                    <div className="px-3 py-4 text-center text-xs text-gray-400">Loading batches...</div>
-                  ) : batchOptions.length === 0 ? (
-                    <div className="px-3 py-4 text-center text-xs text-gray-400">No batches found</div>
-                  ) : batchOptions.map(b => {
-                    const key = `${b.clientId}|${b.loadId}`;
-                    return (
-                      <label key={key} className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer text-sm border-b border-gray-50">
-                        <input
-                          type="checkbox"
-                          checked={selectedBatches.has(key)}
-                          onChange={() => {
-                            setSelectedBatches(prev => {
-                              const next = new Set(prev);
-                              if (next.has(key)) next.delete(key);
-                              else next.add(key);
-                              return next;
-                            });
-                          }}
-                          className="rounded border-gray-300"
-                        />
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium text-gray-900 truncate">{b.clientName}</div>
-                          <div className="text-[10px] text-gray-500">
-                            {fmtDate(b.generatedAt)} — {b.slipCount} slip{b.slipCount !== 1 ? 's' : ''}
-                          </div>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
+              {(hasFilter || slips) && (
+                <button onClick={resetFilters} className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700">
+                  Reset
+                </button>
               )}
             </div>
 
-            {/* Export button */}
-            <button
-              onClick={exportToExcel}
-              disabled={reportRows.length === 0}
-              className="px-4 py-1.5 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              Export to Excel
-            </button>
-
-            {/* Row count */}
-            {reportRows.length > 0 && (
-              <span className="text-xs text-gray-500 ml-auto">
-                {reportRows.length.toLocaleString()} row{reportRows.length !== 1 ? 's' : ''}
-              </span>
+            {!hasFilter && (
+              <p className="text-xs text-gray-500 mt-3">
+                Running with no filters pulls every pick slip you can see, which is slow.
+                Pick a client, a batch or a date range first.
+              </p>
             )}
           </div>
 
+          {/* Export bar — only once there is something to export */}
+          {reportRows.length > 0 && (
+            <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Excel view</label>
+                <select
+                  value={excelMode}
+                  onChange={(e) => setExcelMode(e.target.value as ExcelViewMode)}
+                  className="px-3 py-1.5 border border-gray-300 rounded-md text-sm bg-white min-w-[16rem]"
+                >
+                  {(Object.keys(EXCEL_VIEW_LABELS) as ExcelViewMode[]).map((m) => (
+                    <option key={m} value={m}>{EXCEL_VIEW_LABELS[m]}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">
+                  {excelMode === 'combined' ? 'Label column' : 'Split by'}
+                </label>
+                <select
+                  value={splitBy}
+                  onChange={(e) => setSplitBy(e.target.value as SplitBy)}
+                  className="px-3 py-1.5 border border-gray-300 rounded-md text-sm bg-white"
+                >
+                  {(Object.keys(SPLIT_LABELS) as SplitBy[])
+                    .map((s) => <option key={s} value={s}>{SPLIT_LABELS[s]}</option>)}
+                </select>
+              </div>
+              <button
+                onClick={doExport}
+                disabled={exporting}
+                className="px-4 py-1.5 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                {exporting ? 'Exporting…' : 'Export to Excel'}
+              </button>
+              <span className="text-xs text-gray-500 ml-auto">
+                {reportRows.length.toLocaleString()} row{reportRows.length !== 1 ? 's' : ''}
+                {slips ? ` from ${slips.length.toLocaleString()} slip${slips.length !== 1 ? 's' : ''}` : ''}
+                {ranWith ? ` · run at ${ranWith}` : ''}
+              </span>
+            </div>
+          )}
+
+          {runError && (
+            <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 mb-4 flex items-start gap-3">
+              <span className="flex-1">{runError}</span>
+              <button onClick={() => setRunError('')} className="text-red-500 hover:text-red-700">Dismiss</button>
+            </div>
+          )}
+
           {/* Empty state */}
-          {selectedBatches.size === 0 && (
+          {!slips && !running && (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-12 text-center">
               <svg className="w-10 h-10 text-gray-300 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
               </svg>
-              <p className="text-sm text-gray-500">Select one or more aged stock batches to generate the report</p>
+              <p className="text-sm text-gray-500">Choose your filters and hit <span className="font-medium">Run report</span>.</p>
+              <p className="text-xs text-gray-400 mt-1">Nothing is fetched until you do.</p>
+            </div>
+          )}
+
+          {running && (
+            <div className="bg-white border border-gray-200 rounded-lg p-12 text-center text-sm text-gray-500">
+              Fetching the slips you asked for…
             </div>
           )}
 
           {/* Report grid */}
-          {selectedBatches.size > 0 && (
+          {slips && !running && (
             <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
               <div className="max-h-[70vh] overflow-auto">
                 <table className="min-w-full text-xs">
@@ -475,6 +618,7 @@ export default function ReportsPage() {
                       <th className="px-2 py-2 whitespace-nowrap">GRN/GRV #2</th>
                       <th className="px-2 py-2 whitespace-nowrap">GRN/GRV #3</th>
                       <th className="px-2 py-2 whitespace-nowrap">GRN/GRV #4</th>
+                      <th className="px-2 py-2 whitespace-nowrap">Vendor</th>
                       <th className="px-2 py-2 whitespace-nowrap">Store</th>
                       <th className="px-2 py-2 whitespace-nowrap">GRN/GRV Date</th>
                       <th className="px-2 py-2 whitespace-nowrap">Product Code</th>
@@ -490,10 +634,10 @@ export default function ReportsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {loading ? (
-                      <tr><td colSpan={17} className="px-3 py-8 text-center text-gray-500 text-sm">Loading...</td></tr>
-                    ) : reportRows.length === 0 ? (
-                      <tr><td colSpan={17} className="px-3 py-8 text-center text-gray-500 text-sm">No data for the selected batch(es).</td></tr>
+                    {reportRows.length === 0 ? (
+                      <tr><td colSpan={18} className="px-3 py-8 text-center text-gray-500 text-sm">
+                        Nothing matched those filters.
+                      </td></tr>
                     ) : (
                       <>
                         {reportRows.map((r, i) => (
@@ -503,6 +647,7 @@ export default function ReportsPage() {
                             <td className="px-2 py-1.5 whitespace-nowrap">{r.grnRef2}</td>
                             <td className="px-2 py-1.5 whitespace-nowrap">{r.grnRef3}</td>
                             <td className="px-2 py-1.5 whitespace-nowrap">{r.grnRef4}</td>
+                            <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">{r.vendorNumber}</td>
                             <td className="px-2 py-1.5 whitespace-nowrap">{r.storeName} ({r.storeCode})</td>
                             <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">{r.grnDateTime}</td>
                             <td className="px-2 py-1.5 whitespace-nowrap">{r.vendorProductCode}</td>
@@ -517,9 +662,8 @@ export default function ReportsPage() {
                             <td className={`px-2 py-1.5 text-right whitespace-nowrap ${r.damagedQty > 0 ? 'text-red-600' : ''}`}>{r.damagedQty.toLocaleString()}</td>
                           </tr>
                         ))}
-                        {/* Totals row */}
                         <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold">
-                          <td colSpan={10} className="px-2 py-2 text-right text-xs text-gray-700">TOTAL</td>
+                          <td colSpan={11} className="px-2 py-2 text-right text-xs text-gray-700">TOTAL</td>
                           <td className="px-2 py-2 text-right whitespace-nowrap">{totals.agedQty.toLocaleString()}</td>
                           <td className="px-2 py-2 text-right whitespace-nowrap">{fmtCurrency(totals.agedVal)}</td>
                           <td className="px-2 py-2 text-right whitespace-nowrap text-emerald-600">{totals.foundQty.toLocaleString()}</td>

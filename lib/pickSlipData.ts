@@ -352,22 +352,41 @@ export function nextSequenceFromRuns(
  * Iterates each client's aged-stock load index AND manual index →
  * reads the run for each load.
  */
+/** Read `items` through `fn`, at most `size` requests in flight at a time. */
+async function inBatches<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(...(await Promise.all(items.slice(i, i + size).map(fn))));
+  }
+  return out;
+}
+
 export async function listAllPickSlipRuns(
   clientIds: string[],
-  listLoadsFn: (clientId: string) => Promise<Array<{ id: string }>>
+  listLoadsFn: (clientId: string) => Promise<Array<{ id: string }>>,
+  /**
+   * Only read these load/run ids. Every run is a separate blob read, so
+   * narrowing here is the difference between one read and several hundred —
+   * this is the main cost of the pick-slip pages.
+   */
+  onlyLoadIds?: string[]
 ): Promise<PickSlipRunIndex[]> {
+  const wanted = onlyLoadIds && onlyLoadIds.length ? new Set(onlyLoadIds) : null;
   const runs: PickSlipRunIndex[] = [];
+
   for (const clientId of clientIds) {
-    // Load-based runs
     const loads = await listLoadsFn(clientId);
-    for (const load of loads) {
-      const run = await getPickSlipRun(clientId, load.id);
-      if (run && run.slips.length > 0) runs.push(run);
-    }
-    // Manual runs
     const manualIds = await getManualIndex(clientId);
-    for (const manualLoadId of manualIds) {
-      const run = await getPickSlipRun(clientId, manualLoadId);
+
+    const ids = [...loads.map((l) => l.id), ...manualIds].filter(
+      (id) => !wanted || wanted.has(id)
+    );
+
+    // Blob reads are latency-bound, not CPU-bound; running them sequentially
+    // was most of the wall-clock. Capped so a big client cannot open hundreds
+    // of sockets at once.
+    const fetched = await inBatches(ids, 12, (id) => getPickSlipRun(clientId, id));
+    for (const run of fetched) {
       if (run && run.slips.length > 0) runs.push(run);
     }
   }

@@ -48,3 +48,6 @@ next-env.d.ts
 
 # data (local dev)
 /data/
+
+# Parked env files (created when isolating a local run from production)
+.env*.PARKED
