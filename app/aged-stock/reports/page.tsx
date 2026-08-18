@@ -24,6 +24,13 @@ import {
   type ExcelViewMode,
   type ReportGroup,
 } from '@/lib/reportExport';
+import {
+  summariseStore,
+  totalStoreSummary,
+  formatDocumentNumbers,
+  type StoreSummaryRow,
+  type UpliftLine,
+} from '@/lib/storeSummary';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -54,6 +61,8 @@ interface SlipDto {
   vendorNumber: string;
   siteCode: string;
   siteName: string;
+  /** Canonical province, resolved server-side from the store record. */
+  province?: string;
   warehouse: string;
   totalQty: number;
   totalVal: number;
@@ -102,7 +111,7 @@ interface ReportRow {
   damagedQty: number;
 }
 
-type ReportId = 'uplift-detail';
+type ReportId = 'uplift-detail' | 'store-summary';
 
 const REPORTS: Array<{ id: ReportId; label: string; description: string }> = [
   {
@@ -110,7 +119,17 @@ const REPORTS: Array<{ id: ReportId; label: string; description: string }> = [
     label: 'Uplift Detail Report',
     description: 'Per-product breakdown of aged stock uplifts — found, display, refused, not found, damages — for export to clients.',
   },
+  {
+    id: 'store-summary',
+    label: 'Consolidated Store Report',
+    description: 'One row per store in RANDS — value to be collected, collected, damages and possible phantom stock, with every GRN/GRV number in one cell.',
+  },
 ];
+
+const REPORT_TITLE: Record<ReportId, string> = {
+  'uplift-detail': 'Uplift Detail Report',
+  'store-summary': 'Consolidated Store Report',
+};
 
 /**
  * How a report is split when exporting to separate sheets or documents.
@@ -338,6 +357,77 @@ export default function ReportsPage() {
     return t;
   }, [reportRows]);
 
+  // ── Consolidated store report ─────────────────────────────────────────────
+  // One row per store, consolidated across every slip for that store, in rands.
+  const storeRows = useMemo<StoreSummaryRow[]>(() => {
+    if (!slips) return [];
+    interface Bucket {
+      storeName: string; storeCode: string; province: string;
+      clientName: string; vendorNumber: string;
+      docs: string[]; upliftedAt?: string; uplifted: boolean;
+      lines: UpliftLine[];
+    }
+    const byStore = new Map<string, Bucket>();
+
+    for (const slip of slips) {
+      // A store is only the same store within the same vendor account — the
+      // same physical shop can be served under two vendor numbers and those
+      // are different pieces of paper.
+      const key = `${slip.vendorNumber}|${slip.siteCode}`;
+      let b = byStore.get(key);
+      if (!b) {
+        b = {
+          storeName: slip.siteName, storeCode: slip.siteCode,
+          province: slip.province ?? '',
+          clientName: slip.clientName, vendorNumber: slip.vendorNumber,
+          docs: [], uplifted: false, lines: [],
+        };
+        byStore.set(key, b);
+      }
+      for (const ref of slip.receiptStoreRefs ?? []) if (ref) b.docs.push(ref);
+
+      const when = slip.receiptGrnDate || slip.receiptedAt;
+      if (when) {
+        b.uplifted = true;
+        // Earliest uplift date for the store — the tracker records when the
+        // collection happened, and a later correction should not move it.
+        if (!b.upliftedAt || when < b.upliftedAt) b.upliftedAt = when;
+      }
+
+      for (const row of slip.rows ?? []) {
+        const ur = (slip.unreturnedStock ?? []).find((u) => u.articleCode === row.articleCode);
+        const displayQty = ur?.display ?? 0;
+        const refusedQty = ur?.storeRefused ?? 0;
+        const notFoundQty = ur?.notFound ?? 0;
+        const damagedQty = ur?.damaged ?? 0;
+        const foundQty = ur
+          ? Math.max(0, ur.pickSlipQty - (displayQty + refusedQty + notFoundQty + damagedQty))
+          : 0;
+        b.lines.push({
+          articleCode: row.articleCode,
+          description: row.description,
+          agedQty: row.qty,
+          agedVal: row.val,
+          foundQty, displayQty, refusedQty, notFoundQty, damagedQty,
+        });
+      }
+    }
+
+    return [...byStore.values()]
+      .map((b) =>
+        summariseStore({
+          storeName: b.storeName, storeCode: b.storeCode, province: b.province,
+          documentNumbers: b.docs, upliftedAt: b.upliftedAt,
+          clientName: b.clientName, vendorNumber: b.vendorNumber,
+          lines: b.lines, uplifted: b.uplifted,
+        })
+      )
+      // Highest value collected first, exactly how the tracker is sorted.
+      .sort((a, b) => b.valueCollected - a.valueCollected || a.storeName.localeCompare(b.storeName));
+  }, [slips]);
+
+  const storeTotals = useMemo(() => totalStoreSummary(storeRows), [storeRows]);
+
   // ── Export ────────────────────────────────────────────────────────────────
   const excelRow = (r: ReportRow) => ({
     'Picking Slip #': r.pickSlipId,
@@ -362,7 +452,28 @@ export default function ReportsPage() {
     'Damages Qty': r.damagedQty,
   });
 
-  const groupKeyOf = (r: ReportRow): string => {
+  /** One consolidated-store row, laid out like the tracker. */
+  const storeExcelRow = (r: StoreSummaryRow) => ({
+    'Store Name': r.storeName,
+    'Site Code': r.storeCode,
+    'Province': r.province,
+    'Document Number(s)': formatDocumentNumbers(r.documentNumbers),
+    'Date Uplifted': r.upliftedAt ? fmtDate(r.upliftedAt) : '',
+    'Value to be Collected': r.valueToBeCollected,
+    'Value Collected': r.valueCollected,
+    'Damages': r.damages,
+    'Possible Phantom Stock': r.phantom,
+    'Display': r.display,
+    'Store Refused': r.refused,
+    'Unaccounted': r.unaccounted,
+    'Client': r.clientName,
+    'Vendor #': r.vendorNumber,
+  });
+
+  const isStoreReport = selectedReport === 'store-summary';
+  const outputRowCount = isStoreReport ? storeRows.length : reportRows.length;
+
+  const groupKeyOf = (r: { clientName: string; vendorNumber: string; storeName: string; storeCode: string }): string => {
     switch (splitBy) {
       case 'client': return r.clientName || 'Unknown client';
       case 'vendor': return r.vendorNumber || 'No vendor';
@@ -371,11 +482,16 @@ export default function ReportsPage() {
   };
 
   async function doExport() {
-    if (reportRows.length === 0) { notify('Run the report first', 'error'); return; }
+    if (outputRowCount === 0) { notify('Run the report first', 'error'); return; }
     setExporting(true);
     try {
-      const byGroup = new Map<string, ReportRow[]>();
-      for (const r of reportRows) {
+      const source: Array<{ clientName: string; vendorNumber: string; storeName: string; storeCode: string }> =
+        isStoreReport ? storeRows : reportRows;
+      const toExcel = (r: unknown) =>
+        isStoreReport ? storeExcelRow(r as StoreSummaryRow) : excelRow(r as ReportRow);
+
+      const byGroup = new Map<string, typeof source>();
+      for (const r of source) {
         const k = groupKeyOf(r);
         const bucket = byGroup.get(k);
         if (bucket) bucket.push(r);
@@ -383,13 +499,15 @@ export default function ReportsPage() {
       }
       const groups: ReportGroup[] = [...byGroup.entries()]
         .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([name, rs]) => ({ name, rows: rs.map(excelRow) }));
+        .map(([name, rs]) => ({ name, rows: rs.map(toExcel) }));
 
       // Combined mode ignores the split entirely unless it needs the label column.
       const res = await exportReport({
         mode: excelMode,
-        groups: excelMode === 'combined' ? [{ name: 'Report', rows: reportRows.map(excelRow) }] : groups,
-        baseName: `Uplift Detail Report - ${new Date().toISOString().slice(0, 10)}`,
+        groups: excelMode === 'combined'
+          ? [{ name: 'Report', rows: source.map(toExcel) }]
+          : groups,
+        baseName: `${REPORT_TITLE[selectedReport!]} - ${new Date().toISOString().slice(0, 10)}`,
         splitColumn: SPLIT_LABELS[splitBy],
       });
       notify(
@@ -440,7 +558,7 @@ export default function ReportsPage() {
         </div>
       )}
 
-      {selectedReport === 'uplift-detail' && (
+      {selectedReport && (
         <>
           <div className="flex items-center gap-3 mb-4">
             <button
@@ -452,7 +570,7 @@ export default function ReportsPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
               </svg>
             </button>
-            <h2 className="text-lg font-bold text-gray-900">Uplift Detail Report</h2>
+            <h2 className="text-lg font-bold text-gray-900">{REPORT_TITLE[selectedReport]}</h2>
           </div>
 
           {/* Filters */}
@@ -537,7 +655,7 @@ export default function ReportsPage() {
           </div>
 
           {/* Export bar — only once there is something to export */}
-          {reportRows.length > 0 && (
+          {outputRowCount > 0 && (
             <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 flex flex-wrap items-end gap-3">
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Excel view</label>
@@ -575,7 +693,7 @@ export default function ReportsPage() {
                 {exporting ? 'Exporting…' : 'Export to Excel'}
               </button>
               <span className="text-xs text-gray-500 ml-auto">
-                {reportRows.length.toLocaleString()} row{reportRows.length !== 1 ? 's' : ''}
+                {outputRowCount.toLocaleString()} row{outputRowCount !== 1 ? 's' : ''}
                 {slips ? ` from ${slips.length.toLocaleString()} slip${slips.length !== 1 ? 's' : ''}` : ''}
                 {ranWith ? ` · run at ${ranWith}` : ''}
               </span>
@@ -606,8 +724,110 @@ export default function ReportsPage() {
             </div>
           )}
 
+          {/* Consolidated store report */}
+          {slips && !running && isStoreReport && (
+            <>
+              {/* The tracker's footer stats, which are the first thing anyone reads. */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                {[
+                  { n: storeTotals.storesIssued.toLocaleString(), l: 'Stores issued', c: 'text-gray-800' },
+                  {
+                    n: `${storeTotals.storesUplifted.toLocaleString()}${storeTotals.storesIssued ? ` · ${Math.round((storeTotals.storesUplifted / storeTotals.storesIssued) * 100)}%` : ''}`,
+                    l: 'Uplifted', c: 'text-emerald-600',
+                  },
+                  {
+                    n: `${storeTotals.storesOutstanding.toLocaleString()}${storeTotals.storesIssued ? ` · ${Math.round((storeTotals.storesOutstanding / storeTotals.storesIssued) * 100)}%` : ''}`,
+                    l: 'Outstanding', c: 'text-amber-600',
+                  },
+                  { n: fmtCurrency(storeTotals.valueCollected), l: 'Value collected', c: 'text-gray-800' },
+                ].map((s) => (
+                  <div key={s.l} className="bg-white rounded-lg border border-gray-200 p-4 text-center">
+                    <div className={`text-xl font-bold ${s.c}`}>{s.n}</div>
+                    <div className="text-xs text-gray-500">{s.l}</div>
+                  </div>
+                ))}
+              </div>
+
+              {storeRows.some((r) => r.unpricedLines > 0) && (
+                <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-3 mb-4">
+                  {storeRows.reduce((t, r) => t + r.unpricedLines, 0)} product line
+                  {storeRows.reduce((t, r) => t + r.unpricedLines, 0) === 1 ? ' has' : 's have'} a
+                  value but no quantity, so no unit price could be derived. Their value stays under
+                  &ldquo;to be collected&rdquo; and is not split across the brackets.
+                </div>
+              )}
+
+              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                <div className="max-h-[70vh] overflow-auto">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-gray-50 sticky top-0 z-10">
+                      <tr className="text-left text-[10px] font-semibold text-gray-600 uppercase tracking-wide">
+                        <th className="px-2 py-2 whitespace-nowrap">Store Name</th>
+                        <th className="px-2 py-2 whitespace-nowrap">Site Code</th>
+                        <th className="px-2 py-2 whitespace-nowrap">Province</th>
+                        <th className="px-2 py-2">Document Number(s)</th>
+                        <th className="px-2 py-2 whitespace-nowrap">Date Uplifted</th>
+                        <th className="px-2 py-2 text-right whitespace-nowrap">Value to be Collected</th>
+                        <th className="px-2 py-2 text-right whitespace-nowrap">Value Collected</th>
+                        <th className="px-2 py-2 text-right whitespace-nowrap">Damages</th>
+                        <th className="px-2 py-2 text-right whitespace-nowrap">Possible Phantom</th>
+                        <th className="px-2 py-2 text-right whitespace-nowrap">Display</th>
+                        <th className="px-2 py-2 text-right whitespace-nowrap">Refused</th>
+                        <th className="px-2 py-2 text-right whitespace-nowrap">Unaccounted</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {storeRows.length === 0 ? (
+                        <tr><td colSpan={12} className="px-3 py-8 text-center text-gray-500 text-sm">
+                          Nothing matched those filters.
+                        </td></tr>
+                      ) : (
+                        <>
+                          {storeRows.map((r) => (
+                            <tr key={`${r.vendorNumber}|${r.storeCode}`} className="border-t border-gray-100 hover:bg-gray-50">
+                              <td className="px-2 py-1.5 whitespace-nowrap font-medium text-gray-800">{r.storeName}</td>
+                              <td className="px-2 py-1.5 whitespace-nowrap">{r.storeCode}</td>
+                              <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">{r.province || '—'}</td>
+                              <td className="px-2 py-1.5 max-w-[260px] truncate" title={formatDocumentNumbers(r.documentNumbers)}>
+                                {formatDocumentNumbers(r.documentNumbers) || <span className="text-gray-300">—</span>}
+                              </td>
+                              <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">
+                                {r.upliftedAt ? fmtDate(r.upliftedAt) : <span className="text-amber-600">outstanding</span>}
+                              </td>
+                              <td className="px-2 py-1.5 text-right whitespace-nowrap">{fmtCurrency(r.valueToBeCollected)}</td>
+                              <td className={`px-2 py-1.5 text-right whitespace-nowrap ${r.valueCollected > 0 ? 'text-emerald-600 font-medium' : 'text-gray-300'}`}>{fmtCurrency(r.valueCollected)}</td>
+                              <td className={`px-2 py-1.5 text-right whitespace-nowrap ${r.damages > 0 ? 'text-red-600' : 'text-gray-300'}`}>{fmtCurrency(r.damages)}</td>
+                              <td className={`px-2 py-1.5 text-right whitespace-nowrap ${r.phantom > 0 ? 'text-orange-600' : 'text-gray-300'}`}>{fmtCurrency(r.phantom)}</td>
+                              <td className={`px-2 py-1.5 text-right whitespace-nowrap ${r.display > 0 ? 'text-blue-600' : 'text-gray-300'}`}>{fmtCurrency(r.display)}</td>
+                              <td className={`px-2 py-1.5 text-right whitespace-nowrap ${r.refused > 0 ? 'text-amber-600' : 'text-gray-300'}`}>{fmtCurrency(r.refused)}</td>
+                              <td className={`px-2 py-1.5 text-right whitespace-nowrap ${Math.abs(r.unaccounted) > 0.01 ? 'text-gray-700' : 'text-gray-300'}`}>{fmtCurrency(r.unaccounted)}</td>
+                            </tr>
+                          ))}
+                          <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold">
+                            <td colSpan={5} className="px-2 py-2 text-right text-xs text-gray-700">TOTAL</td>
+                            <td className="px-2 py-2 text-right whitespace-nowrap">{fmtCurrency(storeTotals.valueToBeCollected)}</td>
+                            <td className="px-2 py-2 text-right whitespace-nowrap text-emerald-600">{fmtCurrency(storeTotals.valueCollected)}</td>
+                            <td className="px-2 py-2 text-right whitespace-nowrap text-red-600">{fmtCurrency(storeTotals.damages)}</td>
+                            <td className="px-2 py-2 text-right whitespace-nowrap text-orange-600">{fmtCurrency(storeTotals.phantom)}</td>
+                            <td className="px-2 py-2 text-right whitespace-nowrap text-blue-600">{fmtCurrency(storeTotals.display)}</td>
+                            <td className="px-2 py-2 text-right whitespace-nowrap text-amber-600">{fmtCurrency(storeTotals.refused)}</td>
+                            <td className="px-2 py-2 text-right whitespace-nowrap">
+                              {fmtCurrency(
+                                storeTotals.valueToBeCollected - (storeTotals.valueCollected + storeTotals.damages + storeTotals.phantom + storeTotals.display + storeTotals.refused)
+                              )}
+                            </td>
+                          </tr>
+                        </>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+
           {/* Report grid */}
-          {slips && !running && (
+          {slips && !running && !isStoreReport && (
             <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
               <div className="max-h-[70vh] overflow-auto">
                 <table className="min-w-full text-xs">

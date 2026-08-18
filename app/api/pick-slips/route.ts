@@ -256,7 +256,10 @@ export async function GET(req: NextRequest) {
   // than making the client count an array it has no other use for.
   const payload = slips.map(slip => {
     const { rows, unreturnedStock, deliverySignature, ...rest } = slip;
-    const base: Record<string, unknown> = { ...rest };
+    // A pick slip carries no region of its own — it comes off the store control
+    // record. Resolved here so every consumer gets the same canonical province
+    // rather than each re-deriving it from a free-text region code.
+    const base: Record<string, unknown> = { ...rest, province: provinceOf(slip.siteCode) };
     if (withSignatures && deliverySignature) base.deliverySignature = deliverySignature;
     if (q.mode === 'summary') {
       base.productCount = new Set((rows ?? []).map(r => r.articleCode || r.barcode)).size;
