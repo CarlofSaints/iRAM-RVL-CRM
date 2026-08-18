@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useAuth, authFetch } from '@/lib/useAuth';
 import { useTableSort } from '@/lib/useTableSort';
@@ -75,21 +75,28 @@ export default function SwapOutsListPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
 
-  useEffect(() => {
-    if (!session) return;
-    (async () => {
-      const [soRes, clRes] = await Promise.all([
-        authFetch('/api/swap-outs', { cache: 'no-store' }),
-        authFetch('/api/control/clients', { cache: 'no-store' }),
-      ]);
-      if (soRes.ok) setRows((await soRes.json()).swapOuts ?? []);
-      if (clRes.ok) {
-        const data = await clRes.json();
-        setClients(Array.isArray(data) ? data : data.clients ?? []);
-      }
-      setLoading(false);
-    })();
-  }, [session]);
+  // Row selection for multi-record actions (delete today, more later).
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const [actionNote, setActionNote] = useState('');
+
+  const canDelete = (session?.permissions ?? []).includes('manage_pick_slips');
+
+  const load = useCallback(async () => {
+    const [soRes, clRes] = await Promise.all([
+      authFetch('/api/swap-outs', { cache: 'no-store' }),
+      authFetch('/api/control/clients', { cache: 'no-store' }),
+    ]);
+    if (soRes.ok) setRows((await soRes.json()).swapOuts ?? []);
+    if (clRes.ok) {
+      const data = await clRes.json();
+      setClients(Array.isArray(data) ? data : data.clients ?? []);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { if (session) load(); }, [session, load]);
 
   const clientName = useMemo(() => {
     const m = new Map(clients.map((c) => [c.id, c.name]));
@@ -129,6 +136,55 @@ export default function SwapOutsListPage() {
     }
     return true;
   });
+
+  // Keep the selection honest when the filters change — a checked row the user
+  // can no longer see must not be swept up by a bulk action.
+  const filteredIds = useMemo(() => new Set(filtered.map((r) => r.id)), [filtered]);
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const next = new Set([...prev].filter((id) => filteredIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [filteredIds]);
+
+  const toggleRow = (id: string) =>
+    setSelectedIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+
+  const allVisibleSelected = filtered.length > 0 && filtered.every((r) => selectedIds.has(r.id));
+  const toggleAllVisible = () =>
+    setSelectedIds(allVisibleSelected ? new Set() : new Set(filtered.map((r) => r.id)));
+
+  const deleteSelected = async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} swap-out${ids.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
+    setBusy(true);
+    setActionError('');
+    setActionNote('');
+    const res = await authFetch('/api/swap-outs/bulk-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      setSelectedIds(new Set());
+      // Say when fewer went than were asked for rather than silently succeeding.
+      setActionNote(
+        data.deleted === data.requested
+          ? `Deleted ${data.deleted} swap-out${data.deleted === 1 ? '' : 's'}.`
+          : `Deleted ${data.deleted} of ${data.requested}. ${data.requested - data.deleted} were already gone — the list was out of date.`,
+      );
+      await load();
+    } else {
+      setActionError(data.error || 'Delete failed');
+    }
+    setBusy(false);
+  };
 
   // Sortable grid — defaults to newest request date first.
   const { sorted, sortCol, sortDir, toggleSort } = useTableSort(filtered, {
@@ -240,11 +296,64 @@ export default function SwapOutsListPage() {
         <span className="text-sm text-gray-400">{filtered.length} of {rows.length}</span>
       </div>
 
+      {/* Bulk action bar — appears only with a selection. */}
+      {selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+          <span className="text-sm font-medium text-gray-700">
+            {selectedIds.size} selected
+          </span>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="text-sm text-gray-500 hover:text-gray-700"
+          >
+            Clear
+          </button>
+          <div className="flex-1" />
+          {canDelete ? (
+            <button
+              onClick={deleteSelected}
+              disabled={busy}
+              className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+            >
+              {busy ? 'Deleting…' : `Delete ${selectedIds.size}`}
+            </button>
+          ) : (
+            <span className="text-sm text-gray-400">You do not have permission to delete swap-outs.</span>
+          )}
+        </div>
+      )}
+
+      {/* Outcome of the last bulk action — a persistent panel, never a toast. */}
+      {actionError && (
+        <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 flex items-start gap-3">
+          <span className="flex-1">{actionError}</span>
+          <button onClick={() => setActionError('')} className="text-red-500 hover:text-red-700">Dismiss</button>
+        </div>
+      )}
+      {actionNote && (
+        <div className="rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-4 py-3 flex items-start gap-3">
+          <span className="flex-1">{actionNote}</span>
+          <button onClick={() => setActionNote('')} className="text-emerald-600 hover:text-emerald-800">Dismiss</button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-gray-400 border-b border-gray-100">
+              <th className="px-4 py-3 w-10">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = selectedIds.size > 0 && !allVisibleSelected;
+                  }}
+                  onChange={toggleAllVisible}
+                  disabled={filtered.length === 0}
+                  aria-label="Select all shown"
+                />
+              </th>
               <SortableTh col="pickingNumber" label="Picking #" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
               <SortableTh col="client" label="Client" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
               <SortableTh col="store" label="Store" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
@@ -259,7 +368,18 @@ export default function SwapOutsListPage() {
           </thead>
           <tbody>
             {sorted.map((r) => (
-              <tr key={r.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
+              <tr
+                key={r.id}
+                className={`border-b border-gray-50 last:border-0 ${selectedIds.has(r.id) ? 'bg-blue-50/60' : 'hover:bg-gray-50'}`}
+              >
+                <td className="px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(r.id)}
+                    onChange={() => toggleRow(r.id)}
+                    aria-label={`Select ${r.pickingNumber || r.storeName}`}
+                  />
+                </td>
                 <td className="px-4 py-3">
                   <Link href={`/swap-outs/${r.id}`} className="text-[var(--color-primary)] font-medium hover:underline">
                     {r.pickingNumber || <span className="text-gray-400 italic">no picking #</span>}
@@ -285,7 +405,7 @@ export default function SwapOutsListPage() {
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={10} className="px-4 py-8 text-center text-gray-400">No swap-outs found.</td></tr>
+              <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-400">No swap-outs found.</td></tr>
             )}
           </tbody>
         </table>

@@ -10,6 +10,8 @@ interface StoreDto { id: string; name: string; siteCode?: string; region?: strin
 interface ParsedLine { product: string; description?: string; quantity: number }
 interface ParsedConsignment {
   key: string;
+  /** Store-group key stamped by the parse route — the mapping is held under it. */
+  groupKey?: string;
   pickingNumber: string;
   needsPickingNumber: boolean;
   pickingNote?: string;
@@ -31,12 +33,18 @@ interface StoreGroup {
   sheetRows: number[];
   suggestedStoreId: string;
   matchType: 'alias' | 'code' | 'exact' | 'fuzzy' | 'none';
+  /** Which selected vendor record this store should land on ('' = user must pick). */
+  suggestedClientId: string;
+  vendorRemembered: boolean;
 }
 interface ParseResponse {
   fileName: string;
+  clientIds: string[];
   consignments: ParsedConsignment[];
   storeGroups: StoreGroup[];
   duplicates: string[];
+  /** picking # (upper-case) → vendor record(s) it is already sitting on. */
+  duplicateVendors: Record<string, string[]>;
   totals: { consignments: number; units: number; stores: number; unmapped: number };
   warnings: string[];
 }
@@ -45,8 +53,16 @@ interface CommitResult {
   skipped: number;
   total: number;
   skippedPicking: string[];
+  skippedDetail?: Array<{ pickingNumber: string; store: string; onClientId: string; sameVendor: boolean }>;
+  createdByClient?: Record<string, number>;
   storesRemembered: number;
   warnings: string[];
+}
+
+/** What the user has confirmed for one store group: which store, which vendor. */
+interface GroupChoice {
+  storeId: string;
+  clientId: string;
 }
 
 /** Label a client with its vendor number(s) so same-name records are distinguishable. */
@@ -169,13 +185,18 @@ export default function SwapOutImportPage() {
   const { session } = useAuth('import_excel');
   const [clients, setClients] = useState<ClientDto[]>([]);
   const [stores, setStores] = useState<StoreDto[]>([]);
-  const [clientId, setClientId] = useState('');
+  // One supplier can run several vendor numbers (Major Tech (Builders) is both
+  // 2130 and 4394) and a single weekly sheet spans them, so the import is
+  // scoped to a SET of client records and each store picks one.
+  const [selectedClientIds, setSelectedClientIds] = useState<Set<string>>(new Set());
+  const [clientDropOpen, setClientDropOpen] = useState(false);
+  const clientDropRef = useRef<HTMLDivElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   const [parsed, setParsed] = useState<ParseResponse | null>(null);
-  const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [mapping, setMapping] = useState<Record<string, GroupChoice>>({});
   const [result, setResult] = useState<CommitResult | null>(null);
 
   useEffect(() => {
@@ -197,27 +218,67 @@ export default function SwapOutImportPage() {
     })();
   }, [session]);
 
-  const enabledClients = clients.filter((c) => c.swapOutEnabled);
+  const enabledClients = useMemo(
+    () =>
+      clients
+        .filter((c) => c.swapOutEnabled)
+        .sort((a, b) => clientLabel(a).localeCompare(clientLabel(b))),
+    [clients],
+  );
   const step: 1 | 2 | 3 = result ? 3 : parsed ? 2 : 1;
+
+  // The vendor records this parse was scoped to, in a stable display order.
+  const chosenClients = useMemo(() => {
+    const ids = parsed?.clientIds ?? [...selectedClientIds];
+    return ids
+      .map((id) => clients.find((c) => c.id === id))
+      .filter((c): c is ClientDto => Boolean(c));
+  }, [parsed, selectedClientIds, clients]);
+  const multiVendor = chosenClients.length > 1;
+
+  const clientName = (id: string) => {
+    const c = clients.find((x) => x.id === id);
+    return c ? clientLabel(c) : id;
+  };
+
+  // Close the vendor dropdown on outside click.
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (clientDropRef.current && !clientDropRef.current.contains(e.target as Node)) {
+        setClientDropOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, []);
+
+  const toggleClient = (id: string) =>
+    setSelectedClientIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
 
   const upload = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (!clientId || !file) {
-      setError('Pick a client and an Excel file.');
+    if (selectedClientIds.size === 0 || !file) {
+      setError('Pick at least one client / vendor number and an Excel file.');
       return;
     }
     setBusy(true);
     const fd = new FormData();
-    fd.append('clientId', clientId);
+    fd.append('clientIds', [...selectedClientIds].join(','));
     fd.append('file', file);
     const res = await authFetch('/api/swap-outs/import/parse', { method: 'POST', body: fd });
     const data = await res.json();
     if (res.ok) {
       setParsed(data);
-      const seed: Record<string, string> = {};
+      const seed: Record<string, GroupChoice> = {};
       for (const g of data.storeGroups as StoreGroup[]) {
-        if (g.suggestedStoreId) seed[g.key] = g.suggestedStoreId;
+        if (g.suggestedStoreId) {
+          seed[g.key] = { storeId: g.suggestedStoreId, clientId: g.suggestedClientId ?? '' };
+        }
       }
       setMapping(seed);
     } else {
@@ -234,7 +295,7 @@ export default function SwapOutImportPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        clientId,
+        clientIds: parsed.clientIds ?? [...selectedClientIds],
         fileName: parsed.fileName,
         consignments: parsed.consignments,
         mapping,
@@ -254,8 +315,32 @@ export default function SwapOutImportPage() {
     setError('');
   };
 
-  const unmappedCount = parsed ? parsed.storeGroups.filter((g) => !mapping[g.key]).length : 0;
+  const setGroupStore = (key: string, storeId: string) =>
+    setMapping((m) => ({ ...m, [key]: { storeId, clientId: m[key]?.clientId ?? '' } }));
+  const setGroupClient = (key: string, clientId: string) =>
+    setMapping((m) => ({ ...m, [key]: { storeId: m[key]?.storeId ?? '', clientId } }));
+
+  // A group is only "mapped" once it has BOTH a store and a vendor record.
+  const isMapped = (g: StoreGroup) => Boolean(mapping[g.key]?.storeId && mapping[g.key]?.clientId);
+  const unmappedCount = parsed ? parsed.storeGroups.filter((g) => !isMapped(g)).length : 0;
   const dupeSet = useMemo(() => new Set((parsed?.duplicates ?? []).map((d) => d.toUpperCase())), [parsed]);
+
+  /** Consignments + units heading for each vendor, so the split is visible before committing. */
+  const vendorSplit = useMemo(() => {
+    if (!parsed) return [];
+    const tally = new Map<string, { consignments: number; units: number; stores: number }>();
+    for (const g of parsed.storeGroups) {
+      const cid = mapping[g.key]?.clientId;
+      if (!cid) continue;
+      const t = tally.get(cid) ?? { consignments: 0, units: 0, stores: 0 };
+      t.consignments += g.consignments;
+      t.units += g.units;
+      t.stores += 1;
+      tally.set(cid, t);
+    }
+    return chosenClients
+      .map((c) => ({ client: c, ...(tally.get(c.id) ?? { consignments: 0, units: 0, stores: 0 }) }));
+  }, [parsed, mapping, chosenClients]);
 
   return (
     <div className="flex flex-col gap-5 max-w-5xl">
@@ -298,17 +383,53 @@ export default function SwapOutImportPage() {
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
           <form onSubmit={upload} className="flex flex-col gap-4 max-w-xl">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Client</label>
-              <select
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-              >
-                <option value="">Select a client…</option>
-                {enabledClients.map((c) => (
-                  <option key={c.id} value={c.id}>{clientLabel(c)}</option>
-                ))}
-              </select>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Client / vendor number{selectedClientIds.size > 1 ? 's' : ''}
+              </label>
+              <div className="relative" ref={clientDropRef}>
+                <button
+                  type="button"
+                  onClick={() => setClientDropOpen((o) => !o)}
+                  className={`w-full text-left px-3 py-2 border rounded-lg text-sm bg-white flex items-center justify-between gap-2 hover:bg-gray-50 ${
+                    selectedClientIds.size ? 'border-gray-300' : 'border-amber-300 bg-amber-50/40'
+                  }`}
+                >
+                  <span className={`truncate ${selectedClientIds.size ? 'text-gray-800' : 'text-amber-700'}`}>
+                    {selectedClientIds.size === 0
+                      ? 'Select a client…'
+                      : enabledClients
+                          .filter((c) => selectedClientIds.has(c.id))
+                          .map((c) => clientLabel(c))
+                          .join('  ·  ')}
+                  </span>
+                  <svg className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform ${clientDropOpen ? 'rotate-180' : ''}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {clientDropOpen && (
+                  <div className="absolute z-30 mt-1 w-full min-w-[20rem] max-h-72 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg py-1">
+                    {enabledClients.length === 0 ? (
+                      <p className="px-3 py-2 text-sm text-gray-400 italic">No swap-out clients enabled.</p>
+                    ) : (
+                      enabledClients.map((c) => (
+                        <label key={c.id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedClientIds.has(c.id)}
+                            onChange={() => toggleClient(c.id)}
+                          />
+                          <span className="truncate">{clientLabel(c)}</span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                Tick more than one when the same supplier runs several vendor numbers and one
+                sheet covers them all — you choose the vendor per store in the next step.
+              </p>
               {enabledClients.length === 0 && (
                 <p className="text-xs text-amber-600 mt-1">
                   No client has Swap-Out enabled. Enable it on the client first.
@@ -367,12 +488,37 @@ export default function SwapOutImportPage() {
             </div>
           )}
 
+          {/* Where the sheet is heading, per vendor record. */}
+          {multiVendor && (
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-5 py-4">
+              <h2 className="font-semibold text-gray-900 mb-2">How this sheet splits</h2>
+              <div className="flex flex-wrap gap-4">
+                {vendorSplit.map((v) => (
+                  <div key={v.client.id} className="text-sm">
+                    <span className="font-medium text-gray-800">{clientLabel(v.client)}</span>
+                    <span className="text-gray-500">
+                      {' '}— {v.stores} store{v.stores === 1 ? '' : 's'}, {v.consignments} consignment
+                      {v.consignments === 1 ? '' : 's'}, {v.units} unit{v.units === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                ))}
+                {unmappedCount > 0 && (
+                  <div className="text-sm text-amber-600">
+                    {unmappedCount} store{unmappedCount > 1 ? 's' : ''} not yet assigned.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
             <div className="px-5 py-4 border-b border-gray-100">
-              <h2 className="font-semibold text-gray-900">Map each store in the sheet to a FLOW store</h2>
+              <h2 className="font-semibold text-gray-900">
+                Map each store in the sheet to a FLOW store{multiVendor ? ' and a vendor number' : ''}
+              </h2>
               <p className="text-sm text-gray-500">
-                The supplier sheet has no site codes. Confirm every store once and FLOW will
-                remember it for next week&apos;s sheet.
+                The supplier sheet has no site codes{multiVendor ? ' and does not say which vendor account a store belongs to' : ''}.
+                Confirm every store once and FLOW will remember it for next week&apos;s sheet.
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -385,12 +531,15 @@ export default function SwapOutImportPage() {
                     <th className="px-4 py-3 font-medium text-right">Cons.</th>
                     <th className="px-4 py-3 font-medium text-right">Units</th>
                     <th className="px-5 py-3 font-medium w-[22rem]">FLOW store</th>
+                    {multiVendor && <th className="px-5 py-3 font-medium w-[16rem]">Vendor number</th>}
                   </tr>
                 </thead>
                 <tbody>
                   {parsed.storeGroups.map((g) => {
                     const badge = MATCH_BADGE[g.matchType];
-                    const touched = mapping[g.key] !== g.suggestedStoreId;
+                    const choice = mapping[g.key];
+                    const touched = choice?.storeId !== g.suggestedStoreId;
+                    const needsVendor = multiVendor && !choice?.clientId;
                     return (
                       <tr key={g.key} className="border-b border-gray-50 last:border-0 align-top">
                         <td className="px-5 py-3">
@@ -406,8 +555,8 @@ export default function SwapOutImportPage() {
                         <td className="px-5 py-3">
                           <StorePicker
                             stores={stores}
-                            value={mapping[g.key] ?? ''}
-                            onChange={(id) => setMapping((m) => ({ ...m, [g.key]: id }))}
+                            value={choice?.storeId ?? ''}
+                            onChange={(id) => setGroupStore(g.key, id)}
                             placeholder="Choose a store…"
                           />
                           {badge && !touched && (
@@ -416,6 +565,32 @@ export default function SwapOutImportPage() {
                             </span>
                           )}
                         </td>
+                        {multiVendor && (
+                          <td className="px-5 py-3">
+                            <select
+                              value={choice?.clientId ?? ''}
+                              onChange={(e) => setGroupClient(g.key, e.target.value)}
+                              className={`w-full px-3 py-2 border rounded-lg text-sm bg-white ${
+                                needsVendor ? 'border-amber-300 bg-amber-50/40 text-amber-700' : 'border-gray-300 text-gray-800'
+                              }`}
+                            >
+                              <option value="">Choose a vendor…</option>
+                              {chosenClients.map((c) => (
+                                <option key={c.id} value={c.id}>{clientLabel(c)}</option>
+                              ))}
+                            </select>
+                            {g.vendorRemembered && choice?.clientId === g.suggestedClientId && (
+                              <span className="inline-block mt-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                                Remembered
+                              </span>
+                            )}
+                            {g.matchType === 'alias' && !g.suggestedClientId && (
+                              <span className="inline-block mt-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                                Used on both before — check
+                              </span>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -439,12 +614,19 @@ export default function SwapOutImportPage() {
                     <th className="px-4 py-2 font-medium">Channel</th>
                     <th className="px-4 py-2 font-medium">Store</th>
                     <th className="px-4 py-2 font-medium">Region</th>
+                    {multiVendor && <th className="px-4 py-2 font-medium">Vendor</th>}
                     <th className="px-4 py-2 font-medium">Products</th>
                   </tr>
                 </thead>
                 <tbody>
                   {parsed.consignments.map((c) => {
-                    const dupe = c.pickingNumber && dupeSet.has(c.pickingNumber.toUpperCase());
+                    const upper = (c.pickingNumber ?? '').toUpperCase();
+                    const dupe = Boolean(c.pickingNumber) && dupeSet.has(upper);
+                    const dupeOn = (parsed.duplicateVendors?.[upper] ?? [])
+                      .map((id) => clientName(id))
+                      .join(', ');
+                    // The vendor a consignment inherits from its store group.
+                    const groupChoice = c.groupKey ? mapping[c.groupKey] : undefined;
                     return (
                       <tr key={c.key} className="border-b border-gray-50 last:border-0">
                         <td className="px-5 py-2 text-gray-400">{c.sheetRow}</td>
@@ -454,7 +636,7 @@ export default function SwapOutImportPage() {
                             : <span className="text-amber-600 italic">awaiting picking #</span>}
                           {dupe && (
                             <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-500">
-                              already imported — will skip
+                              already imported{dupeOn ? ` on ${dupeOn}` : ''} — will skip
                             </span>
                           )}
                           {c.pickingNote && (
@@ -465,6 +647,13 @@ export default function SwapOutImportPage() {
                         <td className="px-4 py-2 text-gray-600">{c.channel ?? '—'}</td>
                         <td className="px-4 py-2 text-gray-700">{c.storeName}</td>
                         <td className="px-4 py-2 text-gray-600">{c.region ?? '—'}</td>
+                        {multiVendor && (
+                          <td className="px-4 py-2 text-gray-600">
+                            {groupChoice?.clientId
+                              ? clientName(groupChoice.clientId)
+                              : <span className="text-amber-600 italic">not assigned</span>}
+                          </td>
+                        )}
                         <td className="px-4 py-2 text-gray-600">
                           {c.lines.map((l) => `${l.product} × ${l.quantity}`).join(', ')}
                         </td>
@@ -514,6 +703,18 @@ export default function SwapOutImportPage() {
               <div className="text-xs text-gray-500">Store mappings remembered</div>
             </div>
           </div>
+          {result.createdByClient && Object.keys(result.createdByClient).length > 1 && (
+            <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+              <div className="text-sm font-medium text-gray-700 mb-1">Split across vendor numbers</div>
+              <ul className="text-sm text-gray-600 flex flex-col gap-0.5">
+                {Object.entries(result.createdByClient).map(([id, n]) => (
+                  <li key={id}>
+                    <span className="font-medium text-gray-800">{n}</span> → {clientName(id)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {result.skippedPicking?.length > 0 && (
             <p className="text-sm text-gray-500">
               Skipped picking numbers: {result.skippedPicking.join(', ')}

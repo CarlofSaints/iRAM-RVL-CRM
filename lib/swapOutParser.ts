@@ -35,6 +35,13 @@ export interface ParsedSwapOut {
   lines: SwapOutLine[];
   /** 1-based sheet row where this block starts — for "row 24" style feedback. */
   sheetRow: number;
+  /**
+   * `CHANNEL|canonical store name` — the store group this consignment belongs
+   * to, and the key the user's store/vendor mapping is held under. Stamped by
+   * the parse route (not the parser) and round-tripped through the client, so
+   * the grouping rule lives in exactly one place.
+   */
+  groupKey?: string;
 }
 
 // A valid supplier picking number is a letter followed by digits (J/C/D/P…).

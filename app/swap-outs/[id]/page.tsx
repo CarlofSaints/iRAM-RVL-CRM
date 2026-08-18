@@ -40,6 +40,20 @@ interface SwapOutDto {
   lines: SwapLine[];
   movements?: SwapMovement[];
   status: string;
+  podNumber?: string;
+  podCapturedAt?: string;
+  podCapturedByName?: string;
+  podMethod?: 'scan' | 'manual';
+  releasedToClientAt?: string;
+  releasedToClientByName?: string;
+  releaseReference?: string;
+  deliveryToken?: string;
+  deliverySignedByName?: string;
+  deliverySignedAt?: string;
+  signedNoteSpWebUrl?: string;
+  deliveryEmailedTo?: string[];
+  deliveryEmailedAt?: string;
+  deliveryDispatchError?: string;
   assignedRepId?: string;
   assignedRepName?: string;
   history: SwapEvent[];
@@ -78,7 +92,9 @@ export default function SwapOutDetailPage() {
   const [toast, setToast] = useState<ToastData | null>(null);
 
   const [pickingInput, setPickingInput] = useState('');
-  const [scanInput, setScanInput] = useState('');
+  const [podInput, setPodInput] = useState('');
+  const [releaseRef, setReleaseRef] = useState('');
+  const [releaseError, setReleaseError] = useState('');
   const [formFile, setFormFile] = useState<File | null>(null);
   const [pushSp, setPushSp] = useState(true);
 
@@ -227,13 +243,90 @@ export default function SwapOutDetailPage() {
     patch({ status: nextStatus, method }, `Moved to ${STATUS_LABELS[nextStatus]}`);
   };
 
-  const onScan = (e: React.FormEvent) => {
+  /**
+   * Capture the supplier POD for the good replacement stock.
+   *
+   * Deliberately NOT checked against the picking number. The picking number is
+   * the store's request; the POD is the supplier's delivery of the swap stock.
+   * They are different documents and will never match — the old "scan the
+   * picking # to confirm" box could not succeed.
+   *
+   * Capturing the POD is what "good stock received into the warehouse" means, so
+   * it carries the swap-out forward to Received at WH — but never backwards, so
+   * a POD entered late does not undo later progress.
+   */
+  const onPod = async (e: React.FormEvent) => {
     e.preventDefault();
-    const v = scanInput.trim().toLowerCase();
-    setScanInput('');
-    if (!rec.pickingNumber) { setToast({ type: 'error', message: 'This swap-out has no picking number to scan against.' }); return; }
-    if (v !== rec.pickingNumber.toLowerCase()) { setToast({ type: 'error', message: 'Scanned code does not match this picking number.' }); return; }
-    advance('scan');
+    const v = podInput.trim();
+    if (!v) return;
+    const behindReceipt = STAGES.indexOf(rec.status) < STAGES.indexOf('received_wh');
+    const body: Record<string, unknown> = { podNumber: v, podMethod: 'scan' };
+    if (behindReceipt && rec.status !== 'cancelled') {
+      body.status = 'received_wh';
+      body.method = 'scan';
+      body.note = `Good stock received on POD ${v}`;
+    }
+    setPodInput('');
+    await patch(body, behindReceipt ? `POD ${v} captured · moved to Received at WH` : `POD ${v} captured`);
+  };
+
+  const clearPod = async () => {
+    if (!confirm('Clear the captured POD? The release of damaged stock will be blocked again until a POD is captured.')) return;
+    await patch({ podNumber: '' }, 'POD cleared');
+  };
+
+  /**
+   * The PDF needs the auth header, so it cannot be a plain href — fetch it and
+   * open a blob URL instead. See the header-auth download trap.
+   */
+  const openDeliveryNote = async () => {
+    setBusy(true);
+    const res = await authFetch(`/api/swap-outs/${id}/delivery-note`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setToast({ type: 'error', message: data.error || 'Could not generate the delivery note' });
+      setBusy(false);
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, '_blank');
+    if (!win) {
+      // Popup blocked — fall back to a download so the click is never wasted.
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `swapout-${rec.pickingNumber || id}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setToast({ type: 'success', message: 'Pop-up blocked — the delivery note was downloaded instead.' });
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    setBusy(false);
+  };
+
+  /** Last leg: the damaged stock physically leaves for the supplier. */
+  const releaseToClient = async () => {
+    if (!confirm(`Release the damaged stock for ${rec.storeName} back to ${clientName || 'the client'}?`)) return;
+    setBusy(true);
+    setReleaseError('');
+    const res = await authFetch(`/api/swap-outs/${id}/release`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reference: releaseRef.trim() }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setReleaseRef('');
+      setToast({
+        type: data.warnings?.length ? 'error' : 'success',
+        message: data.warnings?.length ? data.warnings[0] : 'Damaged stock released to client',
+      });
+      await load();
+    } else {
+      // A persistent panel, not just a toast — a blocked release needs to stay
+      // on screen long enough to read why.
+      setReleaseError(data.error || 'Release failed');
+    }
+    setBusy(false);
   };
 
   const uploadForm = async () => {
@@ -294,6 +387,7 @@ export default function SwapOutDetailPage() {
         {rec.storeCode ? ` (${rec.storeCode})` : ''}
         {rec.region ? ` · ${rec.region}` : ''}{rec.channel ? ` · ${rec.channel}` : ''}
         {' · '}{totals.requested} requested · {totals.out} out · {totals.back} back
+        {rec.podNumber && <> · POD <span className="font-mono text-gray-700">{rec.podNumber}</span></>}
       </p>
       {rec.pickingNote && (
         <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-2 -mt-2">
@@ -510,18 +604,10 @@ export default function SwapOutDetailPage() {
             <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col gap-3">
               <h3 className="text-sm font-medium text-gray-500">PROGRESS</h3>
               {nextStatus ? (
-                <>
-                  <button disabled={busy} onClick={() => advance('manual')}
-                    className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-[var(--color-primary)] text-white disabled:opacity-50">
-                    Advance → {STATUS_LABELS[nextStatus]}
-                  </button>
-                  <form onSubmit={onScan} className="flex gap-2">
-                    <input value={scanInput} onChange={(e) => setScanInput(e.target.value)}
-                      placeholder="Scan picking # to confirm"
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm" />
-                    <button type="submit" className="px-3 py-2 rounded-lg text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50">Scan</button>
-                  </form>
-                </>
+                <button disabled={busy} onClick={() => advance('manual')}
+                  className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-[var(--color-primary)] text-white disabled:opacity-50">
+                  Advance → {STATUS_LABELS[nextStatus]}
+                </button>
               ) : (
                 <p className="text-sm text-emerald-600 font-medium">Returned to client — complete.</p>
               )}
@@ -533,6 +619,141 @@ export default function SwapOutDetailPage() {
                   {Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select>
               </div>
+            </div>
+          )}
+
+          {/* POD for the good replacement stock coming INTO the warehouse. */}
+          {rec.status !== 'cancelled' && (
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col gap-3">
+              <h3 className="text-sm font-medium text-gray-500">POD — GOOD STOCK RECEIVED</h3>
+              {rec.podNumber ? (
+                <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2">
+                  <div className="font-mono text-sm font-medium text-emerald-800 break-all">{rec.podNumber}</div>
+                  <div className="text-xs text-emerald-700">
+                    {rec.podMethod === 'scan' ? 'Scanned' : 'Entered'} {fmt(rec.podCapturedAt)}
+                    {rec.podCapturedByName ? ` · ${rec.podCapturedByName}` : ''}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">
+                  Not captured yet. Scan the supplier POD barcode for the replacement stock
+                  collected from {clientName || 'the supplier'}.
+                </p>
+              )}
+              {canManage && (
+                <>
+                  <form onSubmit={onPod} className="flex gap-2">
+                    <input
+                      value={podInput}
+                      onChange={(e) => setPodInput(e.target.value)}
+                      placeholder={rec.podNumber ? 'Scan a replacement POD…' : 'Scan POD barcode…'}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono"
+                    />
+                    <button type="submit" disabled={busy || !podInput.trim()}
+                      className="px-3 py-2 rounded-lg text-sm font-medium bg-[var(--color-primary)] text-white disabled:opacity-50">
+                      {rec.podNumber ? 'Replace' : 'Capture'}
+                    </button>
+                  </form>
+                  <p className="text-xs text-gray-400">
+                    The POD is the supplier&apos;s delivery document for the good stock — it is a
+                    different number to the picking number and is not checked against it.
+                  </p>
+                  {rec.podNumber && (
+                    <button onClick={clearPod} disabled={busy} className="self-start text-xs text-red-600 hover:text-red-700">
+                      Clear POD
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Last leg: damaged stock leaves the warehouse for the supplier. */}
+          {canManage && rec.status !== 'cancelled' && (
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col gap-3">
+              <h3 className="text-sm font-medium text-gray-500">RELEASE DAMAGED STOCK TO CLIENT</h3>
+              {rec.releasedToClientAt ? (
+                <>
+                  <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm">
+                    <div className="font-medium text-emerald-800">Released to {clientName || 'client'}</div>
+                    <div className="text-xs text-emerald-700">
+                      {fmt(rec.releasedToClientAt)}
+                      {rec.releasedToClientByName ? ` · ${rec.releasedToClientByName}` : ''}
+                      {rec.releaseReference ? ` · ref ${rec.releaseReference}` : ''}
+                    </div>
+                  </div>
+
+                  <button onClick={openDeliveryNote}
+                    className="w-full px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50">
+                    {rec.deliverySignedAt ? 'Signed delivery note (PDF) ↗' : 'Delivery note (PDF) ↗'}
+                  </button>
+
+                  {/* Sign-off state: the whole point of the QR on the note. */}
+                  {rec.deliverySignedAt ? (
+                    <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm">
+                      <div className="font-medium text-gray-800">
+                        Signed by {rec.deliverySignedByName ?? 'supplier'}
+                      </div>
+                      <div className="text-xs text-gray-500">{fmt(rec.deliverySignedAt)}</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {rec.deliveryEmailedTo?.length
+                          ? `Emailed to ${rec.deliveryEmailedTo.join(', ')}`
+                          : 'Not emailed'}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {rec.signedNoteSpWebUrl ? (
+                          <a href={rec.signedNoteSpWebUrl} target="_blank" rel="noopener noreferrer"
+                            className="text-emerald-600 hover:underline">On SharePoint ↗</a>
+                        ) : 'Not filed on SharePoint'}
+                      </div>
+                    </div>
+                  ) : rec.deliveryToken ? (
+                    <div className="text-xs text-gray-500 break-all">
+                      Awaiting the supplier&apos;s signature. Sign-off link:{' '}
+                      <a href={`/swap-out-delivery/${rec.deliveryToken}`} target="_blank" rel="noopener noreferrer"
+                        className="text-[var(--color-primary)] hover:underline">
+                        /swap-out-delivery/{rec.deliveryToken}
+                      </a>
+                    </div>
+                  ) : null}
+
+                  {/* A failed email or SharePoint push must not disappear. */}
+                  {rec.deliveryDispatchError && (
+                    <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm px-3 py-2">
+                      {rec.deliveryDispatchError}
+                    </div>
+                  )}
+                </>
+              ) : !rec.podNumber ? (
+                <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm px-3 py-2">
+                  Scan the POD above first. The damaged stock cannot be released until the good
+                  replacement stock has been accounted for.
+                </div>
+              ) : (
+                <>
+                  {totals.back === 0 && (
+                    <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm px-3 py-2">
+                      No faulty units have been booked in against this swap-out yet — there is
+                      nothing in the warehouse to send back.
+                    </div>
+                  )}
+                  <input
+                    value={releaseRef}
+                    onChange={(e) => setReleaseRef(e.target.value)}
+                    placeholder="Waybill / collection reference (optional)"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <button onClick={releaseToClient} disabled={busy}
+                    className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-[var(--color-primary)] text-white disabled:opacity-50">
+                    Release {totals.back} faulty unit{totals.back === 1 ? '' : 's'} → {clientName || 'client'}
+                  </button>
+                </>
+              )}
+              {releaseError && (
+                <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2">
+                  {releaseError}
+                </div>
+              )}
             </div>
           )}
 

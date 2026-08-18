@@ -71,6 +71,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (body.storeId !== undefined) updates.storeId = String(body.storeId ?? '').trim() || undefined;
   if (body.storeCode !== undefined) updates.storeCode = String(body.storeCode ?? '').trim() || undefined;
 
+  // Supplier POD for the good replacement stock. Deliberately NOT validated
+  // against the picking number — they are different documents and never match.
+  // Blank clears it, so a mis-scan can be corrected.
+  if (body.podNumber !== undefined) {
+    const pod = String(body.podNumber ?? '').trim();
+    if (pod) {
+      updates.podNumber = pod;
+      updates.podCapturedAt = new Date().toISOString();
+      updates.podCapturedBy = guard.userId;
+      updates.podCapturedByName = actorName;
+      updates.podMethod = body.podMethod === 'scan' ? 'scan' : 'manual';
+    } else {
+      updates.podNumber = undefined;
+      updates.podCapturedAt = undefined;
+      updates.podCapturedBy = undefined;
+      updates.podCapturedByName = undefined;
+      updates.podMethod = undefined;
+    }
+  }
+
   // Status transition (append a history event)
   if (body.status !== undefined) {
     const status = String(body.status) as SwapOutStatus;

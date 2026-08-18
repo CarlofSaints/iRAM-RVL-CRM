@@ -109,6 +109,49 @@ export interface SwapOut {
   region?: string;
   lines: SwapOutLine[];
   status: SwapOutStatus;
+  /**
+   * Supplier POD (proof of delivery) for the GOOD replacement stock handed to
+   * iRam. This is NOT the picking number — the picking number identifies the
+   * store's request, the POD identifies the delivery of the swap stock, and the
+   * two never match. Free text: it is whatever the supplier's barcode reads.
+   */
+  podNumber?: string;
+  podCapturedAt?: string; // ISO
+  podCapturedBy?: string;
+  podCapturedByName?: string;
+  /** How the POD was entered — a scan gun fires 'scan', typing is 'manual'. */
+  podMethod?: 'scan' | 'manual';
+  /**
+   * Release of the FAULTY stock out of the iRam warehouse back to the supplier —
+   * the last leg. Gated on the POD: the good stock must be accounted for before
+   * the damaged stock leaves.
+   */
+  releasedToClientAt?: string; // ISO
+  releasedToClientBy?: string;
+  releasedToClientByName?: string;
+  /** Waybill / collection reference for the return leg. */
+  releaseReference?: string;
+  /**
+   * Public sign-off token for the return leg — minted at release, put behind the
+   * QR code on the delivery note. Anyone holding it can sign, exactly like the
+   * aged-stock delivery token, so it is a random UUID and never derived from the
+   * swap-out id.
+   */
+  deliveryToken?: string;
+  /** base64 PNG from the supplier's signature pad. */
+  deliverySignature?: string;
+  deliverySignedByName?: string;
+  deliverySignedAt?: string; // ISO
+  /** Where the signed PDF landed. */
+  signedNoteBlobKey?: string;
+  signedNoteFileName?: string;
+  signedNoteSpWebUrl?: string;
+  signedNoteSpUploadedAt?: string;
+  /** Who the signed note was emailed to, and when — proof it went out. */
+  deliveryEmailedTo?: string[];
+  deliveryEmailedAt?: string;
+  /** Set when the email or the SharePoint push failed, so a failure is visible. */
+  deliveryDispatchError?: string;
   assignedRepId?: string;
   assignedRepName?: string;
   history: SwapOutEvent[];
@@ -159,6 +202,18 @@ export async function listSwapOuts(): Promise<SwapOut[]> {
 
 export async function saveSwapOuts(items: SwapOut[]): Promise<void> {
   const json = JSON.stringify(items, null, 2);
+
+  // Mirror listSwapOuts: off Vercel the local file IS the store, so a missing
+  // blob token must not fail the write. Without this the module reads fine in
+  // local dev but every save throws, which makes it untestable outside prod.
+  if (!process.env.VERCEL) {
+    const f = localPath();
+    const dir = path.dirname(f);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(f, json);
+    return;
+  }
+
   try {
     await put(INDEX_KEY, json, {
       access: 'private',
@@ -183,6 +238,14 @@ export async function saveSwapOuts(items: SwapOut[]): Promise<void> {
 export async function getSwapOut(id: string): Promise<SwapOut | null> {
   const all = await listSwapOuts();
   return all.find((s) => s.id === id) ?? null;
+}
+
+/** Find the swap-out behind a public sign-off token. */
+export async function getSwapOutByDeliveryToken(token: string): Promise<SwapOut | null> {
+  const t = (token ?? '').trim();
+  if (!t) return null;
+  const all = await listSwapOuts();
+  return all.find((s) => s.deliveryToken === t) ?? null;
 }
 
 /** Find by exact picking number (used by the scan flow). Case-insensitive. */
@@ -214,6 +277,22 @@ export async function updateSwapOut(
 export async function deleteSwapOut(id: string): Promise<void> {
   const all = await listSwapOuts();
   await saveSwapOuts(all.filter((s) => s.id !== id));
+}
+
+/**
+ * Delete several swap-outs in ONE read + write. Deleting them one at a time
+ * would read and rewrite the whole index per id, and a concurrent write between
+ * two of those passes would silently resurrect a record.
+ * Returns the ids that actually existed.
+ */
+export async function deleteSwapOuts(ids: string[]): Promise<string[]> {
+  const wanted = new Set(ids.filter(Boolean));
+  if (wanted.size === 0) return [];
+  const all = await listSwapOuts();
+  const found = all.filter((s) => wanted.has(s.id)).map((s) => s.id);
+  if (found.length === 0) return [];
+  await saveSwapOuts(all.filter((s) => !wanted.has(s.id)));
+  return found;
 }
 
 /** Total physical units across a swap-out's lines. */

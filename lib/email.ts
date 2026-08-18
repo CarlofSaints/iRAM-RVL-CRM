@@ -231,6 +231,67 @@ export async function sendDeliveryNoteEmail(opts: {
   });
 }
 
+/**
+ * Signed swap-out delivery note — sent to the supplier's contacts once their
+ * collector has signed for the faulty stock going back. The signed PDF is
+ * attached; there is no action link because the job is already done.
+ */
+export async function sendSwapOutDeliveryNoteEmail(opts: {
+  to: string[];
+  subject: string;
+  pickingNumber: string;
+  podNumber?: string;
+  clientName: string;
+  storeName: string;
+  storeCode?: string;
+  totalReturned: number;
+  signedByName: string;
+  signedAt: string;
+  releaseReference?: string;
+  attachments: Array<{ filename: string; content: Buffer }>;
+}) {
+  const fmtDt = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      const tz = 'Africa/Johannesburg';
+      return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: tz }) + ' ' +
+        d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    } catch { return iso; }
+  };
+  const row = (label: string, value: string) =>
+    `<tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">${label}</td><td style="font-size:13px;">${value}</td></tr>`;
+
+  const body = `
+    <p style="margin:0 0 14px;font-size:14px;">The faulty stock below has been collected from the iRam warehouse and signed for.</p>
+    <table style="background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:14px 16px;width:100%;margin-bottom:20px;">
+      ${row('Store', `${opts.storeName}${opts.storeCode ? ` (${opts.storeCode})` : ''}`)}
+      ${row('Picking #', `<strong style="font-family:monospace;">${opts.pickingNumber || '—'}</strong>`)}
+      ${opts.podNumber ? row('POD (replacement stock)', `<span style="font-family:monospace;">${opts.podNumber}</span>`) : ''}
+      ${row('Faulty units returned', `<strong>${opts.totalReturned}</strong>`)}
+      ${opts.releaseReference ? row('Reference', opts.releaseReference) : ''}
+      ${row('Signed by', opts.signedByName)}
+      ${row('Signed', fmtDt(opts.signedAt))}
+    </table>
+    ${opts.totalReturned === 0
+      ? '<p style="margin:0 0 14px;font-size:13px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:10px 12px;">No faulty units were booked in against this swap-out.</p>'
+      : ''}
+    <p style="margin:0;font-size:13px;color:#555;">The signed delivery note is attached.</p>
+  `;
+
+  const attachments = opts.attachments.map(a => ({
+    filename: a.filename,
+    content: a.content.toString('base64'),
+  }));
+
+  return getResend().emails.send({
+    from: FROM,
+    to: opts.to,
+    subject: opts.subject,
+    html: emailShell(body),
+    attachments,
+  });
+}
+
 export async function sendUnreturnedStockEmail(opts: {
   to: string[];
   cc?: string[];
