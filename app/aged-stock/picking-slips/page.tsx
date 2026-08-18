@@ -6,6 +6,7 @@ import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
 import StatusBadge from '@/components/StatusBadge';
 import { validRevertTargets, clearedStageDescriptions } from '@/lib/pickSlipRevert';
+import { provinceName } from '@/lib/region';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -87,6 +88,7 @@ interface StoreDto {
   id: string;
   siteCode: string;
   channel: string;
+  region?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -128,7 +130,7 @@ const STATUS_COLORS: Record<string, string> = {
   'delivered': 'bg-emerald-100 text-emerald-700',
 };
 
-type SortCol = 'id' | 'clientName' | 'vendorNumber' | 'store' | 'products' | 'totalQty' | 'totalVal' | 'generatedAt' | 'status';
+type SortCol = 'id' | 'clientName' | 'vendorNumber' | 'store' | 'region' | 'products' | 'totalQty' | 'totalVal' | 'generatedAt' | 'status';
 type SortDir = 'asc' | 'desc';
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -167,6 +169,7 @@ export default function PickingSlipsPage() {
   const statusDropRef = useRef<HTMLDivElement>(null);
   const [vendorFilter, setVendorFilter] = useState('');
   const [channelFilter, setChannelFilter] = useState('');
+  const [regionFilter, setRegionFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState<'' | 'manual' | 'loaded'>('');
   const [vendorDropOpen, setVendorDropOpen] = useState(false);
   const [vendorSearch, setVendorSearch] = useState('');
@@ -335,6 +338,32 @@ export default function PickingSlipsPage() {
     return Array.from(set).sort();
   }, [slips, channelBySiteCode]);
 
+  // siteCode → province lookup, same store control data as the channel one
+  // above. A pick slip carries no region of its own, so a store missing from
+  // control data reads blank here rather than guessing.
+  const regionBySiteCode = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of stores) {
+      const prov = provinceName(s.region);
+      if (s.siteCode && prov) map.set(s.siteCode.trim().toLowerCase(), prov);
+    }
+    return map;
+  }, [stores]);
+
+  const regionOf = useCallback(
+    (s: SlipDto) => regionBySiteCode.get(s.siteCode.trim().toLowerCase()) ?? '',
+    [regionBySiteCode]
+  );
+
+  const regionOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of slips) {
+      const r = regionBySiteCode.get(s.siteCode.trim().toLowerCase());
+      if (r) set.add(r);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [slips, regionBySiteCode]);
+
   // Everything except the status filter — shared by the grid and the
   // "hidden delivered" hint so both narrow the list the same way.
   const passesNonStatus = useCallback((s: SlipDto) => {
@@ -347,6 +376,7 @@ export default function PickingSlipsPage() {
       const ch = channelBySiteCode.get(s.siteCode.trim().toLowerCase());
       if (ch !== channelFilter) return false;
     }
+    if (regionFilter && regionOf(s) !== regionFilter) return false;
     if (sq) {
       const hay = `${s.siteName} ${s.siteCode}`.toLowerCase();
       if (!hay.includes(sq)) return false;
@@ -355,7 +385,7 @@ export default function PickingSlipsPage() {
     if (typeFilter === 'manual' && !s.manual) return false;
     if (typeFilter === 'loaded' && s.manual) return false;
     return true;
-  }, [clientFilter, clientNameFilter, vendorFilter, channelFilter, channelBySiteCode, storeQuery, refQuery, typeFilter]);
+  }, [clientFilter, clientNameFilter, vendorFilter, channelFilter, channelBySiteCode, regionFilter, regionOf, storeQuery, refQuery, typeFilter]);
 
   // A store/ref text search means the user is hunting for a specific slip.
   const searching = storeQuery.trim() !== '' || refQuery.trim() !== '';
@@ -381,7 +411,7 @@ export default function PickingSlipsPage() {
   // list (client/vendor/channel/type or a store/ref search) — not on the
   // default full-grid view.
   const narrowed = clientFilter.size > 0 || !!clientNameFilter || !!vendorFilter
-    || !!channelFilter || typeFilter !== '' || searching;
+    || !!channelFilter || !!regionFilter || typeFilter !== '' || searching;
 
   const sorted = useMemo(() => {
     const list = [...filtered];
@@ -393,6 +423,7 @@ export default function PickingSlipsPage() {
         case 'clientName':   av = a.clientName; bv = b.clientName; break;
         case 'vendorNumber': av = a.vendorNumber; bv = b.vendorNumber; break;
         case 'store':        av = `${a.siteName} ${a.siteCode}`; bv = `${b.siteName} ${b.siteCode}`; break;
+        case 'region':       av = regionOf(a); bv = regionOf(b); break;
         case 'products':     av = new Set(a.rows.map(r => r.articleCode || r.barcode)).size; bv = new Set(b.rows.map(r => r.articleCode || r.barcode)).size; break;
         case 'totalQty':     av = a.totalQty; bv = b.totalQty; break;
         case 'totalVal':     av = a.totalVal; bv = b.totalVal; break;
@@ -404,7 +435,7 @@ export default function PickingSlipsPage() {
       return ((av as number) - (bv as number)) * dir;
     });
     return list;
-  }, [filtered, sortCol, sortDir]);
+  }, [filtered, sortCol, sortDir, regionOf]);
 
   // Keep selection valid — remove IDs that no longer appear in filtered
   useEffect(() => {
@@ -977,7 +1008,7 @@ export default function PickingSlipsPage() {
       </div>
 
       {/* Filters */}
-      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 grid grid-cols-1 md:grid-cols-4 lg:grid-cols-8 gap-3">
+      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 grid grid-cols-1 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9 gap-3">
         <div className="relative" ref={clientDropRef}>
           <label className="block text-xs text-gray-600 mb-1">Client</label>
           <button
@@ -1102,6 +1133,19 @@ export default function PickingSlipsPage() {
             <option value="">All channels</option>
             {channelOptions.map(ch => (
               <option key={ch} value={ch}>{ch}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-600 mb-1">Region</label>
+          <select
+            value={regionFilter}
+            onChange={e => setRegionFilter(e.target.value)}
+            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
+          >
+            <option value="">All regions</option>
+            {regionOptions.map(r => (
+              <option key={r} value={r}>{r}</option>
             ))}
           </select>
         </div>
@@ -1308,6 +1352,7 @@ export default function PickingSlipsPage() {
                   ['clientName', 'Client', ''],
                   ['vendorNumber', 'Vendor #', ''],
                   ['store', 'Store', ''],
+                  ['region', 'Region', ''],
                   ['products', 'Products', 'text-right'],
                   ['totalQty', 'Total Qty', 'text-right'],
                   ['totalVal', 'Total Value', 'text-right'],
@@ -1330,9 +1375,9 @@ export default function PickingSlipsPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9 + (canManage ? 1 : 0) + (showActions ? 1 : 0)} className="px-3 py-6 text-center text-gray-500">Loading...</td></tr>
+                <tr><td colSpan={10 + (canManage ? 1 : 0) + (showActions ? 1 : 0)} className="px-3 py-6 text-center text-gray-500">Loading...</td></tr>
               ) : sorted.length === 0 ? (
-                <tr><td colSpan={9 + (canManage ? 1 : 0) + (showActions ? 1 : 0)} className="px-3 py-6 text-center text-gray-500">No pick slips match the current filters.</td></tr>
+                <tr><td colSpan={10 + (canManage ? 1 : 0) + (showActions ? 1 : 0)} className="px-3 py-6 text-center text-gray-500">No pick slips match the current filters.</td></tr>
               ) : sorted.map(s => (
                 <tr key={s.id} className="border-t border-gray-100 hover:bg-gray-50">
                   {canManage && (
@@ -1353,6 +1398,7 @@ export default function PickingSlipsPage() {
                   <td className="px-3 py-1.5 whitespace-nowrap">{s.clientName}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap">{s.vendorNumber}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap">{s.siteName} ({s.siteCode})</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap text-gray-600">{regionOf(s) || <span className="text-gray-300">—</span>}</td>
                   <td className="px-3 py-1.5 text-right whitespace-nowrap">{new Set(s.rows.map(r => r.articleCode || r.barcode)).size}</td>
                   <td className="px-3 py-1.5 text-right whitespace-nowrap">{s.totalQty.toLocaleString()}</td>
                   <td className="px-3 py-1.5 text-right whitespace-nowrap">{fmtCurrency(s.totalVal)}</td>
