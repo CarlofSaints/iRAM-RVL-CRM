@@ -361,6 +361,43 @@ async function inBatches<T, R>(items: T[], size: number, fn: (item: T) => Promis
   return out;
 }
 
+/**
+ * Which `clientId/loadId` runs could possibly hold a slip generated on or after
+ * `since`, from ONE cheap `list()` call instead of reading every run.
+ *
+ * Safe because generating a slip writes its run blob: a run whose blob was last
+ * written before `since` cannot contain a slip generated after `since`. The
+ * bound is conservative in the right direction — a run rewritten later for an
+ * unrelated status change is still read, so nothing is ever missed.
+ *
+ * Returns null when the optimisation cannot be applied (local dev, or the list
+ * call fails), meaning "no restriction — read them all".
+ */
+async function runsTouchedSince(since: string): Promise<Set<string> | null> {
+  if (!process.env.VERCEL) return null;
+  try {
+    const keep = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await list({ prefix: 'pickSlips/', cursor, limit: 1000 });
+      for (const blob of page.blobs) {
+        if (blob.pathname.endsWith('/_manual-index.json')) continue;
+        const uploadedAt =
+          blob.uploadedAt instanceof Date ? blob.uploadedAt.toISOString() : String(blob.uploadedAt ?? '');
+        if (uploadedAt && uploadedAt < since) continue;
+        const m = blob.pathname.match(/^pickSlips\/([^/]+)\/(.+)\.json$/);
+        if (m) keep.add(`${m[1]}/${m[2]}`);
+      }
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+    return keep;
+  } catch (err) {
+    // Never fail the request over an optimisation — fall back to reading all.
+    console.error('[pickSlipData] blob list failed, reading all runs:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 export async function listAllPickSlipRuns(
   clientIds: string[],
   listLoadsFn: (clientId: string) => Promise<Array<{ id: string }>>,
@@ -369,9 +406,15 @@ export async function listAllPickSlipRuns(
    * narrowing here is the difference between one read and several hundred —
    * this is the main cost of the pick-slip pages.
    */
-  onlyLoadIds?: string[]
+  onlyLoadIds?: string[],
+  /**
+   * ISO date. Skip runs whose blob has not been written since then — they
+   * cannot hold a slip generated inside the window. See runsTouchedSince.
+   */
+  generatedSince?: string
 ): Promise<PickSlipRunIndex[]> {
   const wanted = onlyLoadIds && onlyLoadIds.length ? new Set(onlyLoadIds) : null;
+  const touched = generatedSince ? await runsTouchedSince(generatedSince) : null;
   const runs: PickSlipRunIndex[] = [];
 
   for (const clientId of clientIds) {
@@ -379,7 +422,9 @@ export async function listAllPickSlipRuns(
     const manualIds = await getManualIndex(clientId);
 
     const ids = [...loads.map((l) => l.id), ...manualIds].filter(
-      (id) => !wanted || wanted.has(id)
+      (id) =>
+        (!wanted || wanted.has(id)) &&
+        (!touched || touched.has(`${clientId}/${id}`))
     );
 
     // Blob reads are latency-bound, not CPU-bound; running them sequentially

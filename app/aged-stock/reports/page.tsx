@@ -84,6 +84,7 @@ interface Facets {
     vendorNumbers: string[]; fileName: string; loadedAt: string; rowCount: number;
   }>;
   provinces: string[];
+  stores: Array<{ siteCode: string; name: string; province: string }>;
   statuses: string[];
   warehouses: Array<{ id: string; code: string; name: string }>;
 }
@@ -188,6 +189,7 @@ export default function ReportsPage() {
   const [vendorNumbers, setVendorNumbers] = useState<Set<string>>(new Set());
   const [loadIds, setLoadIds] = useState<Set<string>>(new Set());
   const [provinces, setProvinces] = useState<Set<string>>(new Set());
+  const [siteCodes, setSiteCodes] = useState<Set<string>>(new Set());
   const [statuses, setStatuses] = useState<Set<string>>(new Set());
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -264,6 +266,20 @@ export default function ReportsPage() {
   const provinceOptions = useMemo<MultiSelectOption[]>(
     () => (facets?.provinces ?? []).map((p) => ({ value: p, label: p })), [facets]
   );
+
+  // Stores follow the province selection, so picking Gauteng does not leave 719
+  // stores in the list to scroll through.
+  const storeOptions = useMemo<MultiSelectOption[]>(
+    () =>
+      (facets?.stores ?? [])
+        .filter((s) => provinces.size === 0 || provinces.has(s.province))
+        .map((s) => ({
+          value: s.siteCode,
+          label: s.name || s.siteCode,
+          hint: [s.siteCode, s.province].filter(Boolean).join(' · '),
+        })),
+    [facets, provinces]
+  );
   const statusOptions = useMemo<MultiSelectOption[]>(
     () => (facets?.statuses ?? []).map((s) => ({ value: s, label: s })), [facets]
   );
@@ -272,10 +288,11 @@ export default function ReportsPage() {
   // whenever the list above it changes.
   useEffect(() => { setVendorNumbers((p) => pruneToOptions(p, vendorOptions)); }, [vendorOptions]);
   useEffect(() => { setLoadIds((p) => pruneToOptions(p, batchOptions)); }, [batchOptions]);
+  useEffect(() => { setSiteCodes((p) => pruneToOptions(p, storeOptions)); }, [storeOptions]);
 
   const hasFilter =
     clientIds.size > 0 || vendorNumbers.size > 0 || loadIds.size > 0 ||
-    provinces.size > 0 || Boolean(from) || Boolean(to);
+    provinces.size > 0 || siteCodes.size > 0 || Boolean(from) || Boolean(to);
 
   // ── Run ───────────────────────────────────────────────────────────────────
   const runReport = useCallback(async () => {
@@ -287,6 +304,7 @@ export default function ReportsPage() {
       vendorNumbers: [...vendorNumbers],
       loadIds: [...loadIds],
       provinces: [...provinces],
+      siteCodes: [...siteCodes],
       statuses: [...statuses],
       from, to,
     });
@@ -304,11 +322,11 @@ export default function ReportsPage() {
     } finally {
       setRunning(false);
     }
-  }, [clientIds, vendorNumbers, loadIds, provinces, statuses, from, to]);
+  }, [clientIds, vendorNumbers, loadIds, provinces, siteCodes, statuses, from, to]);
 
   const resetFilters = () => {
     setClientIds(new Set()); setVendorNumbers(new Set()); setLoadIds(new Set());
-    setProvinces(new Set()); setStatuses(new Set()); setFrom(''); setTo('');
+    setProvinces(new Set()); setSiteCodes(new Set()); setStatuses(new Set()); setFrom(''); setTo('');
     setSlips(null); setRunError('');
   };
 
@@ -465,7 +483,7 @@ export default function ReportsPage() {
     'Possible Phantom Stock': r.phantom,
     'Display': r.display,
     'Store Refused': r.refused,
-    'Unaccounted': r.unaccounted,
+    'STBC (Still to be Collected)': r.stbc,
     'Client': r.clientName,
     'Vendor #': r.vendorNumber,
   });
@@ -613,6 +631,15 @@ export default function ReportsPage() {
                 widthClass="min-w-[11rem]"
               />
               <MultiSelect
+                label="Store"
+                options={storeOptions}
+                selected={siteCodes}
+                onChange={setSiteCodes}
+                placeholder="All stores"
+                disabled={facetsLoading}
+                widthClass="min-w-[14rem]"
+              />
+              <MultiSelect
                 label="Status"
                 options={statusOptions}
                 selected={statuses}
@@ -757,6 +784,16 @@ export default function ReportsPage() {
                 </div>
               )}
 
+              {/* The STBC column is abbreviated to keep it narrow, so the expansion
+                  has to live next to the table — a reader should never have to
+                  guess at a column heading. The Excel export spells it out in
+                  the header itself, since that file leaves the app. */}
+              <p className="text-xs text-gray-500 mb-2">
+                <span className="font-semibold text-gray-700">STBC</span> = Still to be Collected —
+                value on the pick slip that has not yet been bracketed as collected, damaged,
+                phantom, display or refused.
+              </p>
+
               <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
                 <div className="max-h-[70vh] overflow-auto">
                   <table className="min-w-full text-xs">
@@ -773,7 +810,7 @@ export default function ReportsPage() {
                         <th className="px-2 py-2 text-right whitespace-nowrap">Possible Phantom</th>
                         <th className="px-2 py-2 text-right whitespace-nowrap">Display</th>
                         <th className="px-2 py-2 text-right whitespace-nowrap">Refused</th>
-                        <th className="px-2 py-2 text-right whitespace-nowrap">Unaccounted</th>
+                        <th className="px-2 py-2 text-right whitespace-nowrap" title="Still to be Collected">STBC</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -800,7 +837,7 @@ export default function ReportsPage() {
                               <td className={`px-2 py-1.5 text-right whitespace-nowrap ${r.phantom > 0 ? 'text-orange-600' : 'text-gray-300'}`}>{fmtCurrency(r.phantom)}</td>
                               <td className={`px-2 py-1.5 text-right whitespace-nowrap ${r.display > 0 ? 'text-blue-600' : 'text-gray-300'}`}>{fmtCurrency(r.display)}</td>
                               <td className={`px-2 py-1.5 text-right whitespace-nowrap ${r.refused > 0 ? 'text-amber-600' : 'text-gray-300'}`}>{fmtCurrency(r.refused)}</td>
-                              <td className={`px-2 py-1.5 text-right whitespace-nowrap ${Math.abs(r.unaccounted) > 0.01 ? 'text-gray-700' : 'text-gray-300'}`}>{fmtCurrency(r.unaccounted)}</td>
+                              <td className={`px-2 py-1.5 text-right whitespace-nowrap ${Math.abs(r.stbc) > 0.01 ? 'text-gray-700' : 'text-gray-300'}`}>{fmtCurrency(r.stbc)}</td>
                             </tr>
                           ))}
                           <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold">
@@ -811,11 +848,7 @@ export default function ReportsPage() {
                             <td className="px-2 py-2 text-right whitespace-nowrap text-orange-600">{fmtCurrency(storeTotals.phantom)}</td>
                             <td className="px-2 py-2 text-right whitespace-nowrap text-blue-600">{fmtCurrency(storeTotals.display)}</td>
                             <td className="px-2 py-2 text-right whitespace-nowrap text-amber-600">{fmtCurrency(storeTotals.refused)}</td>
-                            <td className="px-2 py-2 text-right whitespace-nowrap">
-                              {fmtCurrency(
-                                storeTotals.valueToBeCollected - (storeTotals.valueCollected + storeTotals.damages + storeTotals.phantom + storeTotals.display + storeTotals.refused)
-                              )}
-                            </td>
+                            <td className="px-2 py-2 text-right whitespace-nowrap">{fmtCurrency(storeTotals.stbc)}</td>
                           </tr>
                         </>
                       )}

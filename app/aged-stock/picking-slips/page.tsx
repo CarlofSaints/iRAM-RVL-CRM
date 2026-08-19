@@ -265,14 +265,49 @@ export default function PickingSlipsPage() {
 
   // ── Fetch data ──
 
-  const fetchSlips = useCallback(async () => {
+  /**
+   * How far back the grid loads. This is the page's main cost: `from` narrows
+   * which run blobs the server reads, not just what it returns, so narrowing
+   * genuinely speeds the page up rather than only trimming the payload.
+   *
+   * DEFAULTS TO ALL TIME, deliberately. A 30-day default was measured against
+   * production first and rejected: it hid 620 of 993 slips (62%), including 255
+   * that were NOT yet delivered — real work in flight — while saving only 124
+   * of 452 blob reads (27%), because a run blob is rewritten on every status
+   * change and so keeps looking recent. A screen that silently shows less than
+   * everything reads as broken (the same trap as commit 1a48e2b), and here it
+   * bought almost nothing. The dropdown below is the date filter for anyone who
+   * wants a faster, narrower load; it is not imposed.
+   */
+  const DEFAULT_WINDOW_DAYS: number | null = null;
+
+  const [windowDays, setWindowDays] = useState<number | null>(DEFAULT_WINDOW_DAYS);
+  const [loadedWindowDays, setLoadedWindowDays] = useState<number | null>(DEFAULT_WINDOW_DAYS);
+
+  const isoDaysAgo = (days: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return d.toISOString().slice(0, 10);
+  };
+
+  // Held in a ref so the many post-action `fetchSlips()` refreshes reload the
+  // window the user is actually looking at, without every handler having to
+  // thread it through or risk a stale closure.
+  const windowRef = useRef<number | null>(DEFAULT_WINDOW_DAYS);
+
+  const fetchSlips = useCallback(async (daysArg?: number | null) => {
+    const days = daysArg === undefined ? windowRef.current : daysArg;
+    windowRef.current = days;
     try {
-      // Summary mode: no product rows. On live data that is the difference
-      // between a payload of every line item on 959 slips and one of 959 rows.
-      const res = await authFetch('/api/pick-slips?mode=summary', { cache: 'no-store' });
+      // Summary mode: no product rows and no signatures. On live data that is
+      // the difference between megabytes and a few hundred KB.
+      const params = new URLSearchParams({ mode: 'summary' });
+      if (days != null) params.set('from', isoDaysAgo(days));
+      const res = await authFetch(`/api/pick-slips?${params.toString()}`, { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         setSlips((data.slips ?? []).map((s: SlipDto) => ({ ...s, rows: s.rows ?? [] })));
+        setLoadedWindowDays(days);
       } else {
         notify('Failed to load pick slips', 'error');
       }
@@ -280,6 +315,14 @@ export default function PickingSlipsPage() {
       notify('Network error loading pick slips', 'error');
     }
   }, []);
+
+  /** Reload with a wider window — used by the banner when a search finds nothing. */
+  const widenWindow = useCallback(async (days: number | null) => {
+    setWindowDays(days);
+    setLoading(true);
+    await fetchSlips(days);
+    setLoading(false);
+  }, [fetchSlips]);
 
   /**
    * Pull the product rows for one slip. Reads a single run blob (that slip's
@@ -1052,10 +1095,54 @@ export default function PickingSlipsPage() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Picking Slips</h1>
           <p className="text-sm text-gray-600 mt-1">
-            {slips.length.toLocaleString()} pick slip{slips.length !== 1 ? 's' : ''} total
+            {slips.length.toLocaleString()} pick slip{slips.length !== 1 ? 's' : ''}
+            {loadedWindowDays == null
+              ? ' — all time'
+              : ` generated in the last ${loadedWindowDays} days`}
           </p>
         </div>
+
+        {/* How far back the grid has loaded. Stated rather than implied: every
+            filter below can only see what has been loaded. */}
+        <div className="flex items-end gap-2">
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Date loaded</label>
+            <select
+              value={windowDays == null ? 'all' : String(windowDays)}
+              onChange={(e) => {
+                const v = e.target.value === 'all' ? null : Number(e.target.value);
+                widenWindow(v);
+              }}
+              disabled={loading}
+              className="px-3 py-1.5 border border-gray-300 rounded-md text-sm bg-white"
+            >
+              <option value="all">All time</option>
+              <option value="365">Last 12 months (faster)</option>
+              <option value="90">Last 90 days (faster)</option>
+              <option value="30">Last 30 days (faster)</option>
+              <option value="7">Last 7 days (fastest)</option>
+            </select>
+          </div>
+        </div>
       </div>
+
+      {/* A filter that cannot see the whole dataset reads as broken. When a
+          search or filter finds nothing inside the loaded window, say so and
+          offer to widen it rather than showing a bare "no results". */}
+      {!loading && loadedWindowDays != null && slips.length > 0 && sorted.length === 0 && (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-3 mb-4 flex flex-wrap items-center gap-3">
+          <span className="flex-1">
+            Nothing matched inside the last {loadedWindowDays} days. An older slip would not be
+            loaded yet.
+          </span>
+          <button
+            onClick={() => widenWindow(null)}
+            className="px-3 py-1.5 rounded-md text-sm font-medium bg-white border border-amber-300 text-amber-800 hover:bg-amber-100"
+          >
+            Search all time
+          </button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 grid grid-cols-1 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9 gap-3">

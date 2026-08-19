@@ -149,6 +149,17 @@ export async function GET(req: NextRequest) {
           .sort((a, b) => a.name.localeCompare(b.name)),
         batches,
         provinces: [...new Set([...provinceBySite.values()].filter(Boolean))].sort(),
+        // Stores come off the control file, so the picker offers every store
+        // rather than only ones that happen to have a slip — the user is
+        // choosing what to look for, not browsing what exists.
+        stores: stores
+          .filter((s) => (s.siteCode ?? '').trim())
+          .map((s) => ({
+            siteCode: (s.siteCode ?? '').trim(),
+            name: s.name ?? '',
+            province: provinceName(s.region ?? ''),
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name) || a.siteCode.localeCompare(b.siteCode)),
         statuses: ALL_STATUSES,
         warehouses: warehouses
           .filter(w => whScopeF.all || whScopeF.codes.includes((w.code ?? '').toUpperCase()))
@@ -169,7 +180,9 @@ export async function GET(req: NextRequest) {
     warehouses,
   );
 
-  const runs = await listAllPickSlipRuns(requestedIds, listLoads, q.loadIds);
+  // `q.from` also narrows which run blobs are read, not just which slips are
+  // returned — that is where the page-load latency actually goes.
+  const runs = await listAllPickSlipRuns(requestedIds, listLoads, q.loadIds, q.from || undefined);
 
   // Backfill old slips missing `rows` by reading from load data.
   // Tracks which runs were modified so we can persist the backfill.

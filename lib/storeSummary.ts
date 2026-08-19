@@ -65,10 +65,15 @@ export interface StoreSummaryRow {
   refused: number;
   uplifted: boolean;
   /**
-   * to-be-collected minus everything accounted for. Non-zero means units were
-   * neither found nor explained — worth seeing rather than hiding in a rounding.
+   * STBC — Still to be Collected. To-be-collected minus everything already
+   * bracketed (collected, damaged, phantom, display, refused).
+   *
+   * Deliberately NOT called "unaccounted": a store sitting here is almost
+   * always one the team has not reached yet, not one that was neglected. It
+   * covers stores with no uplift recorded at all, stores part-way through, and
+   * lines whose value could not be priced. Carl chose the name.
    */
-  unaccounted: number;
+  stbc: number;
   /** Lines whose unit price could not be derived (qty 0 but value non-zero). */
   unpricedLines: number;
 }
@@ -129,7 +134,7 @@ export function summariseStore(input: StoreSummaryInput): StoreSummaryRow {
     display,
     refused,
     uplifted: input.uplifted,
-    unaccounted: round2(
+    stbc: round2(
       valueToBeCollected - (valueCollected + damages + phantom + display + refused)
     ),
     unpricedLines,
@@ -152,6 +157,8 @@ export interface StoreSummaryTotals {
   phantom: number;
   display: number;
   refused: number;
+  /** STBC — Still to be Collected. See StoreSummaryRow.stbc. */
+  stbc: number;
   /** Stores that have a pick slip at all. */
   storesIssued: number;
   /** Stores where something has been receipted. */
@@ -162,7 +169,7 @@ export interface StoreSummaryTotals {
 export function totalStoreSummary(rows: StoreSummaryRow[]): StoreSummaryTotals {
   const t: StoreSummaryTotals = {
     valueToBeCollected: 0, valueCollected: 0, damages: 0,
-    phantom: 0, display: 0, refused: 0,
+    phantom: 0, display: 0, refused: 0, stbc: 0,
     storesIssued: rows.length, storesUplifted: 0, storesOutstanding: 0,
   };
   for (const r of rows) {
@@ -172,6 +179,7 @@ export function totalStoreSummary(rows: StoreSummaryRow[]): StoreSummaryTotals {
     t.phantom += r.phantom;
     t.display += r.display;
     t.refused += r.refused;
+    t.stbc += r.stbc;
     if (r.uplifted) t.storesUplifted++;
   }
   t.storesOutstanding = t.storesIssued - t.storesUplifted;
@@ -181,5 +189,6 @@ export function totalStoreSummary(rows: StoreSummaryRow[]): StoreSummaryTotals {
   t.phantom = round2(t.phantom);
   t.display = round2(t.display);
   t.refused = round2(t.refused);
+  t.stbc = round2(t.stbc);
   return t;
 }
