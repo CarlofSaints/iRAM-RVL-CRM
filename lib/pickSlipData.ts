@@ -32,6 +32,11 @@ export interface ReceiptBox {
   id: string;
   stickerBarcode: string;
   scannedAt: string;
+  /** Set when this box's label was swapped for a fresh barcode — the box is the
+   *  same physical box, only its number changed. Kept so a delivery note or a
+   *  query about the old number can still be traced back. */
+  replacedBarcode?: string;
+  replacedAt?: string;
 }
 
 export type PickSlipStatus =

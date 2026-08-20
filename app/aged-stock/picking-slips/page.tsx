@@ -25,6 +25,9 @@ interface ReceiptBox {
   id: string;
   stickerBarcode: string;
   scannedAt: string;
+  /** Set when this box's label was swapped for a fresh barcode — same box, new number. */
+  replacedBarcode?: string;
+  replacedAt?: string;
 }
 
 interface SlipDto {
@@ -254,6 +257,11 @@ export default function PickingSlipsPage() {
   const [boxesSaving, setBoxesSaving] = useState(false);
   const [boxesReprint, setBoxesReprint] = useState<string[]>([]);
   const [boxesReprinting, setBoxesReprinting] = useState(false);
+  // Replace label — same physical box, fresh barcode. For a label whose NUMBER
+  // is duplicated: the box is real, so removing it would be wrong.
+  const [boxesReplace, setBoxesReplace] = useState<string[]>([]);
+  const [boxesReplacing, setBoxesReplacing] = useState(false);
+  const [boxesReplaceResult, setBoxesReplaceResult] = useState<string[]>([]);
 
   // Correct GRN/GRV modal — fix captured value/refs/date on a released/delivered slip
   const [correctSlip, setCorrectSlip] = useState<SlipDto | null>(null);
@@ -958,20 +966,109 @@ export default function PickingSlipsPage() {
     setBoxesRemove([]);
     setBoxesReason('');
     setBoxesReprint([]);
+    setBoxesReplace([]);
+    setBoxesReplaceResult([]);
   }
 
   function toggleBoxRemove(barcode: string) {
     setBoxesRemove(prev =>
       prev.includes(barcode) ? prev.filter(b => b !== barcode) : [...prev, barcode],
     );
-    // A box can't be both reprinted and removed in one go — removing wins.
+    // A box can't be removed and also reprinted/replaced in one go — removing wins.
     setBoxesReprint(prev => prev.filter(b => b !== barcode));
+    setBoxesReplace(prev => prev.filter(b => b !== barcode));
   }
 
   function toggleBoxReprint(barcode: string) {
     setBoxesReprint(prev =>
       prev.includes(barcode) ? prev.filter(b => b !== barcode) : [...prev, barcode],
     );
+    // Reprint keeps the same number, Replace issues a new one — asking for both
+    // would print two different labels for one box.
+    setBoxesReplace(prev => prev.filter(b => b !== barcode));
+  }
+
+  function toggleBoxReplace(barcode: string) {
+    setBoxesReplace(prev =>
+      prev.includes(barcode) ? prev.filter(b => b !== barcode) : [...prev, barcode],
+    );
+    setBoxesReprint(prev => prev.filter(b => b !== barcode));
+    setBoxesRemove(prev => prev.filter(b => b !== barcode));
+  }
+
+  async function doReplaceLabels() {
+    if (!boxesSlip || boxesReplace.length === 0) return;
+    if (!boxesReason.trim()) {
+      notify('A reason is required', 'error');
+      return;
+    }
+    setBoxesReplacing(true);
+    try {
+      const res = await authFetch(
+        `/api/pick-slips/${boxesSlip.id}/replace-labels?format=roll`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            clientId: boxesSlip.clientId,
+            loadId: boxesSlip.loadId,
+            barcodes: boxesReplace,
+            reason: boxesReason.trim(),
+          }),
+        },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        notify(data.error || 'Failed to replace labels', 'error');
+        return;
+      }
+      // The new numbers ride back in a header — the body is the PDF.
+      const pairs = (res.headers.get('X-Label-Replacements') ?? '')
+        .split(',')
+        .filter(Boolean)
+        .map(pair => pair.split('=') as [string, string]);
+      const mapping = pairs.map(([oldBc, newBc]) => `${oldBc}  →  ${newBc}`);
+      const swap = new Map(pairs);
+
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') ?? '';
+      const fileMatch = disposition.match(/filename="(.+?)"/);
+      const fileName = fileMatch ? fileMatch[1] : `Replacement labels - ${boxesSlip.id}.pdf`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+
+      setBoxesReplaceResult(mapping);
+      setBoxesReplace([]);
+      // The modal holds its own copy of the slip — move it onto the new
+      // barcodes, or the list keeps showing the old number and it can be
+      // replaced a second time.
+      setBoxesSlip(prev =>
+        prev
+          ? {
+              ...prev,
+              receiptBoxes: (prev.receiptBoxes ?? []).map(b => {
+                const fresh = swap.get(b.stickerBarcode);
+                return fresh
+                  ? { ...b, stickerBarcode: fresh, replacedBarcode: b.stickerBarcode }
+                  : b;
+              }),
+            }
+          : prev,
+      );
+      await fetchSlips();
+    } catch {
+      notify('Network error replacing labels', 'error');
+    } finally {
+      setBoxesReplacing(false);
+    }
   }
 
   async function doReprintLabels() {
@@ -2155,10 +2252,13 @@ export default function PickingSlipsPage() {
               <p className="text-sm text-gray-600 mb-4">
                 {boxesSlip.id} — {boxesSlip.siteName} ({boxesSlip.siteCode}). This slip has{' '}
                 <span className="font-medium">{allBoxes.length} box record{allBoxes.length !== 1 ? 's' : ''}</span>.
-                Tick <span className="text-red-600 font-medium">Remove</span> for any box that doesn&apos;t
+                Tick <span className="text-red-600 font-medium">Remove</span>{' '}for any box that doesn&apos;t
                 physically exist (e.g. added by mistake) — Release will then only ask for the boxes that remain.
-                Tick <span className="text-indigo-600 font-medium">Reprint</span> to print a fresh label with the
+                Tick <span className="text-indigo-600 font-medium">Reprint</span>{' '}to print a fresh label with the
                 same barcode for a box whose sticker was lost or damaged.
+                Tick <span className="text-emerald-700 font-medium">Replace</span>{' '}when the box is real but its
+                barcode is wrong or duplicated — it issues a brand-new number for that box and prints it.
+                Nothing else on the slip changes.
               </p>
 
               <div className="mb-4 border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-56 overflow-auto">
@@ -2167,14 +2267,16 @@ export default function PickingSlipsPage() {
                   <span className="w-6">#</span>
                   <span className="flex-1">Barcode</span>
                   <span className="text-indigo-500">Reprint</span>
+                  <span className="text-emerald-600">Replace</span>
                 </div>
                 {allBoxes.map((b, i) => {
                   const checked = boxesRemove.includes(b.stickerBarcode);
                   const reprintChecked = boxesReprint.includes(b.stickerBarcode);
+                  const replaceChecked = boxesReplace.includes(b.stickerBarcode);
                   return (
                     <div
                       key={b.id || b.stickerBarcode}
-                      className={`flex items-center gap-3 px-3 py-2 ${checked ? 'bg-red-50' : reprintChecked ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}
+                      className={`flex items-center gap-3 px-3 py-2 ${checked ? 'bg-red-50' : replaceChecked ? 'bg-emerald-50' : reprintChecked ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}
                     >
                       <label className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer">
                         <input
@@ -2186,6 +2288,11 @@ export default function PickingSlipsPage() {
                         <span className="text-xs text-gray-400 w-6">#{i + 1}</span>
                         <span className={`font-mono text-sm truncate ${checked ? 'line-through text-red-500' : 'text-gray-800'}`}>
                           {b.stickerBarcode}
+                          {b.replacedBarcode && (
+                            <span className="ml-2 text-[10px] font-sans text-emerald-700">
+                              replaced {b.replacedBarcode}
+                            </span>
+                          )}
                         </span>
                       </label>
                       <label
@@ -2200,6 +2307,19 @@ export default function PickingSlipsPage() {
                           className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-40"
                         />
                         Reprint
+                      </label>
+                      <label
+                        className={`flex items-center gap-1.5 shrink-0 text-xs font-medium ${checked ? 'text-gray-300 cursor-not-allowed' : 'text-emerald-700 cursor-pointer'}`}
+                        title={checked ? 'Being removed — can’t replace' : 'Issue a new barcode for this box'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={replaceChecked}
+                          disabled={checked}
+                          onChange={() => toggleBoxReplace(b.stickerBarcode)}
+                          className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-40"
+                        />
+                        Replace
                       </label>
                     </div>
                   );
@@ -2229,7 +2349,12 @@ export default function PickingSlipsPage() {
 
               {removingAll && boxesRemove.length > 0 && (
                 <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
-                  You can&apos;t remove every box — at least one must remain. To undo the whole booking, use <strong>Reverse</strong> instead.
+                  You can&apos;t remove every box — at least one must remain.
+                  <br />
+                  If the box is <strong>real</strong>{' '}and you only need to get rid of a bad or duplicated
+                  barcode, tick <strong>Replace</strong>{' '}instead — it gives that box a new number and keeps
+                  everything else. If the box genuinely doesn&apos;t exist, use <strong>Reverse</strong>{' '}to
+                  undo the whole booking.
                 </div>
               )}
 
@@ -2241,6 +2366,43 @@ export default function PickingSlipsPage() {
                 placeholder="e.g. 2 extra boxes added by mistake — only 2 physical labels exist"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
               />
+
+              {boxesReplace.length > 0 && (
+                <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-emerald-900">
+                      <span className="font-semibold">{boxesReplace.length}</span> box
+                      {boxesReplace.length !== 1 ? 'es' : ''} will get a <strong>new barcode</strong>.
+                      The box records, scan times and captured values are untouched.
+                    </span>
+                    <button
+                      onClick={doReplaceLabels}
+                      disabled={boxesReplacing || !boxesReason.trim()}
+                      className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shrink-0"
+                    >
+                      {boxesReplacing && <div className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                      Replace {boxesReplace.length} label{boxesReplace.length !== 1 ? 's' : ''}
+                    </button>
+                  </div>
+                  {!boxesReason.trim() && (
+                    <p className="text-[11px] text-emerald-700 mt-1.5">Enter a reason above first.</p>
+                  )}
+                  <p className="text-[11px] text-emerald-700 mt-1.5">
+                    Print the PDF and stick the new label over the old one before this box is scanned again.
+                  </p>
+                </div>
+              )}
+
+              {boxesReplaceResult.length > 0 && (
+                <div className="mb-4 rounded-lg border border-emerald-300 bg-white px-3 py-2.5">
+                  <p className="text-xs font-semibold text-emerald-900 mb-1.5">
+                    New labels issued — PDF downloaded. Stick these over the old ones:
+                  </p>
+                  <ul className="text-xs font-mono text-gray-800 space-y-0.5">
+                    {boxesReplaceResult.map(line => <li key={line}>{line}</li>)}
+                  </ul>
+                </div>
+              )}
 
               <div className="flex gap-3">
                 <button
