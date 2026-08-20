@@ -6,6 +6,7 @@ import { verifyReleaseCode, masterCodeAuditNote } from '@/lib/releaseCodeAuth';
 import { loadControl } from '@/lib/controlData';
 import { updateSlipInRun, getPickSlipRun, type ReceiptBox, type PickSlipRecord } from '@/lib/pickSlipData';
 import { listSpLinks } from '@/lib/spLinkData';
+import { findSlipsForBarcodes } from '@/lib/stickerData';
 import { logAudit } from '@/lib/auditLog';
 import { generateDeliveryNotePdf } from '@/lib/deliveryNotePdf';
 import { generateMultiSlipDeliveryNotePdf } from '@/lib/deliveryNotePdf';
@@ -87,6 +88,40 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Cannot release ${sp.slipId} with status "${slip.status}"` }, { status: 400 });
     }
     resolvedSlips.push({ payload: sp, slip });
+  }
+
+  // Duplicate-label backstop. A barcode is minted against exactly one slip, so
+  // if the sticker registry knows this barcode and it points somewhere else,
+  // the label is duplicated and this release would send stock to the wrong
+  // store. Refuse.
+  //
+  // Only enforced when the registry actually HAS the sticker: the 7 Aug 2026
+  // clear deleted 665 batches, so every slip booked before then has no sticker
+  // record at all. An unknown barcode is legacy, not wrong, and still releases.
+  const releasedBarcodes = resolvedSlips.flatMap(r =>
+    (r.payload.releaseBoxes ?? []).map(b => b?.stickerBarcode).filter(Boolean) as string[],
+  );
+  const barcodeOwners = await findSlipsForBarcodes(releasedBarcodes);
+  for (const { payload, slip } of resolvedSlips) {
+    for (const box of payload.releaseBoxes ?? []) {
+      const barcode = box?.stickerBarcode;
+      if (!barcode) continue;
+      const owners = barcodeOwners.get(barcode);
+      if (!owners || owners.length === 0) continue; // legacy label — no record
+      if (!owners.includes(slip.id)) {
+        return NextResponse.json(
+          {
+            error:
+              `Box label ${barcode} belongs to pick slip ${owners.join(', ')}, ` +
+              `not ${slip.id} (${slip.clientName} / ${slip.siteName}). ` +
+              `The same barcode is on more than one slip — releasing it here would send this stock ` +
+              `to the wrong store. Remove the barcode from whichever slip it does not belong to ` +
+              `(Picking Slips → Adjust Boxes → Remove) before releasing.`,
+          },
+          { status: 409 },
+        );
+      }
+    }
   }
 
   // Warehouse scoping — checked across EVERY slip in the batch before anything

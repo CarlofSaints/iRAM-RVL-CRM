@@ -7,7 +7,7 @@ import { getPickSlipRun, updateSlipInRun, type ReceiptBox } from '@/lib/pickSlip
 import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 import {
   saveBatch,
-  nextStickerSequence,
+  reserveStickerSequence,
   type StickerBatch,
   type Sticker,
 } from '@/lib/stickerData';
@@ -189,8 +189,10 @@ export async function POST(req: NextRequest) {
     const whRecord = warehouses.find(w => w.code === primaryWh);
     const whName = whRecord?.name || slipDetails[0].warehouseName || primaryWh;
 
-    // Get the next sequence number for this warehouse
-    let seq = await nextStickerSequence(primaryWh);
+    // Reserve the whole block for this booking up front — the counter is
+    // monotonic and survives any data clear, so a number is never reissued.
+    const totalBoxesToMint = slipDetails.reduce((n, d) => n + d.ref.boxCount, 0);
+    let seq = await reserveStickerSequence(primaryWh, totalBoxesToMint);
 
     const allStickers: Sticker[] = [];
     const pdfStickers: Array<{ barcodeValue: string; fields?: StickerFieldData }> = [];

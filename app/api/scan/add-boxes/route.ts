@@ -7,7 +7,7 @@ import { getPickSlipRun, updateSlipInRun, type ReceiptBox } from '@/lib/pickSlip
 import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 import {
   saveBatch,
-  nextStickerSequence,
+  reserveStickerSequence,
   type StickerBatch,
   type Sticker,
 } from '@/lib/stickerData';
@@ -138,7 +138,9 @@ export async function POST(req: NextRequest) {
   const warehouses = await loadControl<Warehouse>('warehouses');
   const whRecord = warehouses.find(w => w.code === primaryWh);
   const whName = whRecord?.name || slip.warehouse || primaryWh;
-  let seq = await nextStickerSequence(primaryWh);
+  // Reserve the barcode block up front — the counter is monotonic and survives
+  // any data clear, so a number is never handed out twice.
+  let seq = await reserveStickerSequence(primaryWh, additionalBoxes);
 
   // Continue box numbering from the boxes already on the slip
   const existingBoxes: ReceiptBox[] = slip.receiptBoxes ?? [];

@@ -53,9 +53,16 @@ interface UserDto {
   role: string;
 }
 
-/** Barcode → parent slip mapping */
+/**
+ * Barcode → parent slip(s).
+ *
+ * An ARRAY, not a single id. This used to be `barcode → slipId` and assigning
+ * into it silently let the last slip win, so when the same barcode appeared on
+ * two releasable slips the scanner picked one arbitrarily and released the
+ * wrong store's stock. Ambiguity is now surfaced and blocked at scan time.
+ */
 interface BarcodeIndex {
-  [barcode: string]: string; // stickerBarcode → slipId
+  [barcode: string]: string[]; // stickerBarcode → slipIds
 }
 
 /** Per-slip scanned state */
@@ -98,18 +105,24 @@ export default function ReleasePage() {
   const [cancelCode, setCancelCode] = useState('');
   const [cancelling, setCancelling] = useState(false);
 
-  // Barcode index: stickerBarcode → slipId
+  // Barcode index: stickerBarcode → every releasable slip carrying it
   const barcodeIndex = useMemo<BarcodeIndex>(() => {
     const idx: BarcodeIndex = {};
     for (const slip of allSlips) {
       for (const box of slip.receiptBoxes ?? []) {
-        if (box.stickerBarcode) {
-          idx[box.stickerBarcode] = slip.id;
-        }
+        if (!box.stickerBarcode) continue;
+        const ids = (idx[box.stickerBarcode] ??= []);
+        if (!ids.includes(slip.id)) ids.push(slip.id);
       }
     }
     return idx;
   }, [allSlips]);
+
+  /** Barcodes sitting on more than one releasable slip — cannot be scanned. */
+  const ambiguousBarcodes = useMemo(
+    () => Object.keys(barcodeIndex).filter(bc => barcodeIndex[bc].length > 1).sort(),
+    [barcodeIndex],
+  );
 
   // Slip lookup by ID
   const slipMap = useMemo(() => {
@@ -149,8 +162,10 @@ export default function ReleasePage() {
     const slipScans = new Map<string, string[]>();
     const lastScanSeq = new Map<string, number>();
     scannedBarcodes.forEach((bc, i) => {
-      const slipId = barcodeIndex[bc];
-      if (!slipId) return;
+      const ids = barcodeIndex[bc];
+      // Ambiguous barcodes are rejected at scan time and never reach this list.
+      if (!ids || ids.length !== 1) return;
+      const slipId = ids[0];
       if (!slipScans.has(slipId)) slipScans.set(slipId, []);
       slipScans.get(slipId)!.push(bc);
       lastScanSeq.set(slipId, i);
@@ -311,12 +326,34 @@ export default function ReleasePage() {
     }
 
     // Look up in index
-    const slipId = barcodeIndex[barcode];
-    if (!slipId) {
+    const matchingSlipIds = barcodeIndex[barcode] ?? [];
+    if (matchingSlipIds.length === 0) {
       setScanError(`Documents Not Captured! Ask admin personnel for help! (Barcode not found in any releasable slip: ${barcode})`);
       setScanBarcode('');
       return;
     }
+
+    // Same barcode on more than one releasable slip — the label is duplicated,
+    // so there is no way to know which store's box is in the scanner's hand.
+    // Refuse rather than guess: guessing here ships stock to the wrong store.
+    if (matchingSlipIds.length > 1) {
+      const where = matchingSlipIds
+        .map(id => {
+          const s = slipMap.get(id);
+          return s ? `${s.id} — ${s.clientName} / ${s.siteName}` : id;
+        })
+        .join('  •  ');
+      setScanError(
+        `DUPLICATE LABEL — ${barcode} is on ${matchingSlipIds.length} different pick slips, so this box cannot be released. ` +
+        `It appears on:  ${where}.  ` +
+        `Work out which slip this physical box belongs to, then remove the barcode from the other slip ` +
+        `via Picking Slips → Adjust Boxes → Remove. Do not release until that is done.`,
+      );
+      setScanBarcode('');
+      return;
+    }
+
+    const slipId = matchingSlipIds[0];
 
     // Supplier lock — a delivery note may only contain ONE supplier's stock.
     // A supplier can be split across several client records that share the same
@@ -589,7 +626,33 @@ export default function ReleasePage() {
                 </button>
               </div>
               {scanError && (
-                <p className="text-red-600 text-xs mt-2">{scanError}</p>
+                <div className="mt-3 rounded-md border border-red-300 bg-red-50 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-red-800 text-sm leading-relaxed">{scanError}</p>
+                    <button
+                      onClick={() => setScanError('')}
+                      className="text-red-500 hover:text-red-700 text-xs font-medium shrink-0"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )}
+              {ambiguousBarcodes.length > 0 && (
+                <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3">
+                  <p className="text-amber-900 text-sm font-medium">
+                    {ambiguousBarcodes.length} duplicated box label
+                    {ambiguousBarcodes.length !== 1 ? 's' : ''} in the releasable stock
+                  </p>
+                  <p className="text-amber-800 text-xs mt-1 leading-relaxed">
+                    These barcodes are each on more than one pick slip, so scanning one cannot
+                    identify a store and will be refused. Fix a slip via Picking Slips → Adjust
+                    Boxes → Remove.
+                  </p>
+                  <p className="text-amber-900 text-xs mt-2 font-mono break-all">
+                    {ambiguousBarcodes.join(', ')}
+                  </p>
+                </div>
               )}
               <p className="text-gray-400 text-xs mt-2">
                 {scannedBarcodes.length} barcode{scannedBarcodes.length !== 1 ? 's' : ''} scanned

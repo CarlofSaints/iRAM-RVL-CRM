@@ -5,7 +5,7 @@ import { loadUsers } from '@/lib/userData';
 import {
   listBatches,
   saveBatch,
-  nextStickerSequence,
+  reserveStickerSequence,
   type StickerBatch,
   type Sticker,
 } from '@/lib/stickerData';
@@ -80,7 +80,8 @@ export async function POST(req: NextRequest) {
 
   // Build barcode values
   const now = new Date();
-  const startSeq = await nextStickerSequence(warehouse.code);
+  // Reserve the block up front — monotonic, survives any data clear.
+  const startSeq = await reserveStickerSequence(warehouse.code, quantity);
 
   const stickers: Sticker[] = [];
   for (let i = 0; i < quantity; i++) {

@@ -34,6 +34,7 @@ interface ClearResult {
   agedStockLoads: number;
   pickSlipRuns: number;
   stickerBatches: number;
+  stickersRemoved?: number;
   auditMonths: number;
 }
 
@@ -214,7 +215,7 @@ export default function ClearDataPage() {
       const count = selectedLoadIds.size;
       bullets.push(`${count} aged stock load${count > 1 ? 's' : ''} from ${selectedClient?.name ?? 'unknown'}`);
       if (cascadePickSlips) bullets.push('Associated pick slips for those loads');
-      if (cascadeStickers) bullets.push('Associated sticker batches (all)');
+      if (cascadeStickers) bullets.push('Sticker records for those pick slips only (other warehouses untouched)');
     }
     if (clearAllPickSlips) bullets.push(`ALL pick slips — every run incl. manual & orphaned (${inventory?.totalPickSlipRuns ?? 0} total)`);
     if (clearStickers && !cascadeStickers) bullets.push('All sticker batches');
@@ -466,7 +467,13 @@ export default function ClearDataPage() {
                           onChange={e => setCascadeStickers(e.target.checked)}
                           className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
                         />
-                        <span className="text-sm text-gray-700">Also delete sticker batches (all — not limited to selected vendor)</span>
+                        <span className="text-sm text-gray-700">
+                          Also delete the sticker records for those pick slips
+                          <span className="block text-xs text-gray-400">
+                            Only those slips&apos; labels — other vendors and warehouses are untouched.
+                            Barcode numbering carries on from where it is; a number is never reissued.
+                          </span>
+                        </span>
                       </label>
                     )}
                   </div>
@@ -505,18 +512,20 @@ export default function ClearDataPage() {
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={clearStickers || cascadeStickers}
-                      disabled={cascadeStickers}
+                      checked={clearStickers}
                       onChange={e => setClearStickers(e.target.checked)}
-                      className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500 disabled:opacity-50"
+                      className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
                     />
                     <div>
                       <span className="font-medium text-gray-900 text-sm">Clear all sticker batches</span>
-                      {cascadeStickers && (
-                        <span className="ml-2 text-xs text-amber-600 font-medium">(included via cascade above)</span>
-                      )}
                       <p className="text-xs text-gray-500 mt-0.5">
                         {inventory.stickerBatchCount} batch{inventory.stickerBatchCount !== 1 ? 'es' : ''} in the system
+                      </p>
+                      <p className="text-xs text-amber-700 mt-1">
+                        EVERY warehouse, every vendor. Labels already stuck to boxes stay readable on
+                        the Release screen only while their slip exists — clearing these removes the
+                        record that ties a barcode to its stock. Barcode numbering is unaffected:
+                        a number is never reissued.
                       </p>
                     </div>
                   </label>
@@ -566,6 +575,9 @@ export default function ClearDataPage() {
                   )}
                   {result.stickerBatches > 0 && (
                     <li>Sticker batches deleted: <strong>{result.stickerBatches}</strong></li>
+                  )}
+                  {(result.stickersRemoved ?? 0) > 0 && (
+                    <li>Box labels unlinked: <strong>{result.stickersRemoved}</strong></li>
                   )}
                   {result.auditMonths > 0 && (
                     <li>Audit log months cleared: <strong>{result.auditMonths}</strong></li>

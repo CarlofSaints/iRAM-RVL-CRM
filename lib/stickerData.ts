@@ -60,6 +60,24 @@ function batchLocalPath(batchId: string): string {
 const INDEX_KEY = 'stickers/index.json';
 const INDEX_LOCAL = path.join(process.cwd(), 'data', 'stickers', 'index.json');
 
+/**
+ * Barcode sequence high-water mark, per warehouse code.
+ *
+ * DELIBERATELY a separate blob from the batch index, and DELIBERATELY never
+ * touched by `clearAllBatches`. The sequence used to be derived by summing the
+ * quantities in `stickers/index.json`; on 7 Aug 2026 a targeted "clear one
+ * aged-stock load" with the sticker cascade ticked deleted all 665 batches
+ * globally, the derived sequence restarted at 0001, and every barcode minted
+ * afterwards collided with a label already stuck to a box on the warehouse
+ * floor (193 duplicated barcodes across GAU and WC before it was caught).
+ *
+ * A barcode is printed onto a physical box, so a number is spent forever the
+ * moment it is issued. It can NEVER be reissued, no matter what is later
+ * deleted from the database.
+ */
+const SEQ_KEY = 'stickers/sequence.json';
+const SEQ_LOCAL = path.join(process.cwd(), 'data', 'stickers', 'sequence.json');
+
 async function blobReadJson<T>(key: string): Promise<T | null> {
   try {
     const result = await get(key, { access: 'private', useCache: false });
@@ -284,29 +302,201 @@ export async function findStickerByBarcode(
   return null;
 }
 
-/**
- * Compute the next global sequence number for stickers in the given
- * warehouse. Reads the index and sums all stickers ever generated for
- * that warehouse. Returns offset + 1 (i.e. the first available number).
- */
-export async function nextStickerSequence(
-  warehouseCode: string,
-): Promise<number> {
-  const index = await listBatches();
+/** Highest barcode number ever ISSUED, keyed by warehouse code. Only goes up. */
+export interface StickerSequenceState {
+  [warehouseCode: string]: number;
+}
 
+async function loadSequenceState(): Promise<StickerSequenceState> {
+  if (process.env.VERCEL) {
+    return (await blobReadJson<StickerSequenceState>(SEQ_KEY)) ?? {};
+  }
+  return (await localReadJson<StickerSequenceState>(SEQ_LOCAL)) ?? {};
+}
+
+async function saveSequenceState(state: StickerSequenceState): Promise<void> {
+  if (process.env.VERCEL) {
+    await blobWriteJson(SEQ_KEY, state);
+  } else {
+    localWriteJson(SEQ_LOCAL, state);
+  }
+}
+
+/**
+ * Secondary floor: the highest number the surviving batch index can account
+ * for. This is the OLD derivation, kept only so that if `stickers/sequence.json`
+ * is ever lost the counter cannot fall below what the index still proves was
+ * issued. It is a floor, never a source of truth — it can only raise the
+ * number, never lower it.
+ */
+async function indexDerivedFloor(warehouseCode: string): Promise<number> {
+  const index = await listBatches();
   let total = 0;
   for (const b of index) {
-    if (b.warehouseCode === warehouseCode) {
-      total += b.quantity;
+    if (b.warehouseCode === warehouseCode) total += b.quantity;
+  }
+  return total;
+}
+
+/** Read the current high-water mark for every warehouse. */
+export async function getStickerSequenceState(): Promise<StickerSequenceState> {
+  return loadSequenceState();
+}
+
+/**
+ * Reserve `count` consecutive barcode numbers for a warehouse and return the
+ * FIRST one. The high-water mark is advanced and persisted before the caller
+ * mints anything, so two bookings running at the same time cannot be handed
+ * the same block.
+ *
+ * Replaces the old `nextStickerSequence()`, which recomputed the next number
+ * from the batch index every time and therefore restarted at 1 whenever the
+ * index was cleared. See the SEQ_KEY comment above.
+ */
+export async function reserveStickerSequence(
+  warehouseCode: string,
+  count: number,
+): Promise<number> {
+  if (count < 1) throw new Error('reserveStickerSequence: count must be >= 1');
+
+  const state = await loadSequenceState();
+  const floor = await indexDerivedFloor(warehouseCode);
+  const high = Math.max(state[warehouseCode] ?? 0, floor);
+
+  state[warehouseCode] = high + count;
+  await saveSequenceState(state);
+
+  return high + 1;
+}
+
+/**
+ * Raise a warehouse's high-water mark to at least `highest`. Never lowers it.
+ * Used to re-seed the counter from barcodes that exist on pick slips but whose
+ * sticker records were deleted — the only way to recover from a wipe, because
+ * the labels themselves are out on the floor where the database cannot see them.
+ *
+ * Returns the mark after the call.
+ */
+export async function raiseStickerSequenceFloor(
+  warehouseCode: string,
+  highest: number,
+): Promise<number> {
+  const state = await loadSequenceState();
+  const current = state[warehouseCode] ?? 0;
+  if (highest <= current) return current;
+  state[warehouseCode] = highest;
+  await saveSequenceState(state);
+  return highest;
+}
+
+/**
+ * Resolve MANY barcodes to their linked pick slips in one pass over the batch
+ * blobs. `findStickerByBarcode` re-reads every batch per call, which is fine
+ * for a single scan but quadratic when checking a whole release.
+ *
+ * Barcodes the registry has never heard of are simply absent from the map —
+ * callers must treat "absent" as legacy/unknown, not as wrong.
+ */
+export async function findSlipsForBarcodes(
+  barcodes: string[],
+): Promise<Map<string, string[]>> {
+  const wanted = new Set(barcodes.filter(Boolean));
+  const out = new Map<string, string[]>();
+  if (wanted.size === 0) return out;
+
+  const index = await listBatches();
+  for (const meta of index) {
+    const batch = await getBatch(meta.id);
+    if (!batch) continue;
+    for (const s of batch.stickers) {
+      if (!wanted.has(s.barcodeValue)) continue;
+      const ids = getLinkedIds(s);
+      const existing = out.get(s.barcodeValue);
+      if (existing) {
+        for (const id of ids) if (!existing.includes(id)) existing.push(id);
+      } else {
+        out.set(s.barcodeValue, [...ids]);
+      }
     }
   }
+  return out;
+}
 
-  return total + 1;
+/**
+ * Delete only the stickers linked to the given pick slips, leaving every other
+ * warehouse and client untouched. A sticker still linked to a slip OUTSIDE the
+ * set is kept — one label can carry several slips.
+ *
+ * This is what the "also delete stickers" cascade on Clear Data uses. It used
+ * to call `clearAllBatches()`, which wiped every warehouse regardless of how
+ * narrow the clear was.
+ */
+export async function deleteStickersForSlips(
+  slipIds: string[],
+): Promise<{ batchesDeleted: number; stickersRemoved: number }> {
+  const target = new Set(slipIds);
+  if (target.size === 0) return { batchesDeleted: 0, stickersRemoved: 0 };
+
+  const index = await listBatches();
+  let batchesDeleted = 0;
+  let stickersRemoved = 0;
+  const survivingIndex: StickerBatchMeta[] = [];
+
+  for (const meta of index) {
+    const batch = await getBatch(meta.id);
+    if (!batch) continue;
+
+    const keep = batch.stickers.filter(s => {
+      const ids = getLinkedIds(s);
+      // Never delete a sticker that was never linked to anything — it is a
+      // blank label that may already be printed and waiting to be scanned.
+      if (ids.length === 0) return true;
+      // Drop only when EVERY slip it points at is being cleared.
+      return !ids.every(id => target.has(id));
+    });
+
+    if (keep.length === batch.stickers.length) {
+      survivingIndex.push(meta);
+      continue;
+    }
+
+    stickersRemoved += batch.stickers.length - keep.length;
+
+    if (keep.length === 0) {
+      if (process.env.VERCEL) {
+        try { await del(batchKey(batch.id)); } catch { /* already gone */ }
+      } else {
+        try {
+          const f = batchLocalPath(batch.id);
+          if (fs.existsSync(f)) fs.unlinkSync(f);
+        } catch { /* empty */ }
+      }
+      batchesDeleted++;
+      continue;
+    }
+
+    batch.stickers = keep;
+    batch.quantity = keep.length;
+    if (process.env.VERCEL) {
+      await blobWriteJson(batchKey(batch.id), batch);
+    } else {
+      localWriteJson(batchLocalPath(batch.id), batch);
+    }
+    survivingIndex.push({ ...meta, quantity: keep.length });
+  }
+
+  await saveIndex(survivingIndex);
+  return { batchesDeleted, stickersRemoved };
 }
 
 /**
  * Delete ALL sticker batches. Reads the index, deletes each batch blob,
- * resets the index to []. Returns count of batches deleted.
+ * resets the index to [].
+ *
+ * NOTE: this does NOT reset `stickers/sequence.json`, and must never be made
+ * to. Deleting the records of a label does not peel it off the box.
+ *
+ * Returns count of batches deleted.
  */
 export async function clearAllBatches(): Promise<number> {
   const index = await listBatches();

@@ -10,7 +10,7 @@ import {
   clearManualIndex,
   clearAllPickSlipRuns,
 } from '@/lib/pickSlipData';
-import { clearAllBatches } from '@/lib/stickerData';
+import { clearAllBatches, deleteStickersForSlips } from '@/lib/stickerData';
 import { logAudit, clearAuditLog } from '@/lib/auditLog';
 
 export const dynamic = 'force-dynamic';
@@ -52,8 +52,15 @@ export async function POST(req: NextRequest) {
     agedStockLoads: 0,
     pickSlipRuns: 0,
     stickerBatches: 0,
+    stickersRemoved: 0,
     auditMonths: 0,
   };
+
+  // Every pick slip id actually deleted by this request. The sticker cascade is
+  // scoped to these and nothing else — it used to call clearAllBatches(), so
+  // clearing one load for one client wiped the sticker records of every
+  // warehouse and reset barcode numbering for the whole business.
+  const clearedSlipIds: string[] = [];
 
   // Determine scope: single client + selected loads, or all clients
   const isTargeted = !!clientId && Array.isArray(selectedLoadIds) && selectedLoadIds.length > 0;
@@ -100,6 +107,7 @@ export async function POST(req: NextRequest) {
       for (const loadId of selectedLoadIds!) {
         const run = await getPickSlipRun(clientId!, loadId);
         if (run && run.slips.length > 0) {
+          clearedSlipIds.push(...run.slips.map(s => s.id));
           await clearPickSlipRun(clientId!, loadId);
           counts.pickSlipRuns++;
         }
@@ -111,6 +119,7 @@ export async function POST(req: NextRequest) {
         for (const load of loads) {
           const run = await getPickSlipRun(cid, load.id);
           if (run && run.slips.length > 0) {
+            clearedSlipIds.push(...run.slips.map(s => s.id));
             await clearPickSlipRun(cid, load.id);
             counts.pickSlipRuns++;
           }
@@ -119,6 +128,7 @@ export async function POST(req: NextRequest) {
         for (const manualLoadId of manualIds) {
           const run = await getPickSlipRun(cid, manualLoadId);
           if (run && run.slips.length > 0) {
+            clearedSlipIds.push(...run.slips.map(s => s.id));
             await clearPickSlipRun(cid, manualLoadId);
             counts.pickSlipRuns++;
           }
@@ -131,11 +141,22 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 3. Stickers ───────────────────────────────────────────────────────────
+  // Global wipe ONLY when the user explicitly asked for it: the standalone
+  // "clear all sticker batches" box, or a sweep of every pick slip in the
+  // system (where there is nothing left to scope to). The cascade off a
+  // targeted load clear is scoped to the slips that clear actually deleted.
   const clearStickers =
     (clearPickSlips && cascade.pickSlipStickers) || modules.stickers;
+  const wipeAllStickers =
+    clearStickers && (!!modules.stickers || !!modules.allPickSlips);
+  const cascadeStickers = clearStickers && !wipeAllStickers;
 
-  if (clearStickers) {
+  if (wipeAllStickers) {
     counts.stickerBatches = await clearAllBatches();
+  } else if (cascadeStickers) {
+    const removed = await deleteStickersForSlips(clearedSlipIds);
+    counts.stickerBatches = removed.batchesDeleted;
+    counts.stickersRemoved = removed.stickersRemoved;
   }
 
   // ── 4. Audit Log ──────────────────────────────────────────────────────────
@@ -155,7 +176,7 @@ export async function POST(req: NextRequest) {
       action: 'clear_data',
       userId: guard.userId,
       userName,
-      detail: `Cleared data: ${Object.entries(modules).filter(([, v]) => v).map(([k]) => k).join(', ')}. Cascade: ${Object.entries(cascade).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}.${targetInfo} Counts: loads=${counts.agedStockLoads}, runs=${counts.pickSlipRuns}, batches=${counts.stickerBatches}`,
+      detail: `Cleared data: ${Object.entries(modules).filter(([, v]) => v).map(([k]) => k).join(', ')}. Cascade: ${Object.entries(cascade).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none'}.${targetInfo} Stickers: ${wipeAllStickers ? 'ALL WAREHOUSES WIPED' : cascadeStickers ? `scoped to ${clearedSlipIds.length} slip(s)` : 'untouched'}. Counts: loads=${counts.agedStockLoads}, runs=${counts.pickSlipRuns}, batches=${counts.stickerBatches}, stickers=${counts.stickersRemoved}`,
     }).catch(err => console.error('[clear-data] audit log write failed:', err));
   }
 
