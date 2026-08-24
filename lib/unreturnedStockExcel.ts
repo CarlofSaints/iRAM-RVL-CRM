@@ -12,8 +12,35 @@ export interface UnreturnedExcelOpts {
   vendorNumber: string;
   repName: string;
   grnDate: string;
+  /** GRN/GRV document number(s) captured at receipt, joined when there is more than one. */
+  grnNumber: string;
   captureDate: string;
   rows: UnreturnedStockRow[];
+}
+
+/**
+ * URS_<pick slip ref>_<store name> (<vendor name> <vendor number>).xlsx
+ *
+ * "Unreturned Stock" is abbreviated to URS so the store and vendor still fit.
+ * Anything outside the safe set becomes a space, so the name survives Windows,
+ * SharePoint and a latin-1 Content-Disposition header.
+ */
+export function buildUnreturnedFilename(opts: {
+  pickSlipRef: string;
+  storeName: string;
+  clientName: string;
+  vendorNumber: string;
+}): string {
+  const safe = (v: string) =>
+    (v || '')
+      .replace(/[^A-Za-z0-9 ()._-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const ref = safe(opts.pickSlipRef).replace(/ /g, '_');
+  const vendor = [safe(opts.clientName), safe(opts.vendorNumber)].filter(Boolean).join(' ');
+  const stem = [`URS_${ref}`, safe(opts.storeName)].filter(Boolean).join('_');
+  return `${stem}${vendor ? ` (${vendor})` : ''}.xlsx`;
 }
 
 export async function generateUnreturnedStockExcel(
@@ -50,6 +77,7 @@ export async function generateUnreturnedStockExcel(
     ['Store', `${opts.storeName} (${opts.storeCode})`],
     ['Principal / Vendor', `${opts.clientName} — ${opts.vendorNumber}`],
     ['GRN/GRV Date', opts.grnDate || '—'],
+    ['GRN/GRV Number', opts.grnNumber || '—'],
     ['Collecting Rep', opts.repName],
     ['Capture Date', opts.captureDate],
   ];
@@ -127,7 +155,7 @@ export async function generateUnreturnedStockExcel(
   }
 
   const buf = await wb.xlsx.writeBuffer();
-  const filename = `Unreturned_Stock_${opts.pickSlipRef.replace(/[^a-zA-Z0-9-]/g, '_')}.xlsx`;
+  const filename = buildUnreturnedFilename(opts);
 
   return { buffer: Buffer.from(buf), filename };
 }

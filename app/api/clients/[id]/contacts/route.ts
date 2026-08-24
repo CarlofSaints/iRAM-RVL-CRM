@@ -43,6 +43,7 @@ export async function POST(
   const email = (body.email ?? '').toString().trim();
   const role = (body.role ?? '').toString().trim();
   const receiveDeliveryNotes = !!body.receiveDeliveryNotes;
+  const receiveStockCapture = !!body.receiveStockCapture;
 
   if (!name || !email) {
     return NextResponse.json({ error: 'Name and email are required' }, { status: 400 });
@@ -61,6 +62,7 @@ export async function POST(
     email,
     role,
     receiveDeliveryNotes,
+    receiveStockCapture,
   };
 
   clients[idx].contacts!.push(contact);
@@ -98,6 +100,7 @@ export async function PATCH(
   if (body.email !== undefined) contacts[contactIdx].email = String(body.email).trim();
   if (body.role !== undefined) contacts[contactIdx].role = String(body.role).trim();
   if (body.receiveDeliveryNotes !== undefined) contacts[contactIdx].receiveDeliveryNotes = !!body.receiveDeliveryNotes;
+  if (body.receiveStockCapture !== undefined) contacts[contactIdx].receiveStockCapture = !!body.receiveStockCapture;
 
   clients[clientIdx].contacts = contacts;
   await saveControl('clients', clients);

@@ -224,6 +224,10 @@ export default function ReceiptCapturePage() {
   // ── CC confirmation modal for unreturned stock email ──
   const [showCcModal, setShowCcModal] = useState(false);
   const [ccSecondary, setCcSecondary] = useState(false);
+  // Opt-in recipients for the confirmation email — all off unless deliberately ticked.
+  const [sendToStore, setSendToStore] = useState(false);
+  const [sendToKam, setSendToKam] = useState(false);
+  const [sendToClient, setSendToClient] = useState(false);
   const [storeRepEmailSecondary, setStoreRepEmailSecondary] = useState('');
 
   // ── GRN auto-suggest state ──
@@ -639,6 +643,9 @@ export default function ReceiptCapturePage() {
           rows: unreturnedRows,
           sendEmail,
           ccSecondary: sendEmail ? ccSecondary : false,
+          sendToStore: sendEmail ? sendToStore : false,
+          sendToKam: sendEmail ? sendToKam : false,
+          sendToClient: sendEmail ? sendToClient : false,
         }),
       });
       const data = await res.json();
@@ -1917,8 +1924,40 @@ export default function ReceiptCapturePage() {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
             <h2 className="text-lg font-bold text-gray-900 mb-2">Send Confirmation Email?</h2>
             <p className="text-sm text-gray-600 mb-4">
-              A confirmation email with the collection details will be sent to the store manager, collecting rep, RVL managers, and CAM.
+              A confirmation email with the collection details always goes to the collecting rep, the store&rsquo;s iRam rep and the RVL managers.
+              Tick anyone else who should get it.
             </p>
+            <div className="border border-gray-200 rounded-lg p-3 mb-4 flex flex-col gap-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={sendToStore}
+                  onChange={e => setSendToStore(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
+                />
+                <span className="text-sm text-gray-700">Send to Store <span className="text-gray-400">(store manager)</span></span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={sendToKam}
+                  onChange={e => setSendToKam(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
+                />
+                <span className="text-sm text-gray-700">Send to KAM <span className="text-gray-400">(iRam CAM for this client)</span></span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={sendToClient}
+                  onChange={e => setSendToClient(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)]"
+                />
+                <span className="text-sm text-gray-700">
+                  Send to Client <span className="text-gray-400">(contacts marked &ldquo;Receive Stock Capture&rdquo;)</span>
+                </span>
+              </label>
+            </div>
             {storeRepEmailSecondary && (
               <label className="flex items-center gap-2 mb-4 cursor-pointer">
                 <input

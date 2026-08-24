@@ -39,6 +39,11 @@ export interface ClientContact {
   email: string;
   role: string;
   receiveDeliveryNotes: boolean;
+  /**
+   * Receives the unreturned-stock capture confirmation email, but only when
+   * "Send to Client" is ticked on the Send Confirmation Email dialog.
+   */
+  receiveStockCapture?: boolean;
 }
 
 export interface ClientWithLinks {

@@ -49,6 +49,7 @@ interface ClientContact {
   email: string;
   role: string;
   receiveDeliveryNotes: boolean;
+  receiveStockCapture?: boolean;
 }
 
 interface Channel { id: string; name: string }
@@ -210,6 +211,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   const [addContactEmail, setAddContactEmail] = useState('');
   const [addContactRole, setAddContactRole] = useState('');
   const [addContactDN, setAddContactDN] = useState(true);
+  const [addContactSC, setAddContactSC] = useState(false);
   const [addContactLoading, setAddContactLoading] = useState(false);
 
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
@@ -387,12 +389,13 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           email: addContactEmail.trim(),
           role: addContactRole.trim(),
           receiveDeliveryNotes: addContactDN,
+          receiveStockCapture: addContactSC,
         }),
       });
       const data = await res.json();
       if (!res.ok) { notify(data.error ?? 'Failed to add contact', 'error'); return; }
       notify('Contact added');
-      setAddContactName(''); setAddContactSurname(''); setAddContactEmail(''); setAddContactRole(''); setAddContactDN(true);
+      setAddContactName(''); setAddContactSurname(''); setAddContactEmail(''); setAddContactRole(''); setAddContactDN(true); setAddContactSC(false);
       await fetchAll();
     } finally {
       setAddContactLoading(false);
@@ -407,6 +410,17 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     });
     if (res.ok) {
       setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, receiveDeliveryNotes: !c.receiveDeliveryNotes } : c));
+    } else notify('Failed to update', 'error');
+  }
+
+  async function handleToggleContactSC(contact: ClientContact) {
+    const res = await authFetch(`/api/clients/${id}/contacts`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactId: contact.id, receiveStockCapture: !contact.receiveStockCapture }),
+    });
+    if (res.ok) {
+      setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, receiveStockCapture: !c.receiveStockCapture } : c));
     } else notify('Failed to update', 'error');
   }
 
@@ -734,12 +748,16 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       {/* Contacts section */}
       <section className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
         <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-4">Customer Contacts</h2>
-        <p className="text-xs text-gray-400 mb-4">
+        <p className="text-xs text-gray-400 mb-1">
           Contacts marked &ldquo;Receive Delivery Notes&rdquo; will be emailed when a delivery is confirmed via QR code.
+        </p>
+        <p className="text-xs text-gray-400 mb-4">
+          Contacts marked &ldquo;Receive Stock Capture&rdquo; will be emailed the unreturned stock capture confirmation, but only
+          when &ldquo;Send to Client&rdquo; is ticked at the time of capture.
         </p>
 
         {/* Add contact form */}
-        <form onSubmit={handleAddContact} className="grid grid-cols-1 md:grid-cols-6 gap-3 mb-4">
+        <form onSubmit={handleAddContact} className="grid grid-cols-1 md:grid-cols-7 gap-3 mb-4">
           <div className="flex flex-col gap-1">
             <label className="text-xs text-gray-500 font-medium">Name</label>
             <input value={addContactName} onChange={e => setAddContactName(e.target.value)} required
@@ -771,6 +789,13 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
               Receive Delivery Notes
             </label>
           </div>
+          <div className="flex flex-col gap-1 justify-end">
+            <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer py-2">
+              <input type="checkbox" checked={addContactSC} onChange={e => setAddContactSC(e.target.checked)}
+                className="rounded border-gray-300 text-[var(--color-primary)]" />
+              Receive Stock Capture
+            </label>
+          </div>
           <div className="flex items-end">
             <button type="submit" disabled={addContactLoading}
               className="bg-[var(--color-primary)] hover:bg-[var(--color-primary-dark)] disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-lg w-full">
@@ -788,6 +813,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                 <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Email</th>
                 <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Role</th>
                 <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Delivery Notes</th>
+                <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Stock Capture</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -801,6 +827,12 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                     <button onClick={() => handleToggleContactDN(c)}
                       className={`px-2 py-0.5 rounded-full text-xs font-medium ${c.receiveDeliveryNotes ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
                       {c.receiveDeliveryNotes ? 'Yes' : 'No'}
+                    </button>
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <button onClick={() => handleToggleContactSC(c)}
+                      className={`px-2 py-0.5 rounded-full text-xs font-medium ${c.receiveStockCapture ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                      {c.receiveStockCapture ? 'Yes' : 'No'}
                     </button>
                   </td>
                   <td className="px-3 py-2 text-right">

@@ -3,6 +3,7 @@ import { requirePermission, loadRoles } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { updateSlipInRun, getPickSlipRun, type UnreturnedStockRow } from '@/lib/pickSlipData';
 import { loadControl } from '@/lib/controlData';
+import type { ClientWithLinks } from '@/lib/spLinkData';
 import { logAudit } from '@/lib/auditLog';
 import { sendUnreturnedSkipEmail, sendUnreturnedStockEmail } from '@/lib/email';
 import { generateUnreturnedStockExcel } from '@/lib/unreturnedStockExcel';
@@ -104,10 +105,16 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Normal capture flow ──
-  const { rows, sendEmail, ccSecondary } = body as {
+  const { rows, sendEmail, ccSecondary, sendToStore, sendToKam, sendToClient } = body as {
     rows: UnreturnedStockRow[];
     sendEmail?: boolean;
     ccSecondary?: boolean;
+    /** Store manager gets the email only when this is ticked. */
+    sendToStore?: boolean;
+    /** Iram CAM users assigned to this client get it only when this is ticked. */
+    sendToKam?: boolean;
+    /** Client contacts flagged "Receive Stock Capture" get it only when this is ticked. */
+    sendToClient?: boolean;
   };
   if (!Array.isArray(rows) || rows.length === 0) {
     return NextResponse.json({ error: 'rows are required' }, { status: 400 });
@@ -170,21 +177,39 @@ export async function POST(req: NextRequest) {
       // Find RVL managers
       const rvlManagers = users.filter(u => u.role === 'rvl-manager');
 
-      // Build recipient list
+      // Client contacts opted in to stock captures — only reachable behind sendToClient.
+      const clients = await loadControl<ClientWithLinks>('clients');
+      const client = clients.find(c => c.id === slip.clientId);
+      const stockCaptureContacts = (client?.contacts ?? []).filter(c => c.receiveStockCapture && c.email);
+
+      // Build recipient list. The collecting rep, the store's iRam rep and the RVL
+      // managers always go out; the store, the CAM and the client are each opt-in
+      // per capture from the Send Confirmation Email dialog.
       const toEmails: string[] = [];
-      if (store?.managerEmail) toEmails.push(store.managerEmail);
+      if (sendToStore && store?.managerEmail) toEmails.push(store.managerEmail);
       if (bookedRep?.email) toEmails.push(bookedRep.email);
       if (store?.iramRepEmailPrimary) toEmails.push(store.iramRepEmailPrimary);
       for (const u of rvlManagers) {
         if (u.email && !toEmails.includes(u.email)) toEmails.push(u.email);
       }
-      for (const u of camUsers) {
-        if (u.email && !toEmails.includes(u.email)) toEmails.push(u.email);
+      if (sendToKam) {
+        for (const u of camUsers) {
+          if (u.email && !toEmails.includes(u.email)) toEmails.push(u.email);
+        }
+      }
+      if (sendToClient) {
+        for (const c of stockCaptureContacts) {
+          if (!toEmails.includes(c.email)) toEmails.push(c.email);
+        }
       }
 
       const ccEmails: string[] = [];
       if (ccSecondary && store?.iramRepEmailSecondary) {
         ccEmails.push(store.iramRepEmailSecondary);
+      }
+
+      if (sendToClient && stockCaptureContacts.length === 0) {
+        console.warn(`[unreturned] ${slip.id}: "Send to Client" was ticked but ${slip.clientName} has no contact marked "Receive Stock Capture"`);
       }
 
       if (toEmails.length === 0) {
@@ -218,6 +243,16 @@ export async function POST(req: NextRequest) {
           timeZone: 'Africa/Johannesburg',
         });
 
+        // GRN/GRV document number(s) — the array field, falling back to the
+        // legacy receiptStoreRef1-4 columns on older slips.
+        const storeRefs: string[] = [...(slip.receiptStoreRefs ?? [])].filter(Boolean);
+        if (storeRefs.length === 0) {
+          for (const key of ['receiptStoreRef1', 'receiptStoreRef2', 'receiptStoreRef3', 'receiptStoreRef4'] as const) {
+            const v = slip[key];
+            if (v) storeRefs.push(v);
+          }
+        }
+
         const { buffer, filename } = await generateUnreturnedStockExcel({
           pickSlipRef: slip.id,
           storeName: slip.siteName,
@@ -226,6 +261,7 @@ export async function POST(req: NextRequest) {
           vendorNumber: slip.vendorNumber,
           repName: bookedRep ? `${bookedRep.name} ${bookedRep.surname}` : (slip.bookedRepName ?? '—'),
           grnDate: slip.receiptGrnDate || '—',
+          grnNumber: storeRefs.join(', '),
           captureDate,
           rows,
         });
