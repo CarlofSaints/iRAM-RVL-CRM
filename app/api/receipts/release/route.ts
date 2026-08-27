@@ -7,6 +7,7 @@ import { loadControl } from '@/lib/controlData';
 import { updateSlipInRun, getPickSlipRun, type ReceiptBox, type PickSlipRecord } from '@/lib/pickSlipData';
 import { listSpLinks } from '@/lib/spLinkData';
 import { findSlipsForBarcodes } from '@/lib/stickerData';
+import { releasableBoxes, releasableBarcodes } from '@/lib/slipBoxes';
 import { logAudit } from '@/lib/auditLog';
 import { generateDeliveryNotePdf } from '@/lib/deliveryNotePdf';
 import { generateMultiSlipDeliveryNotePdf } from '@/lib/deliveryNotePdf';
@@ -90,6 +91,49 @@ export async function POST(req: NextRequest) {
     resolvedSlips.push({ payload: sp, slip });
   }
 
+  // Retired-label backstop. The scan screen builds its barcode index once, when
+  // it loads, and holds it in memory for the whole shift. Replace a label in
+  // another tab and that index is stale: on 26 Aug 2026 a Topline release was
+  // submitted with STK-GAU-0148 eight minutes after that number had been
+  // retired, and the delivery note went out carrying a barcode that by then
+  // belonged to a different supplier's box.
+  //
+  // The registry check below could not catch it — replacing a label UNLINKS the
+  // old barcode, so the lookup came back empty and the "unknown barcode is
+  // legacy, not wrong" allowance waved it through. The slip's own box list is
+  // the only thing that can tell a retired number from a genuinely old one, so
+  // check that first.
+  for (const { payload, slip } of resolvedSlips) {
+    const allowed = new Set(releasableBarcodes(slip));
+    const stale = (payload.releaseBoxes ?? [])
+      .map(b => b?.stickerBarcode)
+      .filter((b): b is string => !!b)
+      .filter(b => !allowed.has(b));
+    if (stale.length === 0) continue;
+
+    // A barcode the slip once had, but has since replaced, is the common case
+    // and deserves to be named as such — the box is real and its new number is
+    // right there on the record.
+    const renamed = (slip.receiptBoxes ?? [])
+      .filter(b => b.replacedBarcode && stale.includes(b.replacedBarcode))
+      .map(b => `${b.replacedBarcode} is now ${b.stickerBarcode}`);
+
+    return NextResponse.json(
+      {
+        error:
+          `${stale.join(', ')} ${stale.length === 1 ? 'is' : 'are'} no longer on pick slip ` +
+          `${slip.id} (${slip.clientName} / ${slip.siteName}). ` +
+          (renamed.length
+            ? `${renamed.join('; ')} — scan the new label. `
+            : `The label was removed or replaced after this screen was opened. `) +
+          `Reload the Release screen and scan again.`,
+        code: 'stale-barcode',
+        staleBarcodes: stale,
+      },
+      { status: 409 },
+    );
+  }
+
   // Duplicate-label backstop. A barcode is minted against exactly one slip, so
   // if the sticker registry knows this barcode and it points somewhere else,
   // the label is duplicated and this release would send stock to the wrong
@@ -171,11 +215,44 @@ export async function POST(req: NextRequest) {
   const masterNote = codeCheck.viaMaster ? masterCodeAuditNote(userName, releaseRepName) : '';
 
   if (codeCheck.matched) {
-    const isPartial = !!managerOverrideCode;
+    // ── Which slips are going out short ──────────────────────────────────────
+    // Worked out PER SLIP from the box counts, not from "did a manager code
+    // come with the request". Until 27 Aug 2026 the presence of an override
+    // code stamped `partial-release` on every slip in the batch: the 26 Aug
+    // Topline release put 86 of 88 boxes on the truck and marked all 29 stores
+    // Partial Release, when 27 of them were complete.
+    const shortfall = new Map<string, ReceiptBox[]>(); // slipId -> boxes left behind
+    for (const { payload, slip } of resolvedSlips) {
+      const scanned = new Set(
+        (payload.releaseBoxes ?? []).map(b => b?.stickerBarcode).filter(Boolean) as string[],
+      );
+      const left = releasableBoxes(slip).filter(b => !scanned.has(b.stickerBarcode));
+      if (left.length > 0) shortfall.set(slip.id, left);
+    }
+    const anyShort = shortfall.size > 0;
+
+    // A short release needs a manager to authorise it. Enforced here rather
+    // than trusted from the client, so the rule holds however the request was
+    // made.
+    if (anyShort && !managerOverrideCode) {
+      const detail = [...shortfall.entries()]
+        .map(([id, left]) => `${id} (${left.length} box${left.length === 1 ? '' : 'es'})`)
+        .join(', ');
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            `${shortfall.size} slip${shortfall.size === 1 ? '' : 's'} would go out short: ${detail}. ` +
+            `A manager release code is required to authorise a partial release.`,
+          code: 'override-required',
+        },
+        { status: 400, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
 
     // A Super Admin may also authorise the partial-release manager override with their own code.
     let managerMasterNote = '';
-    if (isPartial && managerOverrideRepId) {
+    if (anyShort && managerOverrideRepId) {
       const manager = users.find(u => u.id === managerOverrideRepId);
       const managerCheck = verifyReleaseCode(managerOverrideCode ?? '', manager?.releaseCode, me, guard.userRole);
       if (!managerCheck.matched && !manager?.releaseCode) {
@@ -196,7 +273,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const finalStatus = isPartial ? 'partial-release' : 'in-transit';
     const now = new Date().toISOString();
     const deliveryToken = randomUUID();
     const isMulti = resolvedSlips.length > 1;
@@ -204,8 +280,14 @@ export async function POST(req: NextRequest) {
     // Update all slips with shared delivery token
     const updatedSlips: PickSlipRecord[] = [];
     for (const { payload, slip } of resolvedSlips) {
+      const left = shortfall.get(slip.id) ?? [];
+      const slipIsShort = left.length > 0;
+      const askedFor = releasableBoxes(slip).length;
+      const sent = (payload.releaseBoxes ?? []).length;
+
       const updated = await updateSlipInRun(payload.clientId, payload.loadId, payload.slipId, {
-        status: finalStatus,
+        // Only the slips that are actually short carry the partial badge.
+        status: slipIsShort ? 'partial-release' : 'in-transit',
         releaseRepId,
         releaseRepName,
         releaseBoxes: payload.releaseBoxes ?? [],
@@ -213,18 +295,25 @@ export async function POST(req: NextRequest) {
         releasedBy: guard.userId,
         releasedByName: userName,
         deliveryToken,
+        // Empty (not absent) on a complete release, so a slip that was short on
+        // an earlier note and has now been settled stops looking like it owes
+        // stock. See releasableBoxes().
+        outstandingBoxes: left,
       });
       if (updated) updatedSlips.push(updated);
 
       await logAudit({
-        action: isPartial ? 'partial_release' : 'release_complete',
+        action: slipIsShort ? 'partial_release' : 'release_complete',
         userId: guard.userId,
         userName,
         slipId: payload.slipId,
         clientId: payload.clientId,
-        detail: (isPartial
-          ? `Partial release of ${(payload.releaseBoxes ?? []).length} boxes (manager override by ${managerOverrideRepId})`
-          : `Stock released — ${(payload.releaseBoxes ?? []).length} boxes in transit. Rep: ${releaseRepName}${isMulti ? ` (multi-slip release, ${resolvedSlips.length} slips)` : ''}`) + masterNote + managerMasterNote,
+        detail: (slipIsShort
+          ? `Partial release — ${sent} of ${askedFor} boxes released, ` +
+            `${left.length} left in the warehouse (${left.map(b => b.stickerBarcode).join(', ')}). ` +
+            `Rep: ${releaseRepName}. Manager override by ${managerOverrideRepId}. ` +
+            `The outstanding box${left.length === 1 ? '' : 'es'} can be released again once this delivery note is signed off.`
+          : `Stock released — ${sent} boxes in transit. Rep: ${releaseRepName}${isMulti ? ` (multi-slip release, ${resolvedSlips.length} slips)` : ''}`) + masterNote + managerMasterNote,
       });
     }
 
@@ -266,6 +355,9 @@ export async function POST(req: NextRequest) {
               val: r.val,
             })),
             stickerBarcodes: (payload.releaseBoxes ?? []).map(b => b.stickerBarcode),
+            // `slip` is the pre-release snapshot, so this is what the release
+            // was asked for, before outstandingBoxes was written.
+            totalBoxes: releasableBoxes(slip).length,
           })),
         });
 
@@ -297,6 +389,7 @@ export async function POST(req: NextRequest) {
             val: r.val,
           })),
           boxCount: boxes.length,
+          totalBoxes: releasableBoxes(slip).length,
           stickerBarcodes: boxes.map(b => b.stickerBarcode),
           qrUrl,
         });
@@ -360,7 +453,19 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json(
-      { ok: true, status: finalStatus, slip: updatedSlips[0] ?? null, slips: updatedSlips },
+      {
+        ok: true,
+        // Batch-level summary for the toast. A batch is "partial" when ANY slip
+        // in it went out short, but the individual slips carry their own status.
+        status: anyShort ? 'partial-release' : 'in-transit',
+        shortSlips: [...shortfall.entries()].map(([slipId, left]) => ({
+          slipId,
+          outstanding: left.length,
+          barcodes: left.map(b => b.stickerBarcode),
+        })),
+        slip: updatedSlips[0] ?? null,
+        slips: updatedSlips,
+      },
       { headers: { 'Cache-Control': 'no-store' } },
     );
   } else {

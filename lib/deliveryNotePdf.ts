@@ -52,8 +52,12 @@ export interface DeliveryNotePdfParams {
   /** Whether this was a manual capture pick slip */
   manual?: boolean;
   rows: DeliveryNotePdfRow[];
-  /** Box count */
+  /** Box count actually released onto this note */
   boxCount: number;
+  /** How many boxes this release was asked for. Higher than boxCount when the
+   *  release went out short; omitted by older callers, which fall back to a
+   *  plain count. */
+  totalBoxes?: number;
   /** Sticker barcodes of released boxes */
   stickerBarcodes: string[];
   /** Full URL for the QR code (e.g. https://iram-rvl-crm.vercel.app/delivery/{token}) */
@@ -73,7 +77,7 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
   const {
     pickSlipId, clientName, vendorNumber, siteName, siteCode,
     warehouse, releaseRepName, releasedAt, storeRefs, receiptGrnDate,
-    receiptValue, manual, rows, boxCount, qrUrl,
+    receiptValue, manual, rows, boxCount, totalBoxes, qrUrl,
     signature, signedByName, deliveredAt,
   } = params;
 
@@ -224,7 +228,10 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
   doc.rect(tableX, y, usableW, summaryH).stroke();
   doc.font('Helvetica-Bold').fontSize(12);
   doc.text(`Value: R ${docVal.toFixed(2)}`, tableX + 8, y + 9, { width: usableW / 2 - 12 });
-  doc.text(`Boxes: ${boxCount}`, tableX + usableW / 2, y + 9, { width: usableW / 2 - 8, align: 'right' });
+  const askedBoxes = totalBoxes ?? boxCount;
+  if (boxCount < askedBoxes) doc.fillColor('#CC0000');
+  doc.text(`Boxes: ${boxCount} of ${askedBoxes}`, tableX + usableW / 2, y + 9, { width: usableW / 2 - 8, align: 'right' });
+  doc.fillColor('#000000');
   doc.font('Helvetica').fontSize(10);
   y += summaryH + 12;
 
@@ -337,6 +344,11 @@ export interface MultiSlipSection {
   manual?: boolean;
   rows: DeliveryNotePdfRow[];
   stickerBarcodes: string[];
+  /** How many boxes this release was asked for. Equal to stickerBarcodes.length
+   *  on a normal delivery; higher when the release went out short, which is the
+   *  only way the note can show "3 of 4" rather than a bare "3". Omitted on
+   *  older callers, in which case the row falls back to the released count. */
+  totalBoxes?: number;
 }
 
 export interface MultiSlipDeliveryNotePdfParams {
@@ -527,9 +539,17 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
       doc.fillColor('#000000');
     }
 
-    // Col 2: boxes
+    // Col 2: boxes, as "sent of asked-for". A bare count could not tell a
+    // complete store from a short one, so a partial release left no mark on the
+    // paperwork at all — the driver and the vendor both signed for "3" with
+    // nothing to say a 4th box was owed.
     const c2x = c1x + dnCols[1];
-    doc.text(String(slip.stickerBarcodes.length), c2x + 4, y + 15, { width: dnCols[2] - 8, align: 'right' });
+    const sentBoxes = slip.stickerBarcodes.length;
+    const askedBoxes = slip.totalBoxes ?? sentBoxes;
+    const shortBoxes = sentBoxes < askedBoxes;
+    if (shortBoxes) doc.font('Helvetica-Bold').fillColor('#CC0000');
+    doc.text(`${sentBoxes} of ${askedBoxes}`, c2x + 4, y + 15, { width: dnCols[2] - 8, align: 'right' });
+    if (shortBoxes) doc.font('Helvetica').fillColor('#000000');
 
     // Col 3: value
     const c3x = c2x + dnCols[2];
@@ -543,12 +563,15 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
   // ── Combined total ──
   ensureSpace(30);
   const totalBoxes = slips.reduce((s, sl) => s + sl.stickerBarcodes.length, 0);
+  const totalAsked = slips.reduce((s, sl) => s + (sl.totalBoxes ?? sl.stickerBarcodes.length), 0);
   const labelW = dnCols[0] + dnCols[1];
   doc.font('Helvetica-Bold').fontSize(9);
   doc.rect(tableX, y, labelW, dnHeaderH).stroke();
   doc.text(`Combined — ${slips.length} slips`, tableX + 4, y + 6, { width: labelW - 8, align: 'right' });
   doc.rect(tableX + labelW, y, dnCols[2], dnHeaderH).stroke();
-  doc.text(String(totalBoxes), tableX + labelW + 4, y + 6, { width: dnCols[2] - 8, align: 'right' });
+  if (totalBoxes < totalAsked) doc.fillColor('#CC0000');
+  doc.text(`${totalBoxes} of ${totalAsked}`, tableX + labelW + 4, y + 6, { width: dnCols[2] - 8, align: 'right' });
+  doc.fillColor('#000000');
   doc.rect(tableX + labelW + dnCols[2], y, dnCols[3], dnHeaderH).stroke();
   doc.text(`R ${grandVal.toFixed(2)}`, tableX + labelW + dnCols[2] + 4, y + 6, { width: dnCols[3] - 8, align: 'right' });
   y += dnHeaderH + 12;

@@ -39,6 +39,32 @@ export interface ReceiptBox {
   replacedAt?: string;
 }
 
+/**
+ * One completed delivery for a slip.
+ *
+ * A slip normally has exactly one delivery, and it lives in the top-level
+ * `release*` / `delivery*` fields. It gets more than one only when a release
+ * went out SHORT: the boxes that travelled are signed for, and the boxes left
+ * behind go out on a later note of their own. When that happens the finished
+ * delivery is pushed here and the live fields are freed for the next one.
+ *
+ * Anything that counts boxes or value across a slip's whole life has to read
+ * this as well as the live fields, or it will miss every delivery but the last.
+ */
+export interface DeliveryHistoryEntry {
+  deliveryToken: string;
+  releaseBoxes: ReceiptBox[];
+  releaseRepId?: string;
+  releaseRepName?: string;
+  releasedAt?: string;
+  releasedByName?: string;
+  deliveryNoteSpWebUrl?: string;
+  deliveryNoteSignedSpWebUrl?: string;
+  deliveredAt?: string;
+  deliverySignedByName?: string;
+  deliveredByRepName?: string;
+}
+
 export type PickSlipStatus =
   | 'generated'
   | 'printed'
@@ -153,6 +179,17 @@ export interface PickSlipRecord {
   releasedAt?: string;
   releasedBy?: string;
   releasedByName?: string;
+  /** Boxes that were captured but did NOT go out on the current delivery note.
+   *  Set when a release goes out short. While this is non-empty the slip still
+   *  owes stock, so `delivered` is not the end of it: at sign-off the slip
+   *  drops back to `captured` and these become the releasable set for the next
+   *  note. Absent or empty means nothing is owed.
+   *
+   *  `receiptBoxes` is NEVER trimmed to match — it stays the full record of what
+   *  was captured, so the box count on the receipt keeps its meaning. */
+  outstandingBoxes?: ReceiptBox[];
+  /** Deliveries already signed for, oldest first. See DeliveryHistoryEntry. */
+  deliveryHistory?: DeliveryHistoryEntry[];
   /** Unreturned stock capture — populated after receipt */
   unreturnedStock?: UnreturnedStockRow[];
   unreturnedCapturedAt?: string;

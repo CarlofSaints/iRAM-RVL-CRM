@@ -17,6 +17,8 @@ interface SlipBreakdown {
   totalQty: number;
   totalVal: number;
   boxCount: number;
+  /** Boxes this note was asked for. Greater than boxCount on a short release. */
+  totalBoxes?: number;
   status: string;
   manual: boolean;
   /** GRN/GRV document number(s) captured at receipt */
@@ -38,6 +40,8 @@ interface SlipSummary {
   totalQty: number;
   totalVal: number;
   boxCount: number;
+  /** Boxes this note was asked for across every store on it. */
+  totalBoxCount?: number;
   manual: boolean;
   storeRefs?: string[];
   receiptGrnDate?: string;
@@ -427,7 +431,9 @@ export default function DeliveryConfirmationPage() {
             </div>
             <div>
               <span className="text-gray-500 text-xs block">Boxes</span>
-              <span className="font-medium">{slip.boxCount}</span>
+              <span className={`font-medium ${(slip.totalBoxCount ?? slip.boxCount) > slip.boxCount ? 'text-red-600 font-bold' : ''}`}>
+                {slip.boxCount} of {slip.totalBoxCount ?? slip.boxCount}
+              </span>
             </div>
             <div>
               <span className="text-gray-500 text-xs block">Total Qty</span>
@@ -505,7 +511,10 @@ export default function DeliveryConfirmationPage() {
                             )}
                           </span>
                           <span className="block text-xs text-gray-500 mt-0.5">
-                            {s.totalQty.toLocaleString()} units · {s.boxCount} box{s.boxCount === 1 ? '' : 'es'}
+                            {s.totalQty.toLocaleString()} units ·{' '}
+                            <span className={(s.totalBoxes ?? s.boxCount) > s.boxCount ? 'text-red-600 font-bold' : ''}>
+                              {s.boxCount} of {s.totalBoxes ?? s.boxCount} box{(s.totalBoxes ?? s.boxCount) === 1 ? '' : 'es'}
+                            </span>
                           </span>
                         </span>
                         {!ticked && (

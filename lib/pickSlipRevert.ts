@@ -102,6 +102,11 @@ const FIELD_GROUPS: FieldGroup[] = [
     fields: [
       'releaseRepId', 'releaseRepName', 'releaseBoxes', 'releasedAt', 'releasedBy', 'releasedByName',
       'deliveryToken', 'deliveryNoteSpWebUrl', 'deliveryNoteSignedSpWebUrl', 'deliveryNoteGeneratedAt',
+      // Undoing a release puts every captured box back in play, so the "still
+      // owed" list from a short release goes with it. (Sign-off's settle step
+      // re-sets this AFTER spreading the patch, because there the slip really
+      // does still owe those boxes.)
+      'outstandingBoxes',
     ],
   },
   {

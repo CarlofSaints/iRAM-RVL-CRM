@@ -88,12 +88,23 @@ export async function POST(
   const whDenied = denyIfOutOfScope(whAccess, [slip.warehouseCode || slip.warehouse], 'Label replacement');
   if (whDenied) return whDenied;
 
-  if (!REPLACEABLE_STATUSES.has(slip.status)) {
+  // A slip that went out SHORT is `partial-release`, but the boxes it still
+  // owes never left the warehouse — and a duplicate label is exactly why they
+  // were left behind, so refusing to fix them until the note is signed would
+  // strand them. Those boxes, and only those, stay replaceable.
+  const outstandingSet = new Set((slip.outstandingBoxes ?? []).map(b => b.stickerBarcode));
+  const allOutstanding = barcodes.length > 0 && barcodes.every(b => outstandingSet.has(b));
+
+  if (!REPLACEABLE_STATUSES.has(slip.status) && !(slip.status === 'partial-release' && allOutstanding)) {
     return NextResponse.json(
       {
         error:
           `Labels can only be replaced while a slip is Booked, Captured or Failed Release — ` +
-          `this slip is "${slip.status}". Once released, the barcode is already on a delivery note.`,
+          `this slip is "${slip.status}". ` +
+          (slip.status === 'partial-release'
+            ? `Only the ${outstandingSet.size} box(es) this slip still owes can be replaced ` +
+              `(${[...outstandingSet].join(', ') || 'none'}); the rest are already on a delivery note.`
+            : `Once released, the barcode is already on a delivery note.`),
       },
       { status: 409 },
     );
@@ -169,6 +180,16 @@ export async function POST(
     };
   });
 
+  // Keep the OUTSTANDING list pointing at the same physical boxes. This is the
+  // list Release scans against on a slip that went out short, so a replacement
+  // that missed it would retire the barcode while still demanding the old one.
+  const newOutstandingBoxes = slip.outstandingBoxes?.map(box => {
+    const fresh = replacements.get(box.stickerBarcode);
+    return fresh
+      ? { ...box, stickerBarcode: fresh, replacedBarcode: box.stickerBarcode, replacedAt: now }
+      : box;
+  });
+
   // Keep any already-scanned release boxes pointing at the same physical boxes.
   const newReleaseBoxes = (slip.releaseBoxes ?? []).map(box => {
     const fresh = replacements.get(box.stickerBarcode);
@@ -193,6 +214,7 @@ export async function POST(
 
   const patch: Record<string, unknown> = { receiptBoxes: newBoxes };
   if (slip.releaseBoxes) patch.releaseBoxes = newReleaseBoxes;
+  if (newOutstandingBoxes) patch.outstandingBoxes = newOutstandingBoxes;
 
   const updated = await updateSlipInRun(clientId, loadId, slipId, patch);
   if (!updated) {

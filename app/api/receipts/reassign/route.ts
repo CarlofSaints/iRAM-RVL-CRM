@@ -7,6 +7,7 @@ import { updateSlipInRun, getPickSlipRun, type PickSlipRecord } from '@/lib/pick
 import { listSpLinks } from '@/lib/spLinkData';
 import { logAudit } from '@/lib/auditLog';
 import { generateDeliveryNotePdf, generateMultiSlipDeliveryNotePdf } from '@/lib/deliveryNotePdf';
+import { noteBoxCounts } from '@/lib/slipBoxes';
 import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
 import { sendDeliveryNoteEmail } from '@/lib/email';
 import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
@@ -192,6 +193,7 @@ export async function POST(req: NextRequest) {
             val: r.val,
           })),
           stickerBarcodes: (slip.releaseBoxes ?? []).map(b => b.stickerBarcode),
+          totalBoxes: noteBoxCounts(slip).asked,
         })),
       });
       const dateStr = releasedAt.slice(0, 10);
@@ -220,6 +222,7 @@ export async function POST(req: NextRequest) {
           val: r.val,
         })),
         boxCount: boxes.length,
+        totalBoxes: noteBoxCounts(slip).asked,
         stickerBarcodes: boxes.map(b => b.stickerBarcode),
         qrUrl,
       });

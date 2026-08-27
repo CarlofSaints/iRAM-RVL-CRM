@@ -147,6 +147,11 @@ export async function POST(req: NextRequest) {
       deliveryToken: undefined,
       deliveryNoteSpWebUrl: undefined,
       deliveryNoteGeneratedAt: undefined,
+      // Cancelling un-does the whole release, short or not, so the slip owes
+      // nothing in particular any more — every captured box is back in play.
+      // Leaving a stale outstanding list here would hide the rest of the boxes
+      // from the next scan, since it is what Release measures against.
+      outstandingBoxes: undefined,
     });
     if (updated) updatedSlips.push(updated);
 

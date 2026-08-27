@@ -65,6 +65,8 @@ interface SlipDto {
   deliveryNoteSpWebUrl?: string;
   unsuccessfulReason?: string;
   receiptBoxes?: ReceiptBox[];
+  /** Boxes still owed after a short release — see lib/slipBoxes.ts. */
+  outstandingBoxes?: ReceiptBox[];
   receiptTotalBoxes?: number;
   receiptedAt?: string;
   receiptValue?: string;
@@ -1791,14 +1793,18 @@ export default function PickingSlipsPage() {
                         )}
                         {/* Super Admin: fix box count — remove phantom box records so Release stops demanding boxes that were never printed */}
                         {canRevert
-                          && (s.status === 'booked' || s.status === 'captured' || s.status === 'failed-release')
+                          && ((s.status === 'booked' || s.status === 'captured' || s.status === 'failed-release')
+                            // A slip that went out short still has its owed boxes
+                            // on the floor, and a duplicate label is usually why
+                            // they were left. Those stay adjustable.
+                            || (s.status === 'partial-release' && (s.outstandingBoxes?.length ?? 0) > 0))
                           && (s.receiptBoxes?.length ?? 0) > 0 && (
                           <button
                             onClick={() => openBoxes(s)}
                             title="Boxes — remove box records that don't physically exist (e.g. added by mistake)"
                             className="px-2 py-1 text-xs font-medium text-indigo-700 border border-indigo-300 rounded hover:bg-indigo-50"
                           >
-                            Boxes ({s.receiptBoxes!.length})
+                            Boxes ({(s.outstandingBoxes ?? s.receiptBoxes)!.length})
                           </button>
                         )}
                         {/* Super Admin: reverse a mistake — roll back to an earlier status */}
@@ -2242,7 +2248,9 @@ export default function PickingSlipsPage() {
 
       {/* ── Adjust Boxes Modal (Super Admin) ───────────────────────────────── */}
       {boxesSlip && (() => {
-        const allBoxes = boxesSlip.receiptBoxes ?? [];
+        // On a slip that went out short, only the boxes it still owes are on
+        // the floor — the rest are already on a signed-for delivery note.
+        const allBoxes = boxesSlip.outstandingBoxes ?? boxesSlip.receiptBoxes ?? [];
         const remaining = allBoxes.length - boxesRemove.length;
         const removingAll = remaining <= 0;
         return (

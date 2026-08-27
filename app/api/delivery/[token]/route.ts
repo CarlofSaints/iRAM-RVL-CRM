@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { loadControl } from '@/lib/controlData';
 import { listLoads } from '@/lib/agedStockData';
-import { findAllSlipsByDeliveryToken, updateSlipInRun } from '@/lib/pickSlipData';
+import { findAllSlipsByDeliveryToken, updateSlipInRun, type PickSlipRecord, type DeliveryHistoryEntry } from '@/lib/pickSlipData';
 import { buildRevertPatch, revertUndoesBooking } from '@/lib/pickSlipRevert';
 import { unlinkStickerFromSlip } from '@/lib/stickerData';
 import { resolveShortfall } from '@/lib/deliveryShortfall';
@@ -9,6 +9,7 @@ import { getClient, listSpLinks } from '@/lib/spLinkData';
 import { loadUsers } from '@/lib/userData';
 import { logAudit } from '@/lib/auditLog';
 import { generateDeliveryNotePdf, generateMultiSlipDeliveryNotePdf } from '@/lib/deliveryNotePdf';
+import { noteBoxCounts, hasOutstandingBoxes } from '@/lib/slipBoxes';
 import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
 import { sendPickSlipEmail } from '@/lib/email';
 
@@ -57,6 +58,9 @@ export async function GET(
   const totalQty = results.reduce((s, r) => s + r.slip.totalQty, 0);
   const totalVal = results.reduce((s, r) => s + r.slip.totalVal, 0);
   const boxCount = results.reduce((s, r) => s + (r.slip.releaseBoxes ?? []).length, 0);
+  // What this note was ASKED for. Higher than boxCount when a release went out
+  // short, which is the only way the sign-off screen can show "3 of 4".
+  const totalBoxCount = results.reduce((s, r) => s + noteBoxCounts(r.slip).asked, 0);
 
   // Build per-slip breakdown.
   // storeRefs/receiptGrnDate are the GRN/GRV document number(s) and date captured
@@ -70,6 +74,7 @@ export async function GET(
     totalQty: r.slip.totalQty,
     totalVal: r.slip.totalVal,
     boxCount: (r.slip.releaseBoxes ?? []).length,
+    totalBoxes: noteBoxCounts(r.slip).asked,
     status: r.slip.status,
     manual: r.slip.manual ?? false,
     storeRefs: r.slip.receiptStoreRefs ?? [],
@@ -90,6 +95,7 @@ export async function GET(
     totalQty,
     totalVal,
     boxCount,
+    totalBoxCount,
     manual: slip.manual ?? false,
     storeRefs: slip.receiptStoreRefs ?? [],
     receiptGrnDate: slip.receiptGrnDate,
@@ -211,16 +217,57 @@ export async function POST(
   const firstClientId = delivered[0].clientId;
 
   // ── Stores that WERE delivered ──
-  for (const { slip, clientId, loadId } of delivered) {
-    await updateSlipInRun(clientId, loadId, slip.id, {
-      status: 'delivered',
-      deliveredAt: now,
-      deliverySignedByName: vendorName.trim(),
-      deliverySignature: signature,
-      deliveredByRepId: releaseRepId,
-      deliveredByRepName: repName,
-    });
+  // A slip that still owes boxes does NOT finish here. Its delivery is signed
+  // and real, but the stock behind it is not all out of the warehouse, so the
+  // finished delivery is filed in `deliveryHistory` and the slip drops back to
+  // `captured` carrying only what it still owes. Without this a short release
+  // was a dead end: `partial-release` is not releasable and nothing moved a
+  // slip out of it, so on 26 Aug 2026 two Topline boxes could not be scanned
+  // out at all.
+  //
+  // Keyed by slip id so the signed-PDF upload below knows which slips have a
+  // history entry to stamp rather than a live field.
+  const settledWithOutstanding = new Map<string, PickSlipRecord>();
 
+  for (const { slip, clientId, loadId } of delivered) {
+    const owes = hasOutstandingBoxes(slip);
+
+    if (owes) {
+      const historyEntry: DeliveryHistoryEntry = {
+        deliveryToken: token,
+        releaseBoxes: slip.releaseBoxes ?? [],
+        releaseRepId: slip.releaseRepId,
+        releaseRepName: slip.releaseRepName,
+        releasedAt: slip.releasedAt,
+        releasedByName: slip.releasedByName,
+        deliveryNoteSpWebUrl: slip.deliveryNoteSpWebUrl,
+        deliveredAt: now,
+        deliverySignedByName: vendorName.trim(),
+        deliveredByRepName: repName,
+      };
+
+      // Same field-clearing model as Reverse and the short-delivery rollback:
+      // the slip loses this note's release and delivery fields and reappears on
+      // the Release screen. `outstandingBoxes` is deliberately NOT cleared — it
+      // is what the next note is for.
+      const updated = await updateSlipInRun(clientId, loadId, slip.id, {
+        ...buildRevertPatch('captured'),
+        outstandingBoxes: slip.outstandingBoxes,
+        deliveryHistory: [...(slip.deliveryHistory ?? []), historyEntry],
+      });
+      if (updated) settledWithOutstanding.set(slip.id, updated);
+    } else {
+      await updateSlipInRun(clientId, loadId, slip.id, {
+        status: 'delivered',
+        deliveredAt: now,
+        deliverySignedByName: vendorName.trim(),
+        deliverySignature: signature,
+        deliveredByRepId: releaseRepId,
+        deliveredByRepName: repName,
+      });
+    }
+
+    const owed = slip.outstandingBoxes ?? [];
     await logAudit({
       action: 'delivery_confirmed',
       userId: releaseRepId,
@@ -229,7 +276,12 @@ export async function POST(
       clientId,
       detail: `Delivery confirmed by vendor rep "${vendorName.trim()}" via QR code`
         + (isMulti ? ` (multi-slip: ${delivered.length} slips)` : '')
-        + (short.length > 0 ? ` — ${short.length} store(s) on this delivery note were NOT delivered` : ''),
+        + (short.length > 0 ? ` — ${short.length} store(s) on this delivery note were NOT delivered` : '')
+        + (owes
+          ? ` — this store went out SHORT: ${owed.length} box(es) (${owed.map(b => b.stickerBarcode).join(', ')}) `
+            + `stayed in the warehouse. This delivery is filed in the slip's history and the slip is back on `
+            + `Captured so the outstanding stock can be released on its own delivery note.`
+          : ''),
     });
   }
 
@@ -326,6 +378,7 @@ export async function POST(
             val: r.val,
           })),
           stickerBarcodes: (slip.releaseBoxes ?? []).map(b => b.stickerBarcode),
+          totalBoxes: noteBoxCounts(slip).asked,
         })),
         signature,
         signedByName: vendorName.trim(),
@@ -352,6 +405,7 @@ export async function POST(
           val: r.val,
         })),
         boxCount: (firstSlip.releaseBoxes ?? []).length,
+        totalBoxes: noteBoxCounts(firstSlip).asked,
         stickerBarcodes: (firstSlip.releaseBoxes ?? []).map(b => b.stickerBarcode),
         qrUrl,
         signature,
@@ -390,6 +444,21 @@ export async function POST(
         // its delivery-note fields cleared by the rollback and does not belong
         // to this signed note any more.
         for (const { slip, clientId, loadId } of delivered) {
+          const settled = settledWithOutstanding.get(slip.id);
+          if (settled) {
+            // This slip's live delivery fields were just cleared, so the signed
+            // note belongs on the history entry that was filed for it — writing
+            // it to the top level would resurrect a note the slip has left.
+            const history = [...(settled.deliveryHistory ?? [])];
+            if (history.length > 0) {
+              history[history.length - 1] = {
+                ...history[history.length - 1],
+                deliveryNoteSignedSpWebUrl: uploaded.webUrl,
+              };
+              await updateSlipInRun(clientId, loadId, slip.id, { deliveryHistory: history });
+            }
+            continue;
+          }
           await updateSlipInRun(clientId, loadId, slip.id, {
             deliveryNoteSignedSpWebUrl: uploaded.webUrl,
           });

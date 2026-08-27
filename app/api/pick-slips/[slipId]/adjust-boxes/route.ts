@@ -70,7 +70,12 @@ export async function POST(
   const whDenied = denyIfOutOfScope(whAccess, [slip.warehouseCode || slip.warehouse], 'Box adjustment');
   if (whDenied) return whDenied;
 
-  if (!ADJUSTABLE_STATUSES.has(slip.status)) {
+  // Boxes a short release left behind never went anywhere, so they stay
+  // adjustable even though the slip reads partial-release.
+  const outstandingSet = new Set((slip.outstandingBoxes ?? []).map(b => b.stickerBarcode));
+  const allOutstanding = removeBarcodes.length > 0 && removeBarcodes.every(b => outstandingSet.has(b));
+
+  if (!ADJUSTABLE_STATUSES.has(slip.status) && !(slip.status === 'partial-release' && allOutstanding)) {
     return NextResponse.json(
       { error: `Boxes can only be adjusted while a slip is Booked, Captured or Failed Release — this slip is "${slip.status}". Use Reverse instead.` },
       { status: 409 },
@@ -99,6 +104,11 @@ export async function POST(
 
   // Also drop any matching release boxes (harmless pre-release, but keeps them in sync).
   const newReleaseBoxes = (slip.releaseBoxes ?? []).filter(box => !removeSet.has(box.stickerBarcode));
+  // ...and any matching OUTSTANDING box. A slip that went out short holds the
+  // boxes it still owes there, and that list is what Release scans against —
+  // leaving a removed box in it would keep asking the floor for a box that no
+  // longer exists.
+  const newOutstandingBoxes = slip.outstandingBoxes?.filter(box => !removeSet.has(box.stickerBarcode));
 
   // Unlink the removed stickers from this slip so their barcodes are free again.
   let stickersUnlinked = 0;
@@ -114,6 +124,7 @@ export async function POST(
   // Keep the "expected boxes" figure honest when it was previously set.
   if (typeof slip.receiptTotalBoxes === 'number') patch.receiptTotalBoxes = newBoxes.length;
   if (slip.releaseBoxes) patch.releaseBoxes = newReleaseBoxes;
+  if (newOutstandingBoxes) patch.outstandingBoxes = newOutstandingBoxes;
 
   const updated = await updateSlipInRun(clientId, loadId, slipId, patch);
   if (!updated) {

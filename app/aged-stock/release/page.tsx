@@ -3,11 +3,14 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { releasableBoxes } from '@/lib/slipBoxes';
 
 interface ReceiptBox {
   id: string;
   stickerBarcode: string;
   scannedAt: string;
+  /** Set when this box's label was swapped for a fresh barcode. */
+  replacedBarcode?: string;
 }
 
 interface SlipDto {
@@ -23,6 +26,9 @@ interface SlipDto {
   totalVal: number;
   status: string;
   receiptBoxes?: ReceiptBox[];
+  /** Boxes still owed after a short release. When present this — not
+   *  receiptBoxes — is what the slip can put on a note. See lib/slipBoxes.ts. */
+  outstandingBoxes?: ReceiptBox[];
   receiptStoreRefs?: string[];
   receiptGrnDate?: string;
   manual?: boolean;
@@ -76,6 +82,27 @@ function fmtCurrency(v: number): string {
   return `R ${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+/**
+ * barcode → the slips that can still release it.
+ *
+ * Built from `releasableBoxes`, not the raw receipt: a slip that went out short
+ * can only put the boxes it still owes on the next note.
+ *
+ * A standalone function because the index has to be rebuildable from a FRESH
+ * fetch at submit time, not only from render state — see handleRelease.
+ */
+function buildBarcodeIndex(slips: SlipDto[]): BarcodeIndex {
+  const idx: BarcodeIndex = {};
+  for (const slip of slips) {
+    for (const box of releasableBoxes(slip)) {
+      if (!box.stickerBarcode) continue;
+      const ids = (idx[box.stickerBarcode] ??= []);
+      if (!ids.includes(slip.id)) ids.push(slip.id);
+    }
+  }
+  return idx;
+}
+
 export default function ReleasePage() {
   const { session } = useAuth('receipt_stock');
   const scanInputRef = useRef<HTMLInputElement>(null);
@@ -106,17 +133,7 @@ export default function ReleasePage() {
   const [cancelling, setCancelling] = useState(false);
 
   // Barcode index: stickerBarcode → every releasable slip carrying it
-  const barcodeIndex = useMemo<BarcodeIndex>(() => {
-    const idx: BarcodeIndex = {};
-    for (const slip of allSlips) {
-      for (const box of slip.receiptBoxes ?? []) {
-        if (!box.stickerBarcode) continue;
-        const ids = (idx[box.stickerBarcode] ??= []);
-        if (!ids.includes(slip.id)) ids.push(slip.id);
-      }
-    }
-    return idx;
-  }, [allSlips]);
+  const barcodeIndex = useMemo<BarcodeIndex>(() => buildBarcodeIndex(allSlips), [allSlips]);
 
   /** Barcodes sitting on more than one releasable slip — cannot be scanned. */
   const ambiguousBarcodes = useMemo(
@@ -177,7 +194,7 @@ export default function ReleasePage() {
       result.push({
         slip,
         scannedBarcodes: bcs,
-        totalBoxes: (slip.receiptBoxes ?? []).length,
+        totalBoxes: releasableBoxes(slip).length,
       });
     }
     result.sort(
@@ -265,6 +282,25 @@ export default function ReleasePage() {
     () => releaseGroups.find(g => g.token === cancelToken) ?? null,
     [releaseGroups, cancelToken],
   );
+
+  /**
+   * Re-read just the releasable slips, for the check at submit time.
+   *
+   * Returns null on any failure, which the caller treats as "carry on with what
+   * is on screen" — a flaky warehouse connection must not block a release that
+   * the server will validate anyway.
+   */
+  const fetchReleasableSlips = useCallback(async (): Promise<SlipDto[] | null> => {
+    try {
+      const res = await authFetch('/api/pick-slips', { cache: 'no-store' });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const all = (data.slips ?? []) as SlipDto[];
+      return all.filter(s => s.status === 'captured' || s.status === 'failed-release');
+    } catch {
+      return null;
+    }
+  }, []);
 
   // ── Load data ──
   const loadData = useCallback(async () => {
@@ -396,19 +432,69 @@ export default function ReleasePage() {
       return;
     }
 
+    // ── Re-check the scans against the server before going any further ──
+    // This screen builds its barcode index once, on load, and a warehouse keeps
+    // it open all shift. Replacing a label in another tab retires a barcode
+    // this page still believes in: on 26 Aug 2026 a release was submitted with
+    // STK-GAU-0148 eight minutes after that number had been replaced, and the
+    // delivery note went out carrying it. The server refuses that now, but
+    // catching it here means the manager is not asked for an override code for
+    // a release that was going to be rejected anyway.
+    // `discoveredSlips` is a memo over render state, so it cannot see a fetch
+    // made inside this handler. Everything from here down is therefore derived
+    // from `current`, which is the fresh data when the re-check succeeded and
+    // the rendered data when the network was unavailable.
+    const fresh = await fetchReleasableSlips();
+    const current = fresh ?? allSlips;
+    if (fresh) setAllSlips(fresh);
+
+    const currentIndex = fresh ? buildBarcodeIndex(fresh) : barcodeIndex;
+    const stale = scannedBarcodes.filter(bc => (currentIndex[bc] ?? []).length !== 1);
+    if (stale.length > 0) {
+      setScannedBarcodes(prev => prev.filter(bc => !stale.includes(bc)));
+      setShowPartialModal(false);
+      setScanError(
+        `${stale.join(', ')} ${stale.length === 1 ? 'is' : 'are'} no longer releasable — ` +
+        `the label was replaced or the slip moved on while this screen was open. ` +
+        `${stale.length === 1 ? 'It has' : 'They have'} been removed from the scan list. ` +
+        `Scan the current label${stale.length === 1 ? '' : 's'} and release again.`,
+      );
+      return;
+    }
+
+    // Regroup the scans by slip against the current data. A barcode may have
+    // moved slips since it was scanned, so the grouping is redone rather than
+    // reused.
+    const currentById = new Map(current.map(s => [s.id, s]));
+    const grouped = new Map<string, string[]>();
+    for (const bc of scannedBarcodes) {
+      const slipId = currentIndex[bc][0];
+      if (!grouped.has(slipId)) grouped.set(slipId, []);
+      grouped.get(slipId)!.push(bc);
+    }
+    const toRelease = [...grouped.entries()]
+      .map(([slipId, bcs]) => ({ slip: currentById.get(slipId), bcs }))
+      .filter((x): x is { slip: SlipDto; bcs: string[] } => !!x.slip);
+
+    if (toRelease.length === 0) {
+      notify('Nothing left to release — rescan the boxes', 'error');
+      return;
+    }
+
     // Check for partial — not all boxes scanned
-    if (anyPartial && !showPartialModal) {
+    const shortNow = toRelease.filter(x => x.bcs.length < releasableBoxes(x.slip).length);
+    if (shortNow.length > 0 && !showPartialModal) {
       setShowPartialModal(true);
       return;
     }
 
     setReleasing(true);
     try {
-      const slipsPayload = discoveredSlips.map(ds => ({
-        slipId: ds.slip.id,
-        clientId: ds.slip.clientId,
-        loadId: ds.slip.loadId,
-        releaseBoxes: ds.scannedBarcodes.map(bc => ({
+      const slipsPayload = toRelease.map(({ slip, bcs }) => ({
+        slipId: slip.id,
+        clientId: slip.clientId,
+        loadId: slip.loadId,
+        releaseBoxes: bcs.map(bc => ({
           id: crypto.randomUUID(),
           stickerBarcode: bc,
           scannedAt: new Date().toISOString(),
@@ -435,8 +521,15 @@ export default function ReleasePage() {
 
       const data = await res.json();
       if (data.ok) {
-        const status = data.status === 'partial-release' ? 'Partial release' : 'Released';
-        notify(`${status} — ${discoveredSlips.length} slip(s) in transit`, 'success');
+        const shortSlips = (data.shortSlips ?? []) as Array<{ slipId: string; outstanding: number }>;
+        const owed = shortSlips.reduce((n, s) => n + s.outstanding, 0);
+        notify(
+          owed > 0
+            ? `Released ${toRelease.length} slip(s) — ${owed} box(es) stayed behind on ` +
+              `${shortSlips.length} slip(s). They come back to Release once this delivery note is signed off.`
+            : `Released — ${toRelease.length} slip(s) in transit`,
+          'success',
+        );
         // Reset
         setScannedBarcodes([]);
         setReleaseCode('');
@@ -448,6 +541,13 @@ export default function ReleasePage() {
       } else {
         notify(data.error || 'Release failed', 'error');
         setShowPartialModal(false);
+        // A stale or duplicate label is a data problem, not a typo — reload so
+        // the next scan is judged against what the server actually has.
+        if (data.code === 'stale-barcode') {
+          setScanError(data.error);
+          setScannedBarcodes([]);
+          await loadData();
+        }
       }
     } catch {
       notify('Network error during release', 'error');
@@ -861,7 +961,15 @@ export default function ReleasePage() {
                   <div key={s.id} className="text-xs flex items-center justify-between">
                     <span className="font-mono text-gray-700">{s.id.slice(-7)}</span>
                     <span className="text-gray-500 truncate ml-2">{s.siteName}</span>
-                    <span className="text-gray-400 ml-1">{(s.receiptBoxes ?? []).length}b</span>
+                    <span className="text-gray-400 ml-1">{releasableBoxes(s).length}b</span>
+                    {(s.outstandingBoxes?.length ?? 0) > 0 && (
+                      <span
+                        title="Left behind on an earlier delivery note — this is the balance"
+                        className="ml-1 text-[10px] font-semibold text-amber-700 bg-amber-50 px-1 rounded"
+                      >
+                        bal
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>

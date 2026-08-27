@@ -38,7 +38,7 @@ export const STATUS_TOOLTIPS: Record<string, string> = {
   'in-transit': 'Stock is on its way from iRam Warehouse to customer.',
   'delivered': 'Stock has been delivered back to customer. Triggered by the signature on the QR code form.',
   'failed-release': 'The release code entered did not match. The release must be retried with the correct code.',
-  'partial-release': 'Stock was partially released — box count mismatch overridden by a manager.',
+  'partial-release': 'Some of this store’s boxes went out and some stayed in the warehouse, authorised by a manager. The boxes that travelled are on a delivery note; once it is signed off the slip returns to Captured so the rest can be released on their own note.',
 };
 
 interface StatusBadgeProps {

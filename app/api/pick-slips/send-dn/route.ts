@@ -4,6 +4,7 @@ import { getPickSlipRun, findAllSlipsByDeliveryToken } from '@/lib/pickSlipData'
 import { loadControl } from '@/lib/controlData';
 import { listLoads } from '@/lib/agedStockData';
 import { generateDeliveryNotePdf, generateMultiSlipDeliveryNotePdf } from '@/lib/deliveryNotePdf';
+import { noteBoxCounts } from '@/lib/slipBoxes';
 import { sendDeliveryNoteEmail } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
@@ -93,6 +94,7 @@ export async function POST(req: NextRequest) {
             val: r.val,
           })),
           stickerBarcodes: (s.releaseBoxes ?? []).map(b => b.stickerBarcode),
+          totalBoxes: noteBoxCounts(s).asked,
         })),
         signature: slip.deliverySignature,
         signedByName: slip.deliverySignedByName,
