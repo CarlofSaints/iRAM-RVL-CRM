@@ -26,6 +26,8 @@ const ACTION_LABELS: Record<string, string> = {
   release_code_changed: 'Release Code Changed',
   'pick-slip-revert': 'Pick Slip Reversed',
   'pick-slip-unsuccessful': 'Marked Unsuccessful',
+  'sticker-edit': 'Sticker Edited',
+  'sticker-delete': 'Sticker Deleted',
 };
 
 const ACTION_COLORS: Record<string, string> = {
@@ -36,6 +38,8 @@ const ACTION_COLORS: Record<string, string> = {
   release_code_changed: 'bg-blue-100 text-blue-700',
   'pick-slip-revert': 'bg-amber-100 text-amber-700',
   'pick-slip-unsuccessful': 'bg-rose-100 text-rose-700',
+  'sticker-edit': 'bg-blue-100 text-blue-700',
+  'sticker-delete': 'bg-red-100 text-red-700',
 };
 
 function fmtDateTime(iso: string): string {

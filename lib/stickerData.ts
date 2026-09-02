@@ -515,3 +515,193 @@ export async function clearAllBatches(): Promise<number> {
   await saveIndex([]);
   return count;
 }
+
+// ── Find / edit / delete a single sticker ────────────────────────────────────
+
+export interface StickerSearchHit extends Sticker {
+  batchId: string;
+  warehouseCode: string;
+  warehouseName: string;
+  batchCreatedAt: string;
+  batchCreatedByName: string;
+  batchQuantity: number;
+  linkedPickSlipIds: string[];
+  /** True when the query matched the whole barcode, not just part of it. */
+  exact: boolean;
+}
+
+function normBarcode(v: string): string {
+  return v.toUpperCase().replace(/\s+/g, '').trim();
+}
+
+function hitFrom(batch: StickerBatch, sticker: Sticker, exact: boolean): StickerSearchHit {
+  return {
+    ...sticker,
+    linkedPickSlipIds: getLinkedIds(sticker),
+    batchId: batch.id,
+    warehouseCode: batch.warehouseCode,
+    warehouseName: batch.warehouseName,
+    batchCreatedAt: batch.createdAt,
+    batchCreatedByName: batch.createdByName,
+    batchQuantity: batch.quantity,
+    exact,
+  };
+}
+
+/**
+ * Search the registry for a barcode. Exact matches come first, then anything
+ * that contains the query.
+ *
+ * A warehouse operator reads the number off a box, and what they type is
+ * whatever fits: the whole `STK-GAU-0148`, or just `0148`. A digits-only query
+ * therefore also matches on the numeric tail, so `148` finds `STK-GAU-0148`
+ * without also dragging in `STK-GAU-1480`.
+ */
+export async function searchStickers(query: string, limit = 25): Promise<StickerSearchHit[]> {
+  const q = normBarcode(query);
+  if (!q) return [];
+
+  const digitsOnly = /^\d+$/.test(q);
+  const tailSeq = digitsOnly ? String(parseInt(q, 10)) : null;
+
+  const exactHits: StickerSearchHit[] = [];
+  const partialHits: StickerSearchHit[] = [];
+
+  const index = await listBatches();
+  for (const meta of index) {
+    const batch = await getBatch(meta.id);
+    if (!batch) continue;
+    for (const s of batch.stickers) {
+      const value = normBarcode(s.barcodeValue ?? '');
+      if (!value) continue;
+
+      if (value === q) {
+        exactHits.push(hitFrom(batch, s, true));
+        continue;
+      }
+
+      if (tailSeq) {
+        // `0148` / `148` → the trailing sequence number, compared numerically so
+        // leading zeros do not matter and `1480` is not a match.
+        const tail = value.match(/(\d+)$/);
+        if (tail && String(parseInt(tail[1], 10)) === tailSeq) {
+          exactHits.push(hitFrom(batch, s, true));
+          continue;
+        }
+      }
+
+      if (value.includes(q)) partialHits.push(hitFrom(batch, s, false));
+    }
+  }
+
+  return [...exactHits, ...partialHits].slice(0, limit);
+}
+
+/**
+ * Is this barcode already on another sticker? Returns the clashing sticker.
+ *
+ * A barcode is printed onto a physical box, so two records claiming the same
+ * number is the exact fault the 7 Aug 2026 wipe caused — never let an edit
+ * create one deliberately.
+ */
+export async function findBarcodeClash(
+  barcodeValue: string,
+  exceptStickerId: string,
+): Promise<StickerSearchHit | null> {
+  const wanted = normBarcode(barcodeValue);
+  if (!wanted) return null;
+
+  const index = await listBatches();
+  for (const meta of index) {
+    const batch = await getBatch(meta.id);
+    if (!batch) continue;
+    const clash = batch.stickers.find(
+      s => s.id !== exceptStickerId && normBarcode(s.barcodeValue ?? '') === wanted,
+    );
+    if (clash) return hitFrom(batch, clash, true);
+  }
+  return null;
+}
+
+/**
+ * Patch one sticker in place. Only the fields present on `patch` are written.
+ *
+ * Changing `barcodeValue` here changes the REGISTRY only — the operative copy
+ * of a box's number lives on the pick slip's own box list, so the caller must
+ * rewrite those too or the two stores will disagree about which box is which.
+ */
+export async function updateStickerRecord(
+  batchId: string,
+  stickerId: string,
+  patch: { barcodeValue?: string; linkedPickSlipIds?: string[] },
+): Promise<StickerSearchHit | null> {
+  const batch = await getBatch(batchId);
+  if (!batch) return null;
+  const sticker = batch.stickers.find(s => s.id === stickerId);
+  if (!sticker) return null;
+
+  if (typeof patch.barcodeValue === 'string') {
+    sticker.barcodeValue = normBarcode(patch.barcodeValue);
+  }
+
+  if (patch.linkedPickSlipIds) {
+    const ids = [...new Set(patch.linkedPickSlipIds.filter(Boolean))];
+    if (ids.length === 0) {
+      sticker.linkedPickSlipIds = undefined;
+      sticker.linkedPickSlipId = undefined;
+      sticker.linkedAt = undefined;
+    } else {
+      sticker.linkedPickSlipIds = ids;
+      sticker.linkedPickSlipId = ids[0]; // keep the legacy field in sync
+      sticker.linkedAt = sticker.linkedAt ?? new Date().toISOString();
+    }
+  }
+
+  await saveBatch(batch);
+  return hitFrom(batch, sticker, true);
+}
+
+/**
+ * Delete ONE sticker from its batch. Deletes the batch blob outright when that
+ * was its last sticker.
+ *
+ * Does NOT touch `stickers/sequence.json` — the number stays spent forever
+ * (deleting the record does not peel the label off the box) — and does NOT
+ * touch any pick slip. A slip that still names this barcode keeps its box; the
+ * caller is responsible for telling the operator that.
+ */
+export async function deleteSticker(
+  batchId: string,
+  stickerId: string,
+): Promise<{ removed: Sticker; batchDeleted: boolean } | null> {
+  const batch = await getBatch(batchId);
+  if (!batch) return null;
+  const removed = batch.stickers.find(s => s.id === stickerId);
+  if (!removed) return null;
+
+  batch.stickers = batch.stickers.filter(s => s.id !== stickerId);
+  batch.quantity = batch.stickers.length;
+
+  const index = await listBatches();
+
+  if (batch.stickers.length === 0) {
+    if (process.env.VERCEL) {
+      try { await del(batchKey(batch.id)); } catch { /* already gone */ }
+    } else {
+      try {
+        const f = batchLocalPath(batch.id);
+        if (fs.existsSync(f)) fs.unlinkSync(f);
+      } catch { /* empty */ }
+    }
+    await saveIndex(index.filter(m => m.id !== batch.id));
+    return { removed, batchDeleted: true };
+  }
+
+  if (process.env.VERCEL) {
+    await blobWriteJson(batchKey(batch.id), batch);
+  } else {
+    localWriteJson(batchLocalPath(batch.id), batch);
+  }
+  await saveIndex(index.map(m => (m.id === batch.id ? { ...m, quantity: batch.quantity } : m)));
+  return { removed, batchDeleted: false };
+}
