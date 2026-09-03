@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
-import { randomUUID } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
 import { loadUsers, saveUsers, User } from '@/lib/userData';
 import { loadControl, saveControl, ControlType } from '@/lib/controlData';
 import { loadRoles, saveRoles, loadPermissions, savePermissions } from '@/lib/rolesData';
@@ -15,6 +15,19 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * Constant-time string compare, so the reply time cannot be used to guess the
+ * secret one character at a time. Lengths are compared first because
+ * timingSafeEqual throws on a length mismatch; the length of a secret is not
+ * worth protecting, its content is.
+ */
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const ab = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
 interface Warehouse {
   id: string;
   name: string;
@@ -23,9 +36,30 @@ interface Warehouse {
   createdAt: string;
 }
 
+/**
+ * Seeding rewrites roles, permissions and users, so the guard is the only thing
+ * standing between this endpoint and the open internet.
+ *
+ * There used to be a hardcoded fallback secret next to the env var. This repo is
+ * PUBLIC, so that string was readable by anyone, and the endpoint was effectively
+ * unauthenticated. It is gone: `SEED_SECRET` is now the only key.
+ *
+ * A missing SEED_SECRET fails CLOSED and says so. Comparing against an undefined
+ * env var would reject every request with a plain "Invalid secret", which looks
+ * identical to a typo and would send the next person hunting for the wrong thing.
+ */
 export async function POST(req: NextRequest) {
-  const { secret } = await req.json();
-  if (secret !== process.env.SEED_SECRET && secret !== 'rvl-seed-2026') {
+  const expected = process.env.SEED_SECRET;
+  if (!expected) {
+    console.error('[seed] refused: SEED_SECRET is not set in this environment');
+    return NextResponse.json(
+      { error: 'Seeding is disabled: SEED_SECRET is not configured on this deployment.' },
+      { status: 503 },
+    );
+  }
+
+  const { secret } = await req.json().catch(() => ({ secret: undefined }));
+  if (typeof secret !== 'string' || !timingSafeEqualStr(secret, expected)) {
     return NextResponse.json({ error: 'Invalid secret' }, { status: 403 });
   }
 
