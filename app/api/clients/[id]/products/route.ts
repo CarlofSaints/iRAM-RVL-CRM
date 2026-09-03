@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requirePermission } from '@/lib/rolesData';
+import { requireAnyPermission } from '@/lib/rolesData';
 import { listSpLinks, loadLinkProducts } from '@/lib/spLinkData';
 
 export const dynamic = 'force-dynamic';
@@ -18,7 +18,9 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requirePermission(req, 'receipt_stock');
+  // Any-of: the Promotional Material module reads the same client product list
+  // when building a kit, and its users do not necessarily receipt stock.
+  const guard = await requireAnyPermission(req, ['receipt_stock', 'manage_promo_kits', 'view_promo_kits']);
   if (guard instanceof NextResponse) return guard;
 
   const { id: clientId } = await params;

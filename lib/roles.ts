@@ -54,7 +54,24 @@ export const DEFAULT_PERMISSIONS: Array<Omit<PermissionDef, 'createdAt' | 'isSys
   { key: 'receipt_stock', name: 'Receipt Stock', description: 'Receipt aged stock into warehouses via box scanning', category: 'Aged Stock', proOnly: false },
   { key: 'scan_stock', name: 'Scan Stock', description: 'Scan picking slips and book stock into warehouses', category: 'Aged Stock', proOnly: false },
   { key: 'clear_data', name: 'Clear Data', description: 'Permanently delete aged stock loads, pick slips, stickers, and audit logs', category: 'Admin', proOnly: false },
+  { key: 'view_promo_kits', name: 'View Promo Kits', description: 'View promo kits, contents, and the booking log (limited to assigned clients)', category: 'Promotional Material', proOnly: false },
+  { key: 'manage_promo_kits', name: 'Manage Promo Kits', description: 'Create and edit promo kits and the promo material catalogue', category: 'Promotional Material', proOnly: false },
+  { key: 'book_promo_kits', name: 'Book Promo Kits Out / In', description: 'Book a promo kit out to a person and check it back into stock', category: 'Promotional Material', proOnly: false },
 ];
+
+/**
+ * Permission keys added AFTER the first seed ran. `/api/seed` only creates a
+ * role that does not exist yet, so a role already in roles.json never picks up
+ * a key added to DEFAULT_ROLES later — it keeps whatever it was seeded with
+ * plus whatever Super Admin ticked. These keys are therefore topped up onto the
+ * named roles explicitly — but ONLY on the seed run that first creates the
+ * permission itself. After that the role is left alone forever, so unticking a
+ * key in Admin → Roles is not undone by the next re-seed.
+ */
+export const ROLE_KEY_TOPUPS: Record<string, string[]> = {
+  'rvl-manager': ['view_promo_kits', 'manage_promo_kits', 'book_promo_kits'],
+  rep: ['view_promo_kits'],
+};
 
 /**
  * System-seeded roles. Role IDs are stable identifiers used on users. Cannot be

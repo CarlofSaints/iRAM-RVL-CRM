@@ -466,3 +466,153 @@ export async function sendMissingSkuEmail(opts: {
     html: emailShell(body),
   });
 }
+
+// ── Promotional Material ─────────────────────────────────────────────────────
+
+const esc = (s: string) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** Format an ISO timestamp as separate SAST date and time strings for the emails. */
+function saDateTime(iso: string): { date: string; time: string } {
+  const d = new Date(iso);
+  return {
+    date: d.toLocaleDateString('en-ZA', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Africa/Johannesburg' }),
+    time: d.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Africa/Johannesburg' }),
+  };
+}
+
+function promoMetaTable(rows: Array<[string, string]>): string {
+  return `
+    <table style="background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:14px 16px;width:100%;margin-bottom:20px;">
+      ${rows
+        .map(
+          ([label, value]) =>
+            `<tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;white-space:nowrap;">${esc(label)}</td><td style="font-size:13px;">${value}</td></tr>`,
+        )
+        .join('')}
+    </table>`;
+}
+
+function promoLinesTable(
+  lines: Array<{ code: string; description: string; quantity: number; returnedQuantity?: number }>,
+  showReturned: boolean,
+): string {
+  const rows = lines
+    .map(l => {
+      const short = showReturned && (l.returnedQuantity ?? 0) < l.quantity;
+      return `
+      <tr>
+        <td style="padding:6px 12px;border-bottom:1px solid #eee;font-family:monospace;font-size:13px;">${esc(l.code)}</td>
+        <td style="padding:6px 12px;border-bottom:1px solid #eee;font-size:13px;">${esc(l.description)}</td>
+        <td style="padding:6px 12px;border-bottom:1px solid #eee;font-size:13px;text-align:right;">${l.quantity}</td>
+        ${showReturned ? `<td style="padding:6px 12px;border-bottom:1px solid #eee;font-size:13px;text-align:right;${short ? 'color:#c62828;font-weight:bold;' : ''}">${l.returnedQuantity ?? 0}</td>` : ''}
+      </tr>`;
+    })
+    .join('');
+
+  return `
+    <table style="border-collapse:collapse;width:100%;border:1px solid #eee;border-radius:6px;overflow:hidden;margin-bottom:20px;">
+      <thead>
+        <tr style="background:#f4f4f4;">
+          <th style="text-align:left;padding:8px 12px;font-size:12px;color:#666;text-transform:uppercase;">Item</th>
+          <th style="text-align:left;padding:8px 12px;font-size:12px;color:#666;text-transform:uppercase;">Description</th>
+          <th style="text-align:right;padding:8px 12px;font-size:12px;color:#666;text-transform:uppercase;">${showReturned ? 'Out' : 'Qty'}</th>
+          ${showReturned ? '<th style="text-align:right;padding:8px 12px;font-size:12px;color:#666;text-transform:uppercase;">Back</th>' : ''}
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+/**
+ * Booked OUT confirmation. Goes to BOTH the person handing the kit over and the
+ * person taking it, in one send, so they hold the same record.
+ */
+export async function sendPromoKitOutEmail(opts: {
+  to: string[];
+  kitReference: string;
+  kitName: string;
+  clientName: string;
+  bookedOutAt: string;
+  givenByName: string;
+  takenByName: string;
+  takenByEmail: string;
+  lines: Array<{ code: string; description: string; quantity: number }>;
+  note?: string;
+}) {
+  if (opts.to.length === 0) return null;
+  const { date, time } = saDateTime(opts.bookedOutAt);
+  const units = opts.lines.reduce((t, l) => t + (l.quantity || 0), 0);
+
+  const body = `
+    <p style="margin:0 0 14px;">Promo kit <strong>${esc(opts.kitName)}</strong> has been booked out.</p>
+    ${promoMetaTable([
+      ['Kit', `<strong>${esc(opts.kitReference)} &bull; ${esc(opts.kitName)}</strong>`],
+      ['Client', esc(opts.clientName)],
+      ['Date', esc(date)],
+      ['Time', esc(time)],
+      ['Booked out by', esc(opts.givenByName)],
+      ['Taken by', `<strong>${esc(opts.takenByName)}</strong> (${esc(opts.takenByEmail)})`],
+      ['Items', `${opts.lines.length} line${opts.lines.length === 1 ? '' : 's'} &bull; ${units} unit${units === 1 ? '' : 's'}`],
+    ])}
+    ${opts.note ? `<p style="margin:0 0 16px;color:#555;font-size:13px;">Note: ${esc(opts.note)}</p>` : ''}
+    <p style="margin:0 0 10px;font-size:13px;color:#555;">Contents confirmed at hand-over:</p>
+    ${promoLinesTable(opts.lines, false)}
+    <p style="margin:0;color:#666;font-size:13px;">Every item above must be returned when the kit comes back.</p>
+  `;
+
+  return getResend().emails.send({
+    from: FROM,
+    to: opts.to,
+    subject: `iRamFlow - Promo kit ${opts.kitReference} booked out to ${opts.takenByName}`,
+    html: emailShell(body),
+  });
+}
+
+/** Returned confirmation. Same two recipients, plus what did or did not come back. */
+export async function sendPromoKitReturnEmail(opts: {
+  to: string[];
+  kitReference: string;
+  kitName: string;
+  clientName: string;
+  bookedOutAt: string;
+  returnedAt: string;
+  givenByName: string;
+  takenByName: string;
+  takenByEmail: string;
+  receivedByName: string;
+  complete: boolean;
+  lines: Array<{ code: string; description: string; quantity: number; returnedQuantity?: number }>;
+  note?: string;
+}) {
+  if (opts.to.length === 0) return null;
+  const out = saDateTime(opts.bookedOutAt);
+  const back = saDateTime(opts.returnedAt);
+  const missing = opts.lines.filter(l => (l.returnedQuantity ?? 0) < l.quantity);
+
+  const body = `
+    <p style="margin:0 0 14px;">Promo kit <strong>${esc(opts.kitName)}</strong> has been returned${opts.complete ? ' in full' : ' <strong style="color:#c62828;">short</strong>'}.</p>
+    ${promoMetaTable([
+      ['Kit', `<strong>${esc(opts.kitReference)} &bull; ${esc(opts.kitName)}</strong>`],
+      ['Client', esc(opts.clientName)],
+      ['Booked out', `${esc(out.date)} at ${esc(out.time)} by ${esc(opts.givenByName)}`],
+      ['Returned', `<strong>${esc(back.date)} at ${esc(back.time)}</strong>`],
+      ['Returned by', `<strong>${esc(opts.takenByName)}</strong> (${esc(opts.takenByEmail)})`],
+      ['Received by', esc(opts.receivedByName)],
+      ['Status', opts.complete ? 'All items returned - kit back in stock' : `${missing.length} item${missing.length === 1 ? '' : 's'} outstanding - kit back in stock, flagged short`],
+    ])}
+    ${opts.note ? `<p style="margin:0 0 16px;color:#555;font-size:13px;">Note: ${esc(opts.note)}</p>` : ''}
+    ${promoLinesTable(opts.lines, true)}
+    ${
+      opts.complete
+        ? '<p style="margin:0;color:#666;font-size:13px;">Both parties confirmed every item was returned.</p>'
+        : `<p style="margin:0;color:#c62828;font-size:13px;">The items shown in red did not come back. They have been logged against this booking.</p>`
+    }
+  `;
+
+  return getResend().emails.send({
+    from: FROM,
+    to: opts.to,
+    subject: `iRamFlow - Promo kit ${opts.kitReference} returned${opts.complete ? '' : ' (short)'}`,
+    html: emailShell(body),
+  });
+}

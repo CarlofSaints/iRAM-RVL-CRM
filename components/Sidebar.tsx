@@ -86,9 +86,19 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
   const visibleSwapOutLinks = swapOutLinks.filter(l => has(l.perm));
   const showSwapOutSection = visibleSwapOutLinks.length > 0;
 
+  // Promotional Material — separate module, own permission family
+  const promoLinks: Array<{ href: string; label: string; perm: string }> = [
+    { href: '/promo', label: 'Promo Kits', perm: 'view_promo_kits' },
+    { href: '/promo/add-to-kits', label: 'Add to Kits', perm: 'manage_promo_kits' },
+    { href: '/promo/items', label: 'Promo Material', perm: 'view_promo_kits' },
+  ];
+  const visiblePromoLinks = promoLinks.filter(l => has(l.perm));
+  const showPromoSection = visiblePromoLinks.length > 0;
+
   const [controlOpen, setControlOpen] = useState(pathname.startsWith('/control-centre'));
   const [agedStockOpen, setAgedStockOpen] = useState(pathname.startsWith('/aged-stock'));
   const [swapOutOpen, setSwapOutOpen] = useState(pathname.startsWith('/swap-outs'));
+  const [promoOpen, setPromoOpen] = useState(pathname.startsWith('/promo'));
   const [collapsed, setCollapsed] = useState(false);
 
   // Hydrate collapsed state from localStorage on mount
@@ -255,6 +265,32 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
             {swapOutOpen && (
               <div className="flex flex-col gap-0.5 mt-0.5">
                 {visibleSwapOutLinks.map(l => (
+                  <SubNavLink key={l.href} href={l.href} label={l.label} active={pathname === l.href} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Promotional Material — separate module */}
+        {showPromoSection && (
+          <>
+            <button
+              onClick={() => setPromoOpen(v => !v)}
+              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                pathname.startsWith('/promo')
+                  ? 'bg-[var(--color-primary)] text-white'
+                  : 'text-gray-300 hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              Promotional Material
+              <svg className={`w-4 h-4 transition-transform ${promoOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {promoOpen && (
+              <div className="flex flex-col gap-0.5 mt-0.5">
+                {visiblePromoLinks.map(l => (
                   <SubNavLink key={l.href} href={l.href} label={l.label} active={pathname === l.href} />
                 ))}
               </div>

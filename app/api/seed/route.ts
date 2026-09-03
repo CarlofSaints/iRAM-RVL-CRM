@@ -8,6 +8,7 @@ import {
   DEFAULT_PERMISSIONS,
   DEFAULT_ROLES,
   LEGACY_ROLE_MIGRATION,
+  ROLE_KEY_TOPUPS,
   type Role,
   type PermissionDef,
 } from '@/lib/roles';
@@ -33,6 +34,8 @@ export async function POST(req: NextRequest) {
   // === Seed Permissions (idempotent) ===
   const permissions = await loadPermissions();
   let permissionsSeeded = 0;
+  /** Keys created by THIS run — used to top up roles exactly once. */
+  const brandNewPermissionKeys = new Set<string>();
   for (const p of DEFAULT_PERMISSIONS) {
     const existing = permissions.find(x => x.key === p.key);
     if (existing) {
@@ -47,6 +50,7 @@ export async function POST(req: NextRequest) {
     }
     const perm: PermissionDef = { ...p, isSystem: true, createdAt: now };
     permissions.push(perm);
+    brandNewPermissionKeys.add(p.key);
     permissionsSeeded++;
   }
   if (permissionsSeeded > 0) await savePermissions(permissions);
@@ -71,6 +75,20 @@ export async function POST(req: NextRequest) {
     const missing = allKeys.filter(k => !current.has(k));
     if (missing.length) {
       superAdmin.permissionKeys = [...superAdmin.permissionKeys, ...missing];
+      rolesPatched++;
+    }
+  }
+
+  // Top up non-super-admin roles with permission keys introduced in THIS run.
+  // Gated on brandNewPermissionKeys so it happens exactly once per key — a
+  // later untick in Admin → Roles is never silently undone by a re-seed.
+  for (const [roleId, keys] of Object.entries(ROLE_KEY_TOPUPS)) {
+    const role = roles.find(r => r.id === roleId);
+    if (!role) continue;
+    const current = new Set(role.permissionKeys);
+    const toAdd = keys.filter(k => brandNewPermissionKeys.has(k) && !current.has(k));
+    if (toAdd.length) {
+      role.permissionKeys = [...role.permissionKeys, ...toAdd];
       rolesPatched++;
     }
   }

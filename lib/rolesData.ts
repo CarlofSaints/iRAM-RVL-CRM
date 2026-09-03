@@ -124,6 +124,25 @@ export async function requirePermission(
 }
 
 /**
+ * Same guard, but passes when the caller holds ANY ONE of the given keys.
+ *
+ * Use this when a second module starts calling an endpoint that was written for
+ * one permission. Swapping the single key for a narrower new one locks out
+ * everybody who only had the old one; an any-of check lets both in.
+ */
+export async function requireAnyPermission(
+  req: NextRequest,
+  keys: string[]
+): Promise<NextResponse | { ok: true; userId: string; permissions: string[]; userRole: string }> {
+  const guard = await requireLogin(req);
+  if (guard instanceof NextResponse) return guard;
+  if (!keys.some(k => guard.permissions.includes(k))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+  return guard;
+}
+
+/**
  * Lighter guard — just verifies the caller is a known user. Returns the user's
  * permissions for convenience. Used on GET endpoints where we want any logged-in
  * user to read but still want to know who they are.

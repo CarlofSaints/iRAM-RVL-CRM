@@ -28,6 +28,16 @@ const ACTION_LABELS: Record<string, string> = {
   'pick-slip-unsuccessful': 'Marked Unsuccessful',
   'sticker-edit': 'Sticker Edited',
   'sticker-delete': 'Sticker Deleted',
+  'promo-kit-create': 'Promo Kit Created',
+  'promo-kit-edit': 'Promo Kit Edited',
+  'promo-kit-delete': 'Promo Kit Deleted',
+  'promo-kit-add-item': 'Promo Item Added to Kit',
+  'promo-kit-out': 'Promo Kit Booked Out',
+  'promo-kit-in': 'Promo Kit Returned',
+  'promo-item-save': 'Promo Material Saved',
+  'promo-item-edit': 'Promo Material Edited',
+  'promo-item-delete': 'Promo Material Deleted',
+  'promo-contact-create': 'Promo Contact Created',
 };
 
 const ACTION_COLORS: Record<string, string> = {
@@ -40,6 +50,16 @@ const ACTION_COLORS: Record<string, string> = {
   'pick-slip-unsuccessful': 'bg-rose-100 text-rose-700',
   'sticker-edit': 'bg-blue-100 text-blue-700',
   'sticker-delete': 'bg-red-100 text-red-700',
+  'promo-kit-create': 'bg-green-100 text-green-700',
+  'promo-kit-edit': 'bg-blue-100 text-blue-700',
+  'promo-kit-delete': 'bg-red-100 text-red-700',
+  'promo-kit-add-item': 'bg-blue-100 text-blue-700',
+  'promo-kit-out': 'bg-amber-100 text-amber-700',
+  'promo-kit-in': 'bg-emerald-100 text-emerald-700',
+  'promo-item-save': 'bg-gray-100 text-gray-700',
+  'promo-item-edit': 'bg-blue-100 text-blue-700',
+  'promo-item-delete': 'bg-red-100 text-red-700',
+  'promo-contact-create': 'bg-gray-100 text-gray-700',
 };
 
 function fmtDateTime(iso: string): string {
