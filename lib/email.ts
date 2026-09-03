@@ -536,18 +536,27 @@ export async function sendPromoKitOutEmail(opts: {
   givenByName: string;
   takenByName: string;
   takenByEmail: string;
+  /** Copies of the kit that went out on this booking. */
+  copies: number;
+  /** Copies that exist in total, so the reader knows what is left behind. */
+  totalCopies: number;
   lines: Array<{ code: string; description: string; quantity: number }>;
   note?: string;
 }) {
   if (opts.to.length === 0) return null;
   const { date, time } = saDateTime(opts.bookedOutAt);
   const units = opts.lines.reduce((t, l) => t + (l.quantity || 0), 0);
+  const kitCount = `${opts.copies} of ${opts.totalCopies}`;
 
   const body = `
-    <p style="margin:0 0 14px;">Promo kit <strong>${esc(opts.kitName)}</strong> has been booked out.</p>
+    <p style="margin:0 0 14px;">
+      ${opts.copies === 1 ? 'A copy of promo kit' : `${opts.copies} copies of promo kit`}
+      <strong>${esc(opts.kitName)}</strong> ${opts.copies === 1 ? 'has' : 'have'} been booked out.
+    </p>
     ${promoMetaTable([
       ['Kit', `<strong>${esc(opts.kitReference)} &bull; ${esc(opts.kitName)}</strong>`],
       ['Client', esc(opts.clientName)],
+      ['Copies taken', `<strong>${esc(kitCount)}</strong>`],
       ['Date', esc(date)],
       ['Time', esc(time)],
       ['Booked out by', esc(opts.givenByName)],
@@ -563,7 +572,10 @@ export async function sendPromoKitOutEmail(opts: {
   return getResend().emails.send({
     from: FROM,
     to: opts.to,
-    subject: `iRamFlow - Promo kit ${opts.kitReference} booked out to ${opts.takenByName}`,
+    subject:
+      `iRamFlow - Promo kit ${opts.kitReference}` +
+      `${opts.totalCopies > 1 ? ` (${opts.copies} of ${opts.totalCopies})` : ''}` +
+      ` booked out to ${opts.takenByName}`,
     html: emailShell(body),
   });
 }
@@ -581,6 +593,8 @@ export async function sendPromoKitReturnEmail(opts: {
   takenByEmail: string;
   receivedByName: string;
   complete: boolean;
+  /** Copies coming back on this booking. */
+  copies: number;
   lines: Array<{ code: string; description: string; quantity: number; returnedQuantity?: number }>;
   note?: string;
 }) {
@@ -590,15 +604,21 @@ export async function sendPromoKitReturnEmail(opts: {
   const missing = opts.lines.filter(l => (l.returnedQuantity ?? 0) < l.quantity);
 
   const body = `
-    <p style="margin:0 0 14px;">Promo kit <strong>${esc(opts.kitName)}</strong> has been returned${opts.complete ? ' in full' : ' <strong style="color:#c62828;">short</strong>'}.</p>
+    <p style="margin:0 0 14px;">
+      ${opts.copies === 1 ? 'A copy of promo kit' : `${opts.copies} copies of promo kit`}
+      <strong>${esc(opts.kitName)}</strong> ${opts.copies === 1 ? 'has' : 'have'} been returned${opts.complete ? ' in full' : ' <strong style="color:#c62828;">short</strong>'}.
+    </p>
     ${promoMetaTable([
       ['Kit', `<strong>${esc(opts.kitReference)} &bull; ${esc(opts.kitName)}</strong>`],
       ['Client', esc(opts.clientName)],
+      ['Copies returned', `<strong>${opts.copies}</strong>`],
       ['Booked out', `${esc(out.date)} at ${esc(out.time)} by ${esc(opts.givenByName)}`],
       ['Returned', `<strong>${esc(back.date)} at ${esc(back.time)}</strong>`],
       ['Returned by', `<strong>${esc(opts.takenByName)}</strong> (${esc(opts.takenByEmail)})`],
       ['Received by', esc(opts.receivedByName)],
-      ['Status', opts.complete ? 'All items returned - kit back in stock' : `${missing.length} item${missing.length === 1 ? '' : 's'} outstanding - kit back in stock, flagged short`],
+      ['Status', opts.complete
+        ? `All items returned - ${opts.copies === 1 ? 'kit' : 'kits'} back in stock`
+        : `${missing.length} item${missing.length === 1 ? '' : 's'} outstanding - ${opts.copies === 1 ? 'kit' : 'kits'} back in stock, flagged short`],
     ])}
     ${opts.note ? `<p style="margin:0 0 16px;color:#555;font-size:13px;">Note: ${esc(opts.note)}</p>` : ''}
     ${promoLinesTable(opts.lines, true)}

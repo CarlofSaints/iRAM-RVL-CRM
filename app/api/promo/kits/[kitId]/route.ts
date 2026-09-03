@@ -4,13 +4,17 @@ import {
   listPromoKits,
   savePromoKits,
   listPromoBookings,
-  PROMO_KIT_STATUS_LABELS,
+  outCopiesByKit,
+  kitAvailability,
+  bookingCopies,
+  isOpenBooking,
+  kitTotal,
 } from '@/lib/promoData';
 import { logAudit } from '@/lib/auditLog';
 
 export const dynamic = 'force-dynamic';
 
-/** GET /api/promo/kits/[kitId] — one kit plus its booking history. */
+/** GET /api/promo/kits/[kitId] — one kit, its availability, and its booking history. */
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ kitId: string }> },
@@ -19,32 +23,42 @@ export async function GET(
   if (ctx instanceof NextResponse) return ctx;
 
   const { kitId } = await params;
-  const kits = await listPromoKits();
+  const [kits, allBookings] = await Promise.all([listPromoKits(), listPromoBookings()]);
   const kit = kits.find(k => k.id === kitId);
   if (!kit) return NextResponse.json({ error: 'Kit not found' }, { status: 404 });
   if (!ctx.canSeeClient(kit.clientId)) {
     return NextResponse.json({ error: 'You do not have access to that client' }, { status: 403 });
   }
 
-  const bookings = (await listPromoBookings())
+  const bookings = allBookings
     .filter(b => b.kitId === kitId)
-    .sort((a, b) => b.bookedOutAt.localeCompare(a.bookedOutAt));
+    .sort((a, b) => b.bookedOutAt.localeCompare(a.bookedOutAt))
+    .map(b => ({ ...b, copies: bookingCopies(b) }));
 
   return NextResponse.json(
-    { kit: { ...kit, clientName: ctx.clientName(kit.clientId) }, bookings },
+    {
+      kit: {
+        ...kit,
+        clientName: ctx.clientName(kit.clientId),
+        availability: kitAvailability(kit, outCopiesByKit(allBookings)),
+      },
+      bookings,
+    },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 }
 
 /**
- * PATCH /api/promo/kits/[kitId] — rename, re-note, or edit the contents.
+ * PATCH /api/promo/kits/[kitId] — rename, re-note, change how many copies exist,
+ * or edit the contents.
  *
- * Contents may not be edited while the kit is OUT: the booking record holds the
- * list both parties agreed to at hand-over, and the return tick-list is built
- * from it. Letting someone add a line mid-loan would mean the kit comes back
- * "short" on an item that never left.
+ * Contents may be edited even while copies are out. Each booking SNAPSHOTS the
+ * list that left, and the return tick-list is built from the booking, so an
+ * edit cannot corrupt an open hand-over — the copies still out simply come back
+ * against the list they went out on. Freezing instead would mean a kit with one
+ * copy permanently on the road could never be edited at all.
  *
- * Body: { name?, notes?, lines?: [{ id, quantity }], removeLineIds?: string[] }
+ * Body: { name?, notes?, totalQuantity?, lines?: [{ id, quantity }], removeLineIds?: string[] }
  */
 export async function PATCH(
   req: NextRequest,
@@ -55,7 +69,13 @@ export async function PATCH(
 
   const { kitId } = await params;
   const body = await req.json().catch(() => null) as
-    | { name?: string; notes?: string; lines?: Array<{ id: string; quantity: number }>; removeLineIds?: string[] }
+    | {
+        name?: string;
+        notes?: string;
+        totalQuantity?: number;
+        lines?: Array<{ id: string; quantity: number }>;
+        removeLineIds?: string[];
+      }
     | null;
   if (!body) return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
 
@@ -64,14 +84,6 @@ export async function PATCH(
   if (!kit) return NextResponse.json({ error: 'Kit not found' }, { status: 404 });
   if (!ctx.canSeeClient(kit.clientId)) {
     return NextResponse.json({ error: 'You do not have access to that client' }, { status: 403 });
-  }
-
-  const touchesContents = (body.lines?.length ?? 0) > 0 || (body.removeLineIds?.length ?? 0) > 0;
-  if (touchesContents && kit.status === 'out') {
-    return NextResponse.json(
-      { error: `${kit.reference} is ${PROMO_KIT_STATUS_LABELS.out.toLowerCase()}. Book it back in before changing what is in it.` },
-      { status: 409 },
-    );
   }
 
   const changes: string[] = [];
@@ -91,6 +103,24 @@ export async function PATCH(
 
   if (body.notes !== undefined) {
     kit.notes = body.notes.trim() || undefined;
+  }
+
+  if (body.totalQuantity !== undefined) {
+    const next = Math.floor(Number(body.totalQuantity));
+    if (!Number.isFinite(next) || next < 1) {
+      return NextResponse.json({ error: 'How many of this kit do you have? Enter 1 or more.' }, { status: 400 });
+    }
+    // Cannot own fewer copies than are currently out with people.
+    const out = outCopiesByKit(await listPromoBookings()).get(kit.id) ?? 0;
+    if (next < out) {
+      return NextResponse.json(
+        { error: `${out} cop${out === 1 ? 'y is' : 'ies are'} out with someone, so you cannot set the total below ${out}. Book them back in first.` },
+        { status: 409 },
+      );
+    }
+    const before = kitTotal(kit);
+    if (next !== before) changes.push(`total copies ${before} to ${next}`);
+    kit.totalQuantity = next;
   }
 
   for (const edit of body.lines ?? []) {
@@ -124,10 +154,17 @@ export async function PATCH(
     });
   }
 
-  return NextResponse.json({ kit: { ...kit, clientName: ctx.clientName(kit.clientId) } });
+  const outByKit = outCopiesByKit(await listPromoBookings());
+  return NextResponse.json({
+    kit: {
+      ...kit,
+      clientName: ctx.clientName(kit.clientId),
+      availability: kitAvailability(kit, outByKit),
+    },
+  });
 }
 
-/** DELETE /api/promo/kits/[kitId] — refused while the kit is out with someone. */
+/** DELETE /api/promo/kits/[kitId] — refused while any copy is out with someone. */
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ kitId: string }> },
@@ -136,15 +173,18 @@ export async function DELETE(
   if (ctx instanceof NextResponse) return ctx;
 
   const { kitId } = await params;
-  const kits = await listPromoKits();
+  const [kits, bookings] = await Promise.all([listPromoKits(), listPromoBookings()]);
   const kit = kits.find(k => k.id === kitId);
   if (!kit) return NextResponse.json({ error: 'Kit not found' }, { status: 404 });
   if (!ctx.canSeeClient(kit.clientId)) {
     return NextResponse.json({ error: 'You do not have access to that client' }, { status: 403 });
   }
-  if (kit.status === 'out') {
+
+  const open = bookings.filter(b => b.kitId === kitId && isOpenBooking(b));
+  if (open.length > 0) {
+    const holders = open.map(b => `${b.holder.name} (${bookingCopies(b)})`).join(', ');
     return NextResponse.json(
-      { error: `${kit.reference} is out with someone. Book it back in before deleting it.` },
+      { error: `${kit.reference} still has copies out with ${holders}. Book them back in before deleting it.` },
       { status: 409 },
     );
   }
@@ -157,7 +197,7 @@ export async function DELETE(
     userId: ctx.me.id,
     userName: fullName(ctx.me),
     clientId: kit.clientId,
-    detail: `Promo kit deleted: ${kit.reference} "${kit.name}" (${kit.lines.length} line(s)). Booking history kept.`,
+    detail: `Promo kit deleted: ${kit.reference} "${kit.name}" (${kitTotal(kit)} copy/copies, ${kit.lines.length} line(s)). Booking history kept.`,
   });
 
   return NextResponse.json({ ok: true });

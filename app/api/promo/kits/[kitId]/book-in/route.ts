@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { promoContext, fullName } from '@/lib/promoScope';
-import { listPromoKits, savePromoKits, listPromoBookings, savePromoBookings } from '@/lib/promoData';
+import {
+  listPromoKits,
+  listPromoBookings,
+  savePromoBookings,
+  outCopiesByKit,
+  kitAvailability,
+  bookingCopies,
+  copiesLabel,
+  isOpenBooking,
+} from '@/lib/promoData';
 import { sendPromoKitReturnEmail } from '@/lib/email';
 import { logAudit } from '@/lib/auditLog';
 
@@ -9,12 +18,16 @@ export const dynamic = 'force-dynamic';
 /**
  * POST /api/promo/kits/[kitId]/book-in
  *
- * Body: { returned: Array<{ lineId, quantity }>, note? }
+ * Body: { bookingId, returned: Array<{ lineId, quantity }>, note? }
+ *
+ * `bookingId` is REQUIRED because a kit can have several copies out with
+ * several people at once. Returning "the" booking would be a coin toss the
+ * moment a second copy goes out.
  *
  * `returned` is the tick-list from the screen: one entry per line that went
- * out, carrying how many came back. A short return still puts the kit back in
- * stock — the physical kit is on the shelf whether or not every item is in it —
- * but the booking is flagged short and both emails name what is missing.
+ * out, carrying how many came back. A short return still puts the copies back
+ * in stock — they are physically on the shelf whether or not every item is in
+ * them — but the booking is flagged short and both emails name what is missing.
  */
 export async function POST(
   req: NextRequest,
@@ -25,27 +38,43 @@ export async function POST(
 
   const { kitId } = await params;
   const body = await req.json().catch(() => null) as
-    | { returned?: Array<{ lineId?: string; quantity?: number }>; note?: string }
+    | { bookingId?: string; returned?: Array<{ lineId?: string; quantity?: number }>; note?: string }
     | null;
   if (!body) return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
 
-  const kits = await listPromoKits();
+  const [kits, bookings] = await Promise.all([listPromoKits(), listPromoBookings()]);
   const kit = kits.find(k => k.id === kitId);
   if (!kit) return NextResponse.json({ error: 'Kit not found' }, { status: 404 });
   if (!ctx.canSeeClient(kit.clientId)) {
     return NextResponse.json({ error: 'You do not have access to that client' }, { status: 403 });
   }
-  if (kit.status !== 'out' || !kit.currentBookingId) {
+
+  const open = bookings.filter(b => b.kitId === kitId && isOpenBooking(b));
+  if (open.length === 0) {
     return NextResponse.json({ error: `${kit.reference} is not out with anyone.` }, { status: 409 });
   }
 
-  const bookings = await listPromoBookings();
-  const booking = bookings.find(b => b.id === kit.currentBookingId);
-  if (!booking) {
+  // Only fall back to "the" booking when there is genuinely one. With several
+  // copies out, an unnamed booking is ambiguous and must be refused rather than
+  // guessed — closing the wrong person's booking is not recoverable by a retry.
+  const bookingId = (body.bookingId ?? '').trim();
+  let booking = bookingId ? bookings.find(b => b.id === bookingId) : open.length === 1 ? open[0] : undefined;
+  if (!booking && !bookingId) {
     return NextResponse.json(
-      { error: `${kit.reference} is marked out but its booking record is missing. Raise this before booking it in.` },
+      {
+        error: `${kit.reference} has ${open.length} bookings out. Say which one is coming back.`,
+        openBookings: open.map(b => ({
+          id: b.id,
+          copies: bookingCopies(b),
+          holderName: b.holder.name,
+          bookedOutAt: b.bookedOutAt,
+        })),
+      },
       { status: 409 },
     );
+  }
+  if (!booking || booking.kitId !== kitId) {
+    return NextResponse.json({ error: 'That booking does not belong to this kit' }, { status: 404 });
   }
   if (booking.returnedAt) {
     return NextResponse.json({ error: 'That booking has already been returned' }, { status: 409 });
@@ -88,11 +117,8 @@ export async function POST(
   booking.returnedComplete = complete;
   booking.returnNote = note || undefined;
   await savePromoBookings(bookings);
-
-  kit.status = 'home';
-  kit.currentBookingId = undefined;
-  kit.updatedAt = now;
-  await savePromoKits(kits);
+  // The kit record is untouched: closing this booking is what puts its copies
+  // back on the shelf, because availability is derived from the open bookings.
 
   const recipients = [...new Set([ctx.me.email, booking.holder.email, booking.bookedOutByEmail].filter(Boolean))];
   try {
@@ -108,6 +134,7 @@ export async function POST(
       takenByEmail: booking.holder.email,
       receivedByName: byName,
       complete,
+      copies: bookingCopies(booking),
       lines: booking.lines,
       note: booking.returnNote,
     });
@@ -125,8 +152,8 @@ export async function POST(
     userName: byName,
     clientId: kit.clientId,
     detail:
-      `${kit.reference} "${kit.name}" (${booking.clientName}) returned by ${booking.holder.name} <${booking.holder.email}>, ` +
-      `received by ${byName}. ` +
+      `${kit.reference} "${kit.name}" (${booking.clientName}): ${copiesLabel(bookingCopies(booking))} returned by ` +
+      `${booking.holder.name} <${booking.holder.email}>, received by ${byName}. ` +
       (complete
         ? 'All items returned.'
         : `SHORT: ${missing.map(l => `${l.code} ${l.returnedQuantity ?? 0} of ${l.quantity}`).join('; ')}. Note: ${note}`) +
@@ -135,7 +162,12 @@ export async function POST(
 
   return NextResponse.json({
     booking,
-    kit: { ...kit, clientName: booking.clientName },
+    kit: {
+      ...kit,
+      clientName: booking.clientName,
+      availability: kitAvailability(kit, outCopiesByKit(bookings)),
+    },
+    copies: bookingCopies(booking),
     complete,
     missing: missing.map(l => ({ code: l.code, description: l.description, out: l.quantity, back: l.returnedQuantity ?? 0 })),
     emailed: recipients,

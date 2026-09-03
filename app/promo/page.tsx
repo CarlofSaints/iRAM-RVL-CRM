@@ -9,14 +9,15 @@ import { useTableSort } from '@/lib/useTableSort';
 import { useColumnResize, RESIZE_HANDLE_CLASS } from '@/lib/useColumnResize';
 import SortableTh from '@/components/SortableTh';
 import {
-  PROMO_KIT_STATUS_BADGE,
-  PROMO_KIT_STATUS_LABELS,
+  availabilityBadge,
+  availabilityLabel,
+  copiesLabel,
   fmtPromoDateTime,
   kitUnits,
-  type PromoKitStatus,
+  type KitAvailability,
 } from '@/lib/promoShared';
 
-// ── DTOs (mirror lib/promoData.ts, plus the clientName the API joins on) ─────
+// ── DTOs (mirror lib/promoData.ts, plus what the API derives and joins on) ───
 
 interface KitLineDto {
   id: string;
@@ -26,6 +27,14 @@ interface KitLineDto {
   description: string;
   quantity: number;
 }
+interface OpenBookingDto {
+  id: string;
+  copies: number;
+  holderName: string;
+  holderEmail: string;
+  bookedOutAt: string;
+  bookedOutByName: string;
+}
 interface KitDto {
   id: string;
   reference: string;
@@ -33,9 +42,11 @@ interface KitDto {
   clientName: string;
   name: string;
   notes?: string;
+  totalQuantity?: number;
   lines: KitLineDto[];
-  status: PromoKitStatus;
-  currentBookingId?: string;
+  /** Derived server-side from the open bookings — a kit has no stored status. */
+  availability: KitAvailability;
+  openBookings: OpenBookingDto[];
   createdAt: string;
   createdByName?: string;
   updatedAt: string;
@@ -59,6 +70,7 @@ interface BookingDto {
   bookedOutByName: string;
   bookedOutByEmail: string;
   holder: { type: string; id: string; name: string; email: string };
+  copies?: number;
   lines: BookingLineDto[];
   outNote?: string;
   outEmailTo?: string[];
@@ -77,11 +89,18 @@ function clientLabel(c: ClientDto): string {
   const nums = (c.vendorNumbers ?? []).filter(Boolean);
   return nums.length ? `${c.name} (${nums.join(', ')})` : c.name;
 }
+/** Copies on a booking. Absent means 1 — bookings taken before kits had quantities. */
+const bCopies = (b: { copies?: number }) => (Number(b.copies) >= 1 ? Math.floor(Number(b.copies)) : 1);
 
-const KIT_COLS = ['Ref', 'Kit Name', 'Client', 'Lines', 'Units', 'Status', 'With', 'Since', 'Created'];
+const KIT_COLS = ['Ref', 'Kit Name', 'Client', 'Copies', 'Out', 'Lines', 'Units/Copy', 'Status', 'With', 'Created'];
+const KIT_SORT_KEYS = ['reference', 'name', 'client', 'copies', 'out', 'lines', 'units', 'status', 'with', 'created'];
 const LOG_COLS = [
-  'Ref', 'Kit Name', 'Client', 'Booked Out', 'Booked Out By', 'Taken By', 'Email',
+  'Ref', 'Kit Name', 'Client', 'Copies', 'Booked Out', 'Booked Out By', 'Taken By', 'Email',
   'Lines', 'Units', 'Returned', 'Received By', 'Result', 'Note',
+];
+const LOG_SORT_KEYS = [
+  'reference', 'kitName', 'client', 'copies', 'out', 'outBy', 'takenBy', 'email',
+  'lines', 'units', 'returned', 'receivedBy', 'result', 'note',
 ];
 
 export default function PromoKitsPage() {
@@ -101,17 +120,19 @@ export default function PromoKitsPage() {
   // Filters
   const [kitNameFilter, setKitNameFilter] = useState('');
   const [clientFilter, setClientFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'' | PromoKitStatus>('');
+  const [statusFilter, setStatusFilter] = useState<'' | 'available' | 'out'>('');
 
   // Create-kit modal
   const [createOpen, setCreateOpen] = useState(false);
   const [newClientId, setNewClientId] = useState('');
   const [newKitName, setNewKitName] = useState('');
+  const [newKitQty, setNewKitQty] = useState(1);
   const [newKitNotes, setNewKitNotes] = useState('');
   const [creating, setCreating] = useState(false);
 
   // Book-out modal
   const [outKit, setOutKit] = useState<KitDto | null>(null);
+  const [outCopies, setOutCopies] = useState(1);
   const [outConfirmed, setOutConfirmed] = useState(false);
   const [outHolder, setOutHolder] = useState<HolderDto | null>(null);
   const [holderSearch, setHolderSearch] = useState('');
@@ -121,7 +142,8 @@ export default function PromoKitsPage() {
   const [outNote, setOutNote] = useState('');
   const [outBusy, setOutBusy] = useState(false);
 
-  // Book-in modal
+  // Book-in modal. `inKit` set with no `inBooking` means the kit has several
+  // bookings out and the user still has to say which one is coming back.
   const [inKit, setInKit] = useState<KitDto | null>(null);
   const [inBooking, setInBooking] = useState<BookingDto | null>(null);
   const [inReturned, setInReturned] = useState<Record<string, number>>({});
@@ -146,20 +168,23 @@ export default function PromoKitsPage() {
 
   useEffect(() => { if (session) void fetchAll(); }, [session, fetchAll]);
 
-  // ── Cards ──────────────────────────────────────────────────────────────────
-  const stats = useMemo(() => ({
-    clients: new Set(kits.map(k => k.clientId)).size,
-    kits: kits.length,
-    home: kits.filter(k => k.status === 'home').length,
-    out: kits.filter(k => k.status === 'out').length,
-  }), [kits]);
-
-  /** Booking a kit is currently out on, for the "With" column. */
-  const openBookingByKit = useMemo(() => {
-    const m = new Map<string, BookingDto>();
-    for (const b of bookings) if (!b.returnedAt) m.set(b.kitId, b);
-    return m;
-  }, [bookings]);
+  // ── Cards. At home / Out count COPIES, not kit records: five copies of one
+  // kit with two out is "3 at home, 2 out", not "1 kit out". ─────────────────
+  const stats = useMemo(() => {
+    let total = 0;
+    let out = 0;
+    for (const k of kits) {
+      total += k.availability.total;
+      out += k.availability.out;
+    }
+    return {
+      clients: new Set(kits.map(k => k.clientId)).size,
+      kitTypes: kits.length,
+      total,
+      out,
+      home: total - out,
+    };
+  }, [kits]);
 
   // ── Kits grid ──────────────────────────────────────────────────────────────
   const filteredKits = useMemo(() => {
@@ -167,20 +192,24 @@ export default function PromoKitsPage() {
     return kits.filter(k => {
       if (q && !k.name.toLowerCase().includes(q) && !k.reference.toLowerCase().includes(q)) return false;
       if (clientFilter && k.clientId !== clientFilter) return false;
-      if (statusFilter && k.status !== statusFilter) return false;
+      if (statusFilter === 'available' && k.availability.available === 0) return false;
+      if (statusFilter === 'out' && k.availability.out === 0) return false;
       return true;
     });
   }, [kits, kitNameFilter, clientFilter, statusFilter]);
+
+  const withNames = (k: KitDto) => k.openBookings.map(b => b.holderName).join(', ');
 
   const kitSort = useTableSort<KitDto>(filteredKits, {
     reference: k => k.reference,
     name: k => k.name,
     client: k => k.clientName,
+    copies: k => k.availability.total,
+    out: k => k.availability.out,
     lines: k => k.lines.length,
     units: k => kitUnits(k),
-    status: k => PROMO_KIT_STATUS_LABELS[k.status],
-    with: k => openBookingByKit.get(k.id)?.holder.name ?? '',
-    since: k => openBookingByKit.get(k.id)?.bookedOutAt ?? '',
+    status: k => k.availability.available,
+    with: k => withNames(k),
     created: k => k.createdAt,
   }, 'reference', 'desc');
 
@@ -193,7 +222,7 @@ export default function PromoKitsPage() {
       if (q && !b.kitName.toLowerCase().includes(q) && !b.kitReference.toLowerCase().includes(q)) return false;
       if (clientFilter && b.clientId !== clientFilter) return false;
       if (statusFilter === 'out' && b.returnedAt) return false;
-      if (statusFilter === 'home' && !b.returnedAt) return false;
+      if (statusFilter === 'available' && !b.returnedAt) return false;
       return true;
     });
   }, [bookings, kitNameFilter, clientFilter, statusFilter]);
@@ -202,6 +231,7 @@ export default function PromoKitsPage() {
     reference: b => b.kitReference,
     kitName: b => b.kitName,
     client: b => b.clientName,
+    copies: b => bCopies(b),
     out: b => b.bookedOutAt,
     outBy: b => b.bookedOutByName,
     takenBy: b => b.holder.name,
@@ -218,24 +248,24 @@ export default function PromoKitsPage() {
 
   // ── Excel export ───────────────────────────────────────────────────────────
   function exportKits() {
-    const rows = kitSort.sorted.map(k => {
-      const open = openBookingByKit.get(k.id);
-      return {
-        Ref: k.reference,
-        'Kit Name': k.name,
-        Client: k.clientName,
-        Lines: k.lines.length,
-        Units: kitUnits(k),
-        Status: PROMO_KIT_STATUS_LABELS[k.status],
-        With: open?.holder.name ?? '',
-        'With Email': open?.holder.email ?? '',
-        Since: fmtPromoDateTime(open?.bookedOutAt),
-        Created: fmtPromoDateTime(k.createdAt),
-        'Created By': k.createdByName ?? '',
-        Notes: k.notes ?? '',
-        Contents: k.lines.map(l => `${l.code} x${l.quantity}`).join('; '),
-      };
-    });
+    const rows = kitSort.sorted.map(k => ({
+      Ref: k.reference,
+      'Kit Name': k.name,
+      Client: k.clientName,
+      'Copies Owned': k.availability.total,
+      'Copies Out': k.availability.out,
+      'Copies At Home': k.availability.available,
+      Lines: k.lines.length,
+      'Units Per Copy': kitUnits(k),
+      Status: availabilityLabel(k.availability),
+      With: k.openBookings.map(b => `${b.holderName} (${b.copies})`).join('; '),
+      'With Email': k.openBookings.map(b => b.holderEmail).join('; '),
+      'Out Since': k.openBookings.map(b => fmtPromoDateTime(b.bookedOutAt)).join('; '),
+      Created: fmtPromoDateTime(k.createdAt),
+      'Created By': k.createdByName ?? '',
+      Notes: k.notes ?? '',
+      'Contents Per Copy': k.lines.map(l => `${l.code} x${l.quantity}`).join('; '),
+    }));
     writeSheet(rows, 'Promo Kits', 'iRamFlow_Promo_Kits');
   }
 
@@ -244,6 +274,7 @@ export default function PromoKitsPage() {
       Ref: b.kitReference,
       'Kit Name': b.kitName,
       Client: b.clientName,
+      Copies: bCopies(b),
       'Booked Out': fmtPromoDateTime(b.bookedOutAt),
       'Booked Out By': b.bookedOutByName,
       'Taken By': b.holder.name,
@@ -288,13 +319,14 @@ export default function PromoKitsPage() {
       const res = await authFetch('/api/promo/kits', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId: newClientId, name: newKitName, notes: newKitNotes }),
+        body: JSON.stringify({ clientId: newClientId, name: newKitName, totalQuantity: newKitQty, notes: newKitNotes }),
       });
       const data = await res.json();
       if (!res.ok) { notify(data.error ?? 'Could not create the kit', 'error'); return; }
-      notify(`${data.kit.reference} created. Add items to it next.`);
+      notify(`${data.kit.reference} created (${copiesLabel(newKitQty)}). Add items to it next.`);
       setCreateOpen(false);
       setNewKitName('');
+      setNewKitQty(1);
       setNewKitNotes('');
       await fetchAll();
     } finally {
@@ -305,6 +337,7 @@ export default function PromoKitsPage() {
   // ── Book out ───────────────────────────────────────────────────────────────
   function openBookOut(kit: KitDto) {
     setOutKit(kit);
+    setOutCopies(1);
     setOutConfirmed(false);
     setOutHolder(null);
     setHolderSearch('');
@@ -351,6 +384,7 @@ export default function PromoKitsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           holder: { type: outHolder.type, id: outHolder.id },
+          copies: outCopies,
           contentsConfirmed: outConfirmed,
           note: outNote,
         }),
@@ -359,8 +393,8 @@ export default function PromoKitsPage() {
       if (!res.ok) { notify(data.error ?? 'Could not book the kit out', 'error'); return; }
       notify(
         data.emailError
-          ? `${outKit.reference} booked out to ${outHolder.name}, but the email FAILED: ${data.emailError}`
-          : `${outKit.reference} booked out to ${outHolder.name}. Emailed ${(data.emailed ?? []).join(' and ')}.`,
+          ? `${outKit.reference}: ${copiesLabel(outCopies)} booked out to ${outHolder.name}, but the email FAILED: ${data.emailError}`
+          : `${outKit.reference}: ${copiesLabel(outCopies)} booked out to ${outHolder.name}. Emailed ${(data.emailed ?? []).join(' and ')}.`,
         data.emailError ? 'error' : 'success',
       );
       setOutKit(null);
@@ -372,14 +406,22 @@ export default function PromoKitsPage() {
 
   // ── Book in ────────────────────────────────────────────────────────────────
   function openBookIn(kit: KitDto) {
-    const booking = openBookingByKit.get(kit.id);
-    if (!booking) { notify('No open booking found for that kit', 'error'); return; }
+    if (kit.openBookings.length === 0) { notify('No open booking found for that kit', 'error'); return; }
     setInKit(kit);
-    setInBooking(booking);
-    // Default every line to fully returned — the common case is everything came
-    // back, and an admin unticking what is missing is faster than ticking 20 rows.
-    setInReturned(Object.fromEntries(booking.lines.map(l => [l.lineId, l.quantity])));
     setInNote('');
+    // One booking out: go straight to the tick-list. Several: make them pick,
+    // because closing the wrong person's booking cannot be undone by a retry.
+    if (kit.openBookings.length === 1) chooseBooking(kit.openBookings[0].id);
+    else setInBooking(null);
+  }
+
+  function chooseBooking(bookingId: string) {
+    const full = bookings.find(b => b.id === bookingId);
+    if (!full) { notify('That booking could not be loaded. Refresh and try again.', 'error'); return; }
+    setInBooking(full);
+    // Default every line to fully returned — the common case is everything came
+    // back, and unticking what is missing is faster than ticking 20 rows.
+    setInReturned(Object.fromEntries(full.lines.map(l => [l.lineId, l.quantity])));
   }
 
   const inMissing = useMemo(() => {
@@ -395,18 +437,20 @@ export default function PromoKitsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          bookingId: inBooking.id,
           returned: inBooking.lines.map(l => ({ lineId: l.lineId, quantity: inReturned[l.lineId] ?? 0 })),
           note: inNote,
         }),
       });
       const data = await res.json();
       if (!res.ok) { notify(data.error ?? 'Could not book the kit in', 'error'); return; }
+      const back = copiesLabel(data.copies ?? 1);
       notify(
         data.emailError
-          ? `${inKit.reference} returned, but the email FAILED: ${data.emailError}`
+          ? `${inKit.reference}: ${back} returned, but the email FAILED: ${data.emailError}`
           : data.complete
-            ? `${inKit.reference} returned in full and is back in stock.`
-            : `${inKit.reference} returned SHORT (${data.missing.length} item(s)) and is back in stock, flagged.`,
+            ? `${inKit.reference}: ${back} returned in full and back in stock.`
+            : `${inKit.reference}: ${back} returned SHORT (${data.missing.length} item(s)) and back in stock, flagged.`,
         data.emailError ? 'error' : 'success',
       );
       setInKit(null);
@@ -419,12 +463,20 @@ export default function PromoKitsPage() {
 
   if (!session) return null;
 
-  const cards: Array<{ label: string; value: number; color: string; onClick?: () => void }> = [
+  const cards: Array<{ label: string; value: number; sub?: string; color: string; onClick?: () => void }> = [
     { label: 'Clients with kits', value: stats.clients, color: 'bg-blue-500' },
-    { label: 'Promo kits', value: stats.kits, color: 'bg-gray-400', onClick: () => setStatusFilter('') },
-    { label: 'At home', value: stats.home, color: 'bg-emerald-500', onClick: () => setStatusFilter('home') },
+    {
+      label: 'Promo kits',
+      value: stats.total,
+      sub: `${stats.kitTypes} kit${stats.kitTypes === 1 ? '' : ' types'}`,
+      color: 'bg-gray-400',
+      onClick: () => setStatusFilter(''),
+    },
+    { label: 'At home', value: stats.home, color: 'bg-emerald-500', onClick: () => setStatusFilter('available') },
     { label: 'Out', value: stats.out, color: 'bg-amber-500', onClick: () => setStatusFilter('out') },
   ];
+
+  const outUnitsPerCopy = outKit ? kitUnits(outKit) : 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -451,7 +503,7 @@ export default function PromoKitsPage() {
           </Link>
           {canManage && (
             <button
-              onClick={() => { setNewClientId(clientFilter || ''); setCreateOpen(true); }}
+              onClick={() => { setNewClientId(clientFilter || ''); setNewKitQty(1); setCreateOpen(true); }}
               className="px-4 py-2 rounded-lg text-sm font-medium bg-[var(--color-primary)] text-white hover:opacity-90"
             >
               Create Promo Kit
@@ -475,6 +527,7 @@ export default function PromoKitsPage() {
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{c.label}</span>
             </div>
             <div className="text-3xl font-bold text-gray-900 mt-2">{c.value}</div>
+            {c.sub && <div className="text-xs text-gray-400 mt-0.5">{c.sub}</div>}
           </button>
         ))}
       </div>
@@ -505,12 +558,12 @@ export default function PromoKitsPage() {
           <label className="block text-xs text-gray-600 mb-1">Status</label>
           <select
             value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value as '' | PromoKitStatus)}
+            onChange={e => setStatusFilter(e.target.value as '' | 'available' | 'out')}
             className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm bg-white"
           >
             <option value="">All</option>
-            <option value="home">At Home</option>
-            <option value="out">Out</option>
+            <option value="available">Has copies at home</option>
+            <option value="out">Has copies out</option>
           </select>
         </div>
         <div className="flex items-end gap-2">
@@ -556,7 +609,7 @@ export default function PromoKitsPage() {
                   <th key={label} className="relative p-0" style={kitResize.widthStyle(ci)}>
                     <div className="flex items-center">
                       <SortableTh
-                        col={['reference', 'name', 'client', 'lines', 'units', 'status', 'with', 'since', 'created'][ci]}
+                        col={KIT_SORT_KEYS[ci]}
                         label={label}
                         sortCol={kitSort.sortCol}
                         sortDir={kitSort.sortDir}
@@ -584,7 +637,8 @@ export default function PromoKitsPage() {
                 </tr>
               )}
               {kitSort.sorted.map(k => {
-                const open = openBookingByKit.get(k.id);
+                const a = k.availability;
+                const holders = k.openBookings;
                 return (
                   <tr key={k.id} className="border-t border-gray-100 hover:bg-gray-50">
                     <td className="px-3 py-2 font-mono text-xs">{k.reference}</td>
@@ -594,31 +648,49 @@ export default function PromoKitsPage() {
                       </Link>
                     </td>
                     <td className="px-3 py-2">{k.clientName}</td>
+                    <td className="px-3 py-2 font-medium">{a.total}</td>
+                    <td className={`px-3 py-2 ${a.out > 0 ? 'font-medium text-amber-700' : 'text-gray-400'}`}>{a.out}</td>
                     <td className="px-3 py-2">{k.lines.length}</td>
                     <td className="px-3 py-2">{kitUnits(k)}</td>
                     <td className="px-3 py-2">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${PROMO_KIT_STATUS_BADGE[k.status]}`}>
-                        {PROMO_KIT_STATUS_LABELS[k.status]}
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${availabilityBadge(a)}`}>
+                        {availabilityLabel(a)}
                       </span>
                     </td>
                     <td className="px-3 py-2">
-                      {open ? <span title={open.holder.email}>{open.holder.name}</span> : <span className="text-gray-400">-</span>}
+                      {holders.length === 0 ? (
+                        <span className="text-gray-400">-</span>
+                      ) : (
+                        <span
+                          title={holders
+                            .map(b => `${b.holderName} - ${copiesLabel(b.copies)} since ${fmtPromoDateTime(b.bookedOutAt)}`)
+                            .join('\n')}
+                        >
+                          {holders[0].holderName}
+                          {holders.length > 1 ? ` +${holders.length - 1} more` : ''}
+                        </span>
+                      )}
                     </td>
-                    <td className="px-3 py-2 text-xs text-gray-600">{open ? fmtPromoDateTime(open.bookedOutAt) : '-'}</td>
                     <td className="px-3 py-2 text-xs text-gray-600">{fmtPromoDateTime(k.createdAt)}</td>
                     <td className="px-3 py-2 text-right whitespace-nowrap">
                       <Link href={`/promo/kits/${k.id}`} className="text-xs text-gray-600 hover:text-gray-900 mr-3">Open</Link>
-                      {canBook && k.status === 'home' && (
+                      {canBook && (
                         <button
                           onClick={() => openBookOut(k)}
-                          disabled={k.lines.length === 0}
-                          title={k.lines.length === 0 ? 'Add items to the kit first' : 'Book this kit out'}
-                          className="px-2.5 py-1 rounded-md text-xs font-medium bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+                          disabled={k.lines.length === 0 || a.available === 0}
+                          title={
+                            k.lines.length === 0
+                              ? 'Add items to the kit first'
+                              : a.available === 0
+                                ? 'Every copy is already out'
+                                : `Book out (${a.available} on the shelf)`
+                          }
+                          className="px-2.5 py-1 rounded-md text-xs font-medium bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed mr-1"
                         >
                           Book Out
                         </button>
                       )}
-                      {canBook && k.status === 'out' && (
+                      {canBook && a.out > 0 && (
                         <button
                           onClick={() => openBookIn(k)}
                           className="px-2.5 py-1 rounded-md text-xs font-medium bg-amber-600 text-white hover:opacity-90"
@@ -645,7 +717,7 @@ export default function PromoKitsPage() {
                   <th key={label} className="relative p-0" style={logResize.widthStyle(ci)}>
                     <div className="flex items-center">
                       <SortableTh
-                        col={['reference', 'kitName', 'client', 'out', 'outBy', 'takenBy', 'email', 'lines', 'units', 'returned', 'receivedBy', 'result', 'note'][ci]}
+                        col={LOG_SORT_KEYS[ci]}
                         label={label}
                         sortCol={logSort.sortCol}
                         sortDir={logSort.sortDir}
@@ -673,6 +745,7 @@ export default function PromoKitsPage() {
                     <td className="px-3 py-2 font-mono text-xs">{b.kitReference}</td>
                     <td className="px-3 py-2">{b.kitName}</td>
                     <td className="px-3 py-2">{b.clientName}</td>
+                    <td className="px-3 py-2 font-medium">{bCopies(b)}</td>
                     <td className="px-3 py-2 text-xs">{fmtPromoDateTime(b.bookedOutAt)}</td>
                     <td className="px-3 py-2">{b.bookedOutByName}</td>
                     <td className="px-3 py-2">{b.holder.name}</td>
@@ -733,9 +806,23 @@ export default function PromoKitsPage() {
                 autoComplete="off"
                 value={newKitName}
                 onChange={e => setNewKitName(e.target.value)}
-                placeholder="e.g. Gauteng Roadshow Kit A"
+                placeholder="e.g. Gauteng Roadshow Kit"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
               />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">How many of this kit do you have?</label>
+              <input
+                type="number"
+                min={1}
+                value={newKitQty}
+                onChange={e => setNewKitQty(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                className="w-28 px-3 py-2 border border-gray-300 rounded-md text-sm text-right"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Identical copies of the same kit. Each one can go out to a different person, and the item
+                quantities you add are per copy.
+              </p>
             </div>
             <div>
               <label className="block text-xs text-gray-600 mb-1">Notes (optional)</label>
@@ -766,21 +853,60 @@ export default function PromoKitsPage() {
               <h2 className="text-lg font-semibold text-gray-900">
                 Book Out {outKit.reference} {outKit.name}
               </h2>
-              <p className="text-sm text-gray-500">{outKit.clientName}</p>
+              <p className="text-sm text-gray-500">
+                {outKit.clientName}
+                {' · '}
+                {outKit.availability.available} of {outKit.availability.total} on the shelf
+              </p>
             </div>
 
-            {/* 1. Confirm the contents */}
+            {/* 1. How many copies */}
+            {outKit.availability.total > 1 && (
+              <div className="border border-gray-200 rounded-lg">
+                <div className="px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-600 uppercase border-b border-gray-200">
+                  1. How many copies are going out
+                </div>
+                <div className="p-4 flex items-center gap-3">
+                  <input
+                    type="number"
+                    min={1}
+                    max={outKit.availability.available}
+                    value={outCopies}
+                    onChange={e =>
+                      setOutCopies(Math.max(1, Math.min(outKit.availability.available, Math.floor(Number(e.target.value) || 1))))
+                    }
+                    className="w-24 px-3 py-2 border border-gray-300 rounded-md text-sm text-right"
+                  />
+                  <span className="text-sm text-gray-600">
+                    of {outKit.availability.available} available
+                    {outKit.availability.out > 0 ? ` (${outKit.availability.out} already out)` : ''}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* 2. Confirm the contents */}
             <div className="border border-gray-200 rounded-lg">
               <div className="px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-600 uppercase border-b border-gray-200">
-                1. Confirm the kit contents
+                {outKit.availability.total > 1 ? '2.' : '1.'} Confirm the kit contents
               </div>
               <table className="w-full text-sm">
+                <thead className="text-xs text-gray-500 uppercase">
+                  <tr className="border-b border-gray-100">
+                    <th className="px-4 py-1.5 text-left font-medium">Item</th>
+                    <th className="px-4 py-1.5 text-left font-medium">Description</th>
+                    <th className="px-4 py-1.5 text-right font-medium">Per copy</th>
+                    <th className="px-4 py-1.5 text-right font-medium">Going out</th>
+                    <th className="px-4 py-1.5" />
+                  </tr>
+                </thead>
                 <tbody>
                   {outKit.lines.map(l => (
                     <tr key={l.id} className="border-b border-gray-100 last:border-0">
                       <td className="px-4 py-1.5 font-mono text-xs w-32">{l.code}</td>
                       <td className="px-4 py-1.5">{l.description}</td>
-                      <td className="px-4 py-1.5 text-right w-16 font-medium">x{l.quantity}</td>
+                      <td className="px-4 py-1.5 text-right w-20 text-gray-500">{l.quantity}</td>
+                      <td className="px-4 py-1.5 text-right w-24 font-medium">{l.quantity * outCopies}</td>
                       <td className="px-4 py-1.5 text-xs text-gray-400 w-24">
                         {l.source === 'sku' ? 'Client SKU' : 'Promo'}
                       </td>
@@ -792,15 +918,16 @@ export default function PromoKitsPage() {
                 <input type="checkbox" checked={outConfirmed} onChange={e => setOutConfirmed(e.target.checked)} className="w-4 h-4" />
                 <span className="text-sm font-medium text-gray-800">
                   I have checked all {outKit.lines.length} item{outKit.lines.length === 1 ? '' : 's'}{' '}
-                  ({kitUnits(outKit)} unit{kitUnits(outKit) === 1 ? '' : 's'}) are in the kit
+                  ({outUnitsPerCopy * outCopies} unit{outUnitsPerCopy * outCopies === 1 ? '' : 's'}) are in the{' '}
+                  {outCopies === 1 ? 'kit' : `${outCopies} kits`}
                 </span>
               </label>
             </div>
 
-            {/* 2. Who is taking it */}
+            {/* 3. Who is taking it */}
             <div className="border border-gray-200 rounded-lg">
               <div className="px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-600 uppercase border-b border-gray-200">
-                2. Who is taking the kit
+                {outKit.availability.total > 1 ? '3.' : '2.'} Who is taking the kit
               </div>
               <div className="p-4 flex flex-col gap-2">
                 {outHolder ? (
@@ -910,14 +1037,53 @@ export default function PromoKitsPage() {
                 title={!outConfirmed ? 'Tick the contents confirmation' : !outHolder ? 'Select who is taking the kit' : ''}
                 className="px-4 py-2 rounded-md text-sm font-medium bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {outBusy ? 'Booking out…' : 'Book Out and Email'}
+                {outBusy ? 'Booking out…' : `Book Out ${copiesLabel(outCopies)} and Email`}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── Book in modal ─────────────────────────────────────────────────── */}
+      {/* ── Book in: pick which booking is coming back ────────────────────── */}
+      {inKit && !inBooking && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-40 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 flex flex-col gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">
+                Book In {inKit.reference} {inKit.name}
+              </h2>
+              <p className="text-sm text-gray-500">
+                {inKit.openBookings.length} bookings are out. Which one is coming back?
+              </p>
+            </div>
+            <div className="border border-gray-200 rounded-md divide-y divide-gray-100">
+              {inKit.openBookings.map(b => (
+                <button
+                  key={b.id}
+                  onClick={() => chooseBooking(b.id)}
+                  className="w-full text-left px-4 py-3 hover:bg-gray-50"
+                >
+                  <div className="text-sm font-medium text-gray-900">{b.holderName}</div>
+                  <div className="text-xs text-gray-500">
+                    {copiesLabel(b.copies)}
+                    {' · out since '}
+                    {fmtPromoDateTime(b.bookedOutAt)}
+                    {' · booked out by '}
+                    {b.bookedOutByName}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className="flex justify-end">
+              <button onClick={() => setInKit(null)} className="px-4 py-2 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Book in: the tick-list ────────────────────────────────────────── */}
       {inKit && inBooking && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-40 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 flex flex-col gap-4">
@@ -926,7 +1092,7 @@ export default function PromoKitsPage() {
                 Book In {inKit.reference} {inKit.name}
               </h2>
               <p className="text-sm text-gray-500">
-                Out with {inBooking.holder.name} since {fmtPromoDateTime(inBooking.bookedOutAt)}
+                {copiesLabel(bCopies(inBooking))} out with {inBooking.holder.name} since {fmtPromoDateTime(inBooking.bookedOutAt)}
               </p>
             </div>
 
@@ -991,7 +1157,7 @@ export default function PromoKitsPage() {
                   ))}
                 </ul>
                 <p className="mt-2 text-xs text-red-700">
-                  The kit still goes back into stock, flagged short. A note is required.
+                  The {bCopies(inBooking) === 1 ? 'kit still goes' : 'kits still go'} back into stock, flagged short. A note is required.
                 </p>
               </div>
             )}

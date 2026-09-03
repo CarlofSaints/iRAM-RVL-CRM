@@ -11,12 +11,18 @@
  *                      a kit that has already been booked out.
  *   - source 'promo' → an entry in the module's OWN catalogue (t-shirts, balloons,
  *                      banners, giveaways) which does not exist as a retail SKU.
- * Every line carries a quantity, whichever source it came from.
+ * Every line carries a quantity, whichever source it came from, and those
+ * quantities are PER COPY.
  *
- * A kit is at 'home' or 'out'. Booking it out and back in writes an append-only
- * BOOKING record; the kit itself only ever holds its current status + the id of
- * the booking it is out on. The booking log is the history — a kit's status is
- * derived from it and never edited by hand.
+ * A kit record is a kit TYPE plus how many identical copies exist
+ * (`totalQuantity`). Five copies of the same roadshow kit are ONE record with
+ * totalQuantity 5, so five people can each hold one at the same time.
+ *
+ * A kit therefore has NO STORED STATUS. Booking copies out and back in writes
+ * append-only BOOKING records, and how many copies are out is derived from the
+ * open ones every time (`outCopiesByKit`). Storing "out" on the kit as well
+ * would be one concept in two places, and the two drift the first time a write
+ * half-fails. The log is the truth.
  *
  * Blobs (all private, same store as everything else):
  *   promo/items.json     — the manual promo-material catalogue
@@ -31,19 +37,23 @@
 import fs from 'fs';
 import path from 'path';
 import { put, get } from '@vercel/blob';
-import type { PromoKitStatus, PromoLineSource } from './promoShared';
+import type { PromoLineSource } from './promoShared';
+import { kitTotal, availabilityOf } from './promoShared';
 
 // The pure helpers live in promoShared.ts so the client pages can import them
 // without dragging `fs` into the browser bundle. Re-exported here so server
 // code has one import for the module.
 export {
-  PROMO_KIT_STATUS_LABELS,
-  PROMO_KIT_STATUS_BADGE,
+  kitTotal,
+  availabilityOf,
+  availabilityLabel,
+  availabilityBadge,
+  copiesLabel,
   kitUnits,
   normArticle,
   lineKey,
 } from './promoShared';
-export type { PromoKitStatus, PromoLineSource } from './promoShared';
+export type { PromoLineSource, KitAvailability } from './promoShared';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -68,10 +78,17 @@ export interface PromoKit {
   clientId: string;
   name: string;
   notes?: string;
+  /**
+   * How many identical copies of this kit exist. A record is a kit TYPE, not a
+   * single box: five copies of the same roadshow kit are one record with
+   * totalQuantity 5, so five people can hold one each.
+   *
+   * ABSENT MEANS 1 — kits created before quantities existed. Always read it
+   * through kitTotal(), never `kit.totalQuantity` directly.
+   */
+  totalQuantity?: number;
+  /** Line quantities are PER COPY. Booking N copies takes N x quantity of each. */
   lines: PromoKitLine[];
-  status: PromoKitStatus;
-  /** Set while status === 'out' — the booking the kit is currently out on. */
-  currentBookingId?: string;
   createdAt: string;
   createdByName?: string;
   updatedAt: string;
@@ -140,6 +157,17 @@ export interface PromoBooking {
   holder: PromoHolder;
   /** Explicit "I have counted every item in this kit" tick from the book-out screen. */
   contentsConfirmed: boolean;
+  /**
+   * How many copies of the kit went out on THIS booking. Absent means 1 (every
+   * booking taken before kits had quantities). Read through bookingCopies().
+   */
+  copies?: number;
+  /**
+   * The PHYSICAL count that left, i.e. the kit's per-copy quantity multiplied
+   * by `copies`. Deliberately not per-copy: the return tick-list is a count of
+   * real objects on a real table, and nobody wants to do the multiplication
+   * while holding a box.
+   */
   lines: PromoBookingLine[];
   outNote?: string;
   outEmailTo?: string[];
@@ -248,7 +276,16 @@ export async function savePromoItems(items: PromoItem[]): Promise<void> {
 // ── Kits ─────────────────────────────────────────────────────────────────────
 
 export async function listPromoKits(): Promise<PromoKit[]> {
-  return readJson<PromoKit[]>(KITS_KEY, 'kits.json', []);
+  const kits = await readJson<PromoKit[]>(KITS_KEY, 'kits.json', []);
+  // Drop the pre-quantity `status` / `currentBookingId` fields on read so they
+  // are never written back. Leaving a dead field in the blob that nothing reads
+  // is how the next person ends up trusting it. Availability is derived from
+  // the bookings; there is no stored status.
+  for (const k of kits as Array<PromoKit & { status?: unknown; currentBookingId?: unknown }>) {
+    delete k.status;
+    delete k.currentBookingId;
+  }
+  return kits;
 }
 
 export async function savePromoKits(kits: PromoKit[]): Promise<void> {
@@ -317,3 +354,40 @@ export async function nextKitReference(): Promise<string> {
   return `PK-${String(next).padStart(4, '0')}`;
 }
 
+
+// ── Derived state: how many copies of a kit are out ──────────────────────────
+
+/**
+ * Copies on a booking. Absent means 1 — bookings taken before kits had
+ * quantities. Never read `booking.copies` directly.
+ */
+export function bookingCopies(b: Pick<PromoBooking, 'copies'>): number {
+  const n = Number(b.copies);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+}
+
+/** A booking that has not come back yet. */
+export function isOpenBooking(b: PromoBooking): boolean {
+  return !b.returnedAt;
+}
+
+/**
+ * How many copies of each kit are out, derived from the OPEN bookings.
+ *
+ * A kit has no stored status on purpose. Storing "out" alongside a booking log
+ * that already says who has what is one concept in two places, and the two
+ * drift the first time a write half-fails. The log is the truth; this reads it.
+ */
+export function outCopiesByKit(bookings: PromoBooking[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const b of bookings) {
+    if (!isOpenBooking(b)) continue;
+    m.set(b.kitId, (m.get(b.kitId) ?? 0) + bookingCopies(b));
+  }
+  return m;
+}
+
+/** Total / out / available for one kit, given the out-count map above. */
+export function kitAvailability(kit: PromoKit, outByKit: Map<string, number>) {
+  return availabilityOf(kitTotal(kit), outByKit.get(kit.id) ?? 0);
+}

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
-import { PROMO_KIT_STATUS_LABELS, kitUnits, type PromoKitStatus } from '@/lib/promoShared';
+import { availabilityLabel, copiesLabel, kitUnits, type KitAvailability } from '@/lib/promoShared';
 
 /**
  * Item-first version of "add an item to a kit".
@@ -22,7 +22,7 @@ interface KitDto {
   clientName: string;
   name: string;
   lines: Array<{ id: string; source: 'sku' | 'promo'; ref: string; code: string; quantity: number }>;
-  status: PromoKitStatus;
+  availability: KitAvailability;
 }
 interface ClientDto { id: string; name: string; vendorNumbers?: string[] }
 interface ClientProductDto { articleNumber: string; description: string }
@@ -132,10 +132,9 @@ export default function AddToKitsPage() {
     });
   }
 
-  const selectableIds = useMemo(
-    () => visibleKits.filter(k => k.status === 'home').map(k => k.id),
-    [visibleKits],
-  );
+  // Every kit is selectable now: copies already out do not lock a kit, because
+  // each booking keeps the contents list that went out with it.
+  const selectableIds = useMemo(() => visibleKits.map(k => k.id), [visibleKits]);
   const allShownSelected = selectableIds.length > 0 && selectableIds.every(id => selected.has(id));
 
   async function handleAdd() {
@@ -321,17 +320,11 @@ export default function AddToKitsPage() {
                 </div>
               )}
               {visibleKits.map(k => {
-                const out = k.status === 'out';
                 const have = alreadyIn(k);
                 return (
-                  <label
-                    key={k.id}
-                    className={`flex items-start gap-3 px-3 py-2 ${out ? 'bg-gray-50 cursor-not-allowed' : 'hover:bg-gray-50 cursor-pointer'}`}
-                    title={out ? `${k.reference} is out with someone, so its contents are locked` : ''}
-                  >
+                  <label key={k.id} className="flex items-start gap-3 px-3 py-2 hover:bg-gray-50 cursor-pointer">
                     <input
                       type="checkbox"
-                      disabled={out}
                       checked={selected.has(k.id)}
                       onChange={() => toggleKit(k.id)}
                       className="w-4 h-4 mt-0.5"
@@ -342,8 +335,11 @@ export default function AddToKitsPage() {
                       <span className="block text-xs text-gray-500">
                         {k.clientName}
                         {' · '}
-                        {k.lines.length} line{k.lines.length === 1 ? '' : 's'}, {kitUnits(k)} unit{kitUnits(k) === 1 ? '' : 's'}
-                        {out ? ` · ${PROMO_KIT_STATUS_LABELS.out}` : ''}
+                        {copiesLabel(k.availability.total)}
+                        {' · '}
+                        {k.lines.length} line{k.lines.length === 1 ? '' : 's'}, {kitUnits(k)} unit
+                        {kitUnits(k) === 1 ? '' : 's'} per copy
+                        {k.availability.out > 0 ? ` · ${availabilityLabel(k.availability)}` : ''}
                         {have > 0 ? ` · already has ${have}` : ''}
                       </span>
                     </span>

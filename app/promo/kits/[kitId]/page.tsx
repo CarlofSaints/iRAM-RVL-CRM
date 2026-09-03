@@ -6,11 +6,13 @@ import { useParams, useRouter } from 'next/navigation';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
 import {
-  PROMO_KIT_STATUS_BADGE,
-  PROMO_KIT_STATUS_LABELS,
+  availabilityBadge,
+  availabilityLabel,
+  copiesLabel,
   fmtPromoDateTime,
+  kitTotal,
   kitUnits,
-  type PromoKitStatus,
+  type KitAvailability,
 } from '@/lib/promoShared';
 
 interface KitLineDto {
@@ -30,14 +32,15 @@ interface KitDto {
   clientName: string;
   name: string;
   notes?: string;
+  totalQuantity?: number;
   lines: KitLineDto[];
-  status: PromoKitStatus;
-  currentBookingId?: string;
+  availability: KitAvailability;
   createdAt: string;
   createdByName?: string;
 }
 interface BookingDto {
   id: string;
+  copies?: number;
   bookedOutAt: string;
   bookedOutByName: string;
   holder: { name: string; email: string };
@@ -68,6 +71,7 @@ export default function PromoKitDetailPage() {
   const [editingHeader, setEditingHeader] = useState(false);
   const [editName, setEditName] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [editQty, setEditQty] = useState(1);
 
   // Add-item panel
   const [addTab, setAddTab] = useState<'sku' | 'promo'>('sku');
@@ -128,7 +132,12 @@ export default function PromoKitDetailPage() {
     return list.slice(0, 50).map(i => ({ ref: i.id, code: i.code, description: i.description }));
   }, [addTab, itemSearch, products, promoItems]);
 
-  const isOut = kit?.status === 'out';
+  /**
+   * Copies out do NOT lock the kit. Each booking snapshots the list that left
+   * with it, so the copies on the road come back against their own list. Only
+   * DELETE is refused while anything is out.
+   */
+  const copiesOut = kit?.availability.out ?? 0;
 
   async function handleAddItem() {
     if (!kit || !pendingRef) return;
@@ -200,8 +209,8 @@ export default function PromoKitDetailPage() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold text-gray-900">{kit.name}</h1>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${PROMO_KIT_STATUS_BADGE[kit.status]}`}>
-              {PROMO_KIT_STATUS_LABELS[kit.status]}
+            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${availabilityBadge(kit.availability)}`}>
+              {availabilityLabel(kit.availability)}
             </span>
           </div>
           <p className="text-sm text-gray-500">
@@ -209,7 +218,10 @@ export default function PromoKitDetailPage() {
             {' · '}
             {kit.clientName}
             {' · '}
-            {kit.lines.length} line{kit.lines.length === 1 ? '' : 's'}, {kitUnits(kit)} unit{kitUnits(kit) === 1 ? '' : 's'}
+            {copiesLabel(kit.availability.total)}
+            {' · '}
+            {kit.lines.length} line{kit.lines.length === 1 ? '' : 's'}, {kitUnits(kit)} unit
+            {kitUnits(kit) === 1 ? '' : 's'} per copy
           </p>
           {kit.notes && <p className="text-sm text-gray-600 mt-1">{kit.notes}</p>}
         </div>
@@ -219,13 +231,18 @@ export default function PromoKitDetailPage() {
           </Link>
           {canManage && !editingHeader && (
             <button
-              onClick={() => { setEditingHeader(true); setEditName(kit.name); setEditNotes(kit.notes ?? ''); }}
+              onClick={() => {
+                setEditingHeader(true);
+                setEditName(kit.name);
+                setEditNotes(kit.notes ?? '');
+                setEditQty(kitTotal(kit));
+              }}
               className="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 text-gray-700 hover:bg-gray-50"
             >
-              Rename
+              Edit Kit
             </button>
           )}
-          {canManage && !isOut && (
+          {canManage && copiesOut === 0 && (
             <button onClick={handleDeleteKit} className="px-4 py-2 rounded-lg text-sm font-medium border border-red-300 text-red-700 hover:bg-red-50">
               Delete Kit
             </button>
@@ -235,10 +252,25 @@ export default function PromoKitDetailPage() {
 
       {editingHeader && (
         <div className="bg-white border border-gray-200 rounded-lg p-4 flex flex-col gap-3">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs text-gray-600 mb-1">Kit name</label>
               <input autoComplete="off" value={editName} onChange={e => setEditName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">How many of this kit do you have?</label>
+              <input
+                type="number"
+                min={Math.max(1, copiesOut)}
+                value={editQty}
+                onChange={e => setEditQty(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-right"
+              />
+              {copiesOut > 0 && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {copiesLabel(copiesOut)} out with people, so this cannot go below {copiesOut}.
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-xs text-gray-600 mb-1">Notes</label>
@@ -247,7 +279,11 @@ export default function PromoKitDetailPage() {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={async () => { if (await patchKit({ name: editName, notes: editNotes }, 'Kit saved')) setEditingHeader(false); }}
+              onClick={async () => {
+                if (await patchKit({ name: editName, notes: editNotes, totalQuantity: editQty }, 'Kit saved')) {
+                  setEditingHeader(false);
+                }
+              }}
               className="px-4 py-2 rounded-md text-sm font-medium bg-[var(--color-primary)] text-white hover:opacity-90"
             >
               Save
@@ -259,17 +295,24 @@ export default function PromoKitDetailPage() {
         </div>
       )}
 
-      {isOut && (
+      {copiesOut > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-900">
-          This kit is out with someone. Its contents are locked until it is booked back in, because the return
-          tick-list is built from the list both people agreed to at hand-over.
+          {copiesLabel(copiesOut)} of this kit {copiesOut === 1 ? 'is' : 'are'} out with someone. You can still edit
+          the contents: each booking keeps the list that went out with it, so the copies on the road come back
+          against their own list. The kit cannot be deleted until they are all back.
         </div>
       )}
 
       {/* Contents */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-        <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">
-          Kit contents
+        <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+          <span className="text-xs font-semibold text-gray-600 uppercase">Kit contents</span>
+          <span className="text-xs text-gray-500">
+            Quantities are per copy
+            {kit.availability.total > 1
+              ? `. Booking out all ${kit.availability.total} copies takes ${kitUnits(kit) * kit.availability.total} units`
+              : ''}
+          </span>
         </div>
         <table className="w-full text-sm">
           <thead className="bg-white text-xs text-gray-500 uppercase">
@@ -277,7 +320,7 @@ export default function PromoKitDetailPage() {
               <th className="px-4 py-2 text-left font-medium">Item</th>
               <th className="px-4 py-2 text-left font-medium">Description</th>
               <th className="px-4 py-2 text-left font-medium">Source</th>
-              <th className="px-4 py-2 text-right font-medium">Qty</th>
+              <th className="px-4 py-2 text-right font-medium">Qty per copy</th>
               <th className="px-4 py-2 text-left font-medium">Added</th>
               <th className="px-4 py-2 text-right font-medium"></th>
             </tr>
@@ -292,7 +335,7 @@ export default function PromoKitDetailPage() {
                 <td className="px-4 py-2">{l.description}</td>
                 <td className="px-4 py-2 text-xs text-gray-500">{l.source === 'sku' ? 'Client SKU' : 'Promo material'}</td>
                 <td className="px-4 py-2 text-right w-28">
-                  {canManage && !isOut ? (
+                  {canManage ? (
                     <input
                       type="number"
                       min={1}
@@ -312,7 +355,7 @@ export default function PromoKitDetailPage() {
                   {l.addedByName ? ` by ${l.addedByName}` : ''}
                 </td>
                 <td className="px-4 py-2 text-right">
-                  {canManage && !isOut && (
+                  {canManage && (
                     <button
                       onClick={() => void patchKit({ removeLineIds: [l.id] }, `${l.code} removed`)}
                       className="text-xs text-red-600 hover:underline"
@@ -328,7 +371,7 @@ export default function PromoKitDetailPage() {
       </div>
 
       {/* Add items */}
-      {canManage && !isOut && (
+      {canManage && (
         <div className="bg-white border border-gray-200 rounded-lg">
           <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
             <span className="text-xs font-semibold text-gray-600 uppercase">Add items to this kit</span>
@@ -421,6 +464,7 @@ export default function PromoKitDetailPage() {
           <thead className="text-xs text-gray-500 uppercase">
             <tr className="border-b border-gray-100">
               <th className="px-4 py-2 text-left font-medium">Booked out</th>
+              <th className="px-4 py-2 text-right font-medium">Copies</th>
               <th className="px-4 py-2 text-left font-medium">By</th>
               <th className="px-4 py-2 text-left font-medium">Taken by</th>
               <th className="px-4 py-2 text-left font-medium">Returned</th>
@@ -431,13 +475,14 @@ export default function PromoKitDetailPage() {
           </thead>
           <tbody>
             {bookings.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-500">This kit has never been booked out.</td></tr>
+              <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-500">This kit has never been booked out.</td></tr>
             )}
             {bookings.map(b => {
               const missing = b.returnedAt ? b.lines.filter(l => (l.returnedQuantity ?? 0) < l.quantity) : [];
               return (
                 <tr key={b.id} className="border-b border-gray-100 last:border-0">
                   <td className="px-4 py-2 text-xs">{fmtPromoDateTime(b.bookedOutAt)}</td>
+                  <td className="px-4 py-2 text-right font-medium">{b.copies ?? 1}</td>
                   <td className="px-4 py-2">{b.bookedOutByName}</td>
                   <td className="px-4 py-2" title={b.holder.email}>{b.holder.name}</td>
                   <td className="px-4 py-2 text-xs">{fmtPromoDateTime(b.returnedAt)}</td>

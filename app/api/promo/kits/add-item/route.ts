@@ -64,14 +64,10 @@ export async function POST(req: NextRequest) {
       { status: 403 },
     );
   }
-  // A kit that is out is frozen — its booking record holds the agreed contents.
-  const outKits = targets.filter(k => k.status === 'out');
-  if (outKits.length > 0) {
-    return NextResponse.json(
-      { error: `${outKits.map(k => `${k.reference} ${k.name}`).join(', ')} ${outKits.length === 1 ? 'is' : 'are'} currently out. Book ${outKits.length === 1 ? 'it' : 'them'} back in first.` },
-      { status: 409 },
-    );
-  }
+  // Copies already out do NOT block an edit: each booking snapshots the list
+  // that left with it and the return tick-list is built from the booking, so
+  // the copies on the road come back against what they went out on. Blocking
+  // would mean a kit with one copy permanently on tour could never be edited.
 
   // ── Resolve what the item actually is ──────────────────────────────────────
   let code = '';

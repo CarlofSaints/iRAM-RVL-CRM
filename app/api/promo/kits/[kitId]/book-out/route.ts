@@ -3,10 +3,12 @@ import { randomUUID } from 'crypto';
 import { promoContext, fullName } from '@/lib/promoScope';
 import {
   listPromoKits,
-  savePromoKits,
   listPromoBookings,
   savePromoBookings,
   listPromoContacts,
+  outCopiesByKit,
+  kitAvailability,
+  copiesLabel,
   type PromoBooking,
   type PromoHolder,
 } from '@/lib/promoData';
@@ -37,19 +39,42 @@ export async function POST(
 
   const { kitId } = await params;
   const body = await req.json().catch(() => null) as
-    | { holder?: { type?: string; id?: string }; contentsConfirmed?: boolean; note?: string }
+    | { holder?: { type?: string; id?: string }; contentsConfirmed?: boolean; note?: string; copies?: number }
     | null;
   if (!body) return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
 
-  const kits = await listPromoKits();
+  const [kits, existingBookings] = await Promise.all([listPromoKits(), listPromoBookings()]);
   const kit = kits.find(k => k.id === kitId);
   if (!kit) return NextResponse.json({ error: 'Kit not found' }, { status: 404 });
   if (!ctx.canSeeClient(kit.clientId)) {
     return NextResponse.json({ error: 'You do not have access to that client' }, { status: 403 });
   }
-  if (kit.status === 'out') {
-    return NextResponse.json({ error: `${kit.reference} is already out.` }, { status: 409 });
+
+  // How many copies are being taken, and are there that many on the shelf?
+  // Availability is derived from the open bookings, so two people booking the
+  // last copy at the same moment cannot both succeed on a re-read.
+  const availability = kitAvailability(kit, outCopiesByKit(existingBookings));
+  const copies = body.copies === undefined ? 1 : Math.floor(Number(body.copies));
+  if (!Number.isFinite(copies) || copies < 1) {
+    return NextResponse.json({ error: 'How many copies are going out? Enter 1 or more.' }, { status: 400 });
   }
+  if (availability.available === 0) {
+    return NextResponse.json(
+      {
+        error: availability.total === 1
+          ? `${kit.reference} is already out.`
+          : `All ${availability.total} copies of ${kit.reference} are already out.`,
+      },
+      { status: 409 },
+    );
+  }
+  if (copies > availability.available) {
+    return NextResponse.json(
+      { error: `Only ${availability.available} of ${availability.total} cop${availability.available === 1 ? 'y is' : 'ies are'} on the shelf.` },
+      { status: 409 },
+    );
+  }
+
   if (kit.lines.length === 0) {
     return NextResponse.json(
       { error: `${kit.reference} has nothing in it. Add items before booking it out.` },
@@ -105,24 +130,24 @@ export async function POST(
     bookedOutByEmail: ctx.me.email,
     holder,
     contentsConfirmed: true,
+    copies,
+    // Kit line quantities are PER COPY; the booking records the physical count
+    // that actually left, so the return tick-list needs no mental arithmetic.
     lines: kit.lines.map(l => ({
       lineId: l.id,
       source: l.source,
       code: l.code,
       description: l.description,
-      quantity: l.quantity,
+      quantity: l.quantity * copies,
     })),
     outNote: (body.note ?? '').trim() || undefined,
   };
 
-  const bookings = await listPromoBookings();
+  const bookings = existingBookings;
   bookings.push(booking);
   await savePromoBookings(bookings);
-
-  kit.status = 'out';
-  kit.currentBookingId = booking.id;
-  kit.updatedAt = now;
-  await savePromoKits(kits);
+  // The kit record itself is untouched — how many copies are out is derived
+  // from the open bookings, never stored twice.
 
   // ── Email both parties. A failure is recorded, never swallowed. ────────────
   const recipients = [...new Set([ctx.me.email, holder.email].filter(Boolean))];
@@ -136,6 +161,8 @@ export async function POST(
       givenByName: byName,
       takenByName: holder.name,
       takenByEmail: holder.email,
+      copies,
+      totalCopies: availability.total,
       lines: booking.lines,
       note: booking.outNote,
     });
@@ -155,14 +182,20 @@ export async function POST(
     userName: byName,
     clientId: kit.clientId,
     detail:
-      `${kit.reference} "${kit.name}" (${clientName}) booked out to ${holder.name} <${holder.email}> ` +
-      `by ${byName}. ${booking.lines.length} line(s), ${booking.lines.reduce((t, l) => t + l.quantity, 0)} unit(s).` +
+      `${kit.reference} "${kit.name}" (${clientName}): ${copiesLabel(copies)} of ${availability.total} booked out to ` +
+      `${holder.name} <${holder.email}> by ${byName}. ${booking.lines.length} line(s), ` +
+      `${booking.lines.reduce((t, l) => t + l.quantity, 0)} unit(s).` +
       (booking.outEmailError ? ` EMAIL FAILED: ${booking.outEmailError}` : ` Emailed ${recipients.join(', ')}.`),
   });
 
   return NextResponse.json({
     booking,
-    kit: { ...kit, clientName },
+    kit: {
+      ...kit,
+      clientName,
+      availability: kitAvailability(kit, outCopiesByKit(bookings)),
+    },
+    copies,
     emailed: recipients,
     emailError: booking.outEmailError ?? null,
   });
