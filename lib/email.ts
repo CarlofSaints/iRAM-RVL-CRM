@@ -540,13 +540,39 @@ export async function sendPromoKitOutEmail(opts: {
   copies: number;
   /** Copies that exist in total, so the reader knows what is left behind. */
   totalCopies: number;
+  /** Where the kit is being left, e.g. "BWH BOKSBURG NEW - B203". Absent when it is not going to a store. */
+  storeName?: string;
+  /** Store manager on file for that store — the person who signs the delivery note. */
+  storeManagerName?: string;
+  /** The promoter working the kit at the store. */
+  promoterName?: string;
   lines: Array<{ code: string; description: string; quantity: number }>;
   note?: string;
+  /** Why items were not in the kit at hand-over. Required upstream when `missing` is non-empty. */
+  shortNote?: string;
+  /** Items found NOT in the kit as it went out, already written off the kit's stock. */
+  missing?: Array<{ code: string; description: string; units: number }>;
 }) {
   if (opts.to.length === 0) return null;
   const { date, time } = saDateTime(opts.bookedOutAt);
   const units = opts.lines.reduce((t, l) => t + (l.quantity || 0), 0);
   const kitCount = `${opts.copies} of ${opts.totalCopies}`;
+
+  // Items that were not in the box when it went out. Called out ABOVE the
+  // contents table rather than folded into it: the table is what the person
+  // taking the kit has to bring back, and quietly shipping it one line shorter
+  // is how a loss goes unnoticed until the next stock take.
+  const gone = opts.missing ?? [];
+  const missingBlock = gone.length === 0 ? '' : `
+    <div style="border:1px solid #f0c4c4;background:#fdf3f3;border-radius:6px;padding:12px 16px;margin-bottom:20px;">
+      <p style="margin:0 0 6px;font-size:13px;color:#c62828;font-weight:bold;">
+        ${gone.length} item${gone.length === 1 ? '' : 's'} ${gone.length === 1 ? 'was' : 'were'} not in the kit and ${gone.length === 1 ? 'has' : 'have'} been written off:
+      </p>
+      <ul style="margin:0;padding-left:20px;color:#c62828;font-size:13px;">
+        ${gone.map(m => `<li>${esc(m.code)} ${esc(m.description)} - ${m.units} unit${m.units === 1 ? '' : 's'}</li>`).join('')}
+      </ul>
+      ${opts.shortNote ? `<p style="margin:8px 0 0;font-size:13px;color:#555;">Note: ${esc(opts.shortNote)}</p>` : ''}
+    </div>`;
 
   const body = `
     <p style="margin:0 0 14px;">
@@ -561,9 +587,13 @@ export async function sendPromoKitOutEmail(opts: {
       ['Time', esc(time)],
       ['Booked out by', esc(opts.givenByName)],
       ['Taken by', `<strong>${esc(opts.takenByName)}</strong> (${esc(opts.takenByEmail)})`],
+      ...(opts.storeName ? [['Left at', `<strong>${esc(opts.storeName)}</strong>`] as [string, string]] : []),
+      ...(opts.storeManagerName ? [['Store manager', esc(opts.storeManagerName)] as [string, string]] : []),
+      ...(opts.promoterName ? [['Promoter', esc(opts.promoterName)] as [string, string]] : []),
       ['Items', `${opts.lines.length} line${opts.lines.length === 1 ? '' : 's'} &bull; ${units} unit${units === 1 ? '' : 's'}`],
     ])}
     ${opts.note ? `<p style="margin:0 0 16px;color:#555;font-size:13px;">Note: ${esc(opts.note)}</p>` : ''}
+    ${missingBlock}
     <p style="margin:0 0 10px;font-size:13px;color:#555;">Contents confirmed at hand-over:</p>
     ${promoLinesTable(opts.lines, false)}
     <p style="margin:0;color:#666;font-size:13px;">Every item above must be returned when the kit comes back.</p>
@@ -575,7 +605,8 @@ export async function sendPromoKitOutEmail(opts: {
     subject:
       `iRamFlow - Promo kit ${opts.kitReference}` +
       `${opts.totalCopies > 1 ? ` (${opts.copies} of ${opts.totalCopies})` : ''}` +
-      ` booked out to ${opts.takenByName}`,
+      ` booked out to ${opts.takenByName}` +
+      `${opts.storeName ? ` for ${opts.storeName}` : ''}`,
     html: emailShell(body),
   });
 }
@@ -595,6 +626,9 @@ export async function sendPromoKitReturnEmail(opts: {
   complete: boolean;
   /** Copies coming back on this booking. */
   copies: number;
+  /** Where the kit had been left, so the return email matches the delivery note. */
+  storeName?: string;
+  promoterName?: string;
   lines: Array<{ code: string; description: string; quantity: number; returnedQuantity?: number }>;
   note?: string;
 }) {
@@ -615,6 +649,8 @@ export async function sendPromoKitReturnEmail(opts: {
       ['Booked out', `${esc(out.date)} at ${esc(out.time)} by ${esc(opts.givenByName)}`],
       ['Returned', `<strong>${esc(back.date)} at ${esc(back.time)}</strong>`],
       ['Returned by', `<strong>${esc(opts.takenByName)}</strong> (${esc(opts.takenByEmail)})`],
+      ...(opts.storeName ? [['Was at', esc(opts.storeName)] as [string, string]] : []),
+      ...(opts.promoterName ? [['Promoter', esc(opts.promoterName)] as [string, string]] : []),
       ['Received by', esc(opts.receivedByName)],
       ['Status', opts.complete
         ? `All items returned - ${opts.copies === 1 ? 'kit' : 'kits'} back in stock`
@@ -625,7 +661,7 @@ export async function sendPromoKitReturnEmail(opts: {
     ${
       opts.complete
         ? '<p style="margin:0;color:#666;font-size:13px;">Both parties confirmed every item was returned.</p>'
-        : `<p style="margin:0;color:#c62828;font-size:13px;">The items shown in red did not come back. They have been logged against this booking.</p>`
+        : `<p style="margin:0;color:#c62828;font-size:13px;">The items shown in red did not come back. They have been logged against this booking and written off the kit, so the kit no longer counts them as stock. Mark them restocked on the kit page once they are replaced.</p>`
     }
   `;
 

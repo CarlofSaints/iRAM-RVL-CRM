@@ -13,8 +13,11 @@ import {
   availabilityLabel,
   copiesLabel,
   fmtPromoDateTime,
+  itemsLabel,
   kitUnits,
+  unitsLabel,
   type KitAvailability,
+  type PromoLineStock,
 } from '@/lib/promoShared';
 
 // ── DTOs (mirror lib/promoData.ts, plus what the API derives and joins on) ───
@@ -25,7 +28,33 @@ interface KitLineDto {
   ref: string;
   code: string;
   description: string;
+  /** The SPEC — what a full copy should hold. A loss never reduces it. */
   quantity: number;
+  missingQuantity?: number;
+  missingNote?: string;
+  /** Derived server-side: pool / missing / present / out / free, in physical units. */
+  stock?: PromoLineStock;
+}
+interface BookingStoreDto {
+  id: string;
+  name: string;
+  siteCode?: string;
+  channel?: string;
+  region?: string;
+  managerName?: string;
+  managerEmail?: string;
+  managerPhone?: string;
+}
+/** A row of control/stores.json, for the book-out store picker. */
+interface StoreDto {
+  id: string;
+  name: string;
+  siteCode?: string;
+  channel?: string;
+  region?: string;
+  managerName?: string;
+  managerPhone?: string;
+  managerEmail?: string;
 }
 interface OpenBookingDto {
   id: string;
@@ -70,6 +99,8 @@ interface BookingDto {
   bookedOutByName: string;
   bookedOutByEmail: string;
   holder: { type: string; id: string; name: string; email: string };
+  store?: BookingStoreDto;
+  promoterName?: string;
   copies?: number;
   lines: BookingLineDto[];
   outNote?: string;
@@ -96,11 +127,11 @@ const KIT_COLS = ['Ref', 'Kit Name', 'Client', 'Copies', 'Out', 'Lines', 'Units/
 const KIT_SORT_KEYS = ['reference', 'name', 'client', 'copies', 'out', 'lines', 'units', 'status', 'with', 'created'];
 const LOG_COLS = [
   'Ref', 'Kit Name', 'Client', 'Copies', 'Booked Out', 'Booked Out By', 'Taken By', 'Email',
-  'Lines', 'Units', 'Returned', 'Received By', 'Result', 'Note',
+  'Store', 'Promoter', 'Lines', 'Units', 'Returned', 'Received By', 'Result', 'Note', 'Note PDF',
 ];
 const LOG_SORT_KEYS = [
   'reference', 'kitName', 'client', 'copies', 'out', 'outBy', 'takenBy', 'email',
-  'lines', 'units', 'returned', 'receivedBy', 'result', 'note',
+  'store', 'promoter', 'lines', 'units', 'returned', 'receivedBy', 'result', 'note', 'pdf',
 ];
 
 export default function PromoKitsPage() {
@@ -141,6 +172,19 @@ export default function PromoKitsPage() {
   const [newPersonEmail, setNewPersonEmail] = useState('');
   const [outNote, setOutNote] = useState('');
   const [outBusy, setOutBusy] = useState(false);
+  // Where it is being left and who works it (Johann: 9 out of 10 kits get
+  // dropped at a store and kept there for the weekend).
+  const [outStoreId, setOutStoreId] = useState('');
+  const [storeSearch, setStoreSearch] = useState('');
+  const [outPromoter, setOutPromoter] = useState('');
+  // The out-leg tick-list: physical units of each line actually going out.
+  const [outLineQty, setOutLineQty] = useState<Record<string, number>>({});
+  const [outShortNote, setOutShortNote] = useState('');
+
+  // Stores masterfile. 719 rows, fetched ONCE and only when a book-out screen
+  // is first opened — the grid never needs it, so it stays off the page load.
+  const [stores, setStores] = useState<StoreDto[]>([]);
+  const [storesLoaded, setStoresLoaded] = useState(false);
 
   // Book-in modal. `inKit` set with no `inBooking` means the kit has several
   // bookings out and the user still has to say which one is coming back.
@@ -150,7 +194,36 @@ export default function PromoKitsPage() {
   const [inNote, setInNote] = useState('');
   const [inBusy, setInBusy] = useState(false);
 
+  // Delivery note. `notePrompt` is the offer shown straight after a book-out to
+  // a store; the log's own button calls openDeliveryNote directly.
+  const [notePrompt, setNotePrompt] = useState<{ bookingId: string; label: string } | null>(null);
+  const [noteBusy, setNoteBusy] = useState('');
+
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
+
+  /**
+   * Open a booking's delivery note.
+   *
+   * Fetched and opened as a blob rather than linked with an <a href>: the API is
+   * guarded by the app's `x-user-id` header, which a plain link cannot send, so
+   * a direct href lands the user on a 401 that reads as "the file is not
+   * available".
+   */
+  async function openDeliveryNote(bookingId: string) {
+    setNoteBusy(bookingId);
+    try {
+      const res = await authFetch(`/api/promo/bookings/${bookingId}/delivery-note`, { cache: 'no-store' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        notify(err.error ?? 'Could not build the delivery note', 'error');
+        return;
+      }
+      const url = URL.createObjectURL(await res.blob());
+      window.open(url, '_blank');
+    } finally {
+      setNoteBusy('');
+    }
+  }
 
   const fetchAll = useCallback(async () => {
     const [kRes, bRes, cRes, hRes] = await Promise.all([
@@ -236,6 +309,9 @@ export default function PromoKitsPage() {
     outBy: b => b.bookedOutByName,
     takenBy: b => b.holder.name,
     email: b => b.holder.email,
+    store: b => b.store?.name ?? '',
+    promoter: b => b.promoterName ?? '',
+    pdf: b => (b.store ? 1 : 0),
     lines: b => b.lines.length,
     units: b => b.lines.reduce((t, l) => t + l.quantity, 0),
     returned: b => b.returnedAt ?? '',
@@ -257,6 +333,8 @@ export default function PromoKitsPage() {
       'Copies At Home': k.availability.available,
       Lines: k.lines.length,
       'Units Per Copy': kitUnits(k),
+      'Lines Short': k.lines.filter(l => (l.stock?.missing ?? 0) > 0).length,
+      'Units Short': k.lines.reduce((t, l) => t + (l.stock?.missing ?? 0), 0),
       Status: availabilityLabel(k.availability),
       With: k.openBookings.map(b => `${b.holderName} (${b.copies})`).join('; '),
       'With Email': k.openBookings.map(b => b.holderEmail).join('; '),
@@ -280,6 +358,10 @@ export default function PromoKitsPage() {
       'Taken By': b.holder.name,
       'Taken By Email': b.holder.email,
       'Taken By Type': b.holder.type,
+      Store: b.store?.name ?? '',
+      'Store Code': b.store?.siteCode ?? '',
+      'Store Manager': b.store?.managerName ?? '',
+      Promoter: b.promoterName ?? '',
       Lines: b.lines.length,
       'Units Out': b.lines.reduce((t, l) => t + l.quantity, 0),
       'Units Back': b.returnedAt ? b.lines.reduce((t, l) => t + (l.returnedQuantity ?? 0), 0) : '',
@@ -345,7 +427,71 @@ export default function PromoKitsPage() {
     setNewPersonName('');
     setNewPersonEmail('');
     setOutNote('');
+    setOutStoreId('');
+    setStoreSearch('');
+    setOutPromoter('');
+    setOutShortNote('');
+    // Default every line to what the kit can actually send for ONE copy. A line
+    // already short defaults low, so the screen tells the truth before anybody
+    // touches it. Recalculated whenever the copy count changes.
+    setOutLineQty(Object.fromEntries(kit.lines.map(l => [l.id, Math.min(l.quantity, l.stock?.free ?? l.quantity)])));
+    if (!storesLoaded) {
+      void (async () => {
+        const res = await authFetch('/api/control/stores', { cache: 'no-store' });
+        if (res.ok) setStores((await res.json()) as StoreDto[]);
+        setStoresLoaded(true);
+      })();
+    }
   }
+
+  /**
+   * How many units of each line the kit CAN send for the chosen copy count.
+   * `free` is pool minus what is missing minus what is already out with other
+   * people, so booking the 2nd of 5 copies when one ball is lost offers 1 ball,
+   * not 2. Capped at a full set for the copies going out.
+   */
+  const outLineCap = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const l of outKit?.lines ?? []) {
+      const want = l.quantity * outCopies;
+      m[l.id] = Math.max(0, Math.min(want, l.stock?.free ?? want));
+    }
+    return m;
+  }, [outKit, outCopies]);
+
+  // Changing the copy count re-defaults the tick-list: the numbers on screen
+  // are physical units, so "2 copies" has to mean twice as many of everything.
+  useEffect(() => {
+    if (!outKit) return;
+    setOutLineQty(Object.fromEntries(outKit.lines.map(l => [l.id, outLineCap[l.id] ?? 0])));
+  }, [outKit, outCopies, outLineCap]);
+
+  /** Lines the packer has marked as NOT in the box — a new loss to write off. */
+  const outMissing = useMemo(() => {
+    if (!outKit) return [];
+    return outKit.lines
+      .map(l => ({ line: l, short: (outLineCap[l.id] ?? 0) - (outLineQty[l.id] ?? 0) }))
+      .filter(x => x.short > 0);
+  }, [outKit, outLineQty, outLineCap]);
+
+  const outTotalUnits = useMemo(
+    () => (outKit?.lines ?? []).reduce((t, l) => t + (outLineQty[l.id] ?? 0), 0),
+    [outKit, outLineQty],
+  );
+
+  const storeMatches = useMemo(() => {
+    const q = storeSearch.trim().toLowerCase();
+    if (!q) return stores.slice(0, 40);
+    return stores
+      .filter(s =>
+        s.name.toLowerCase().includes(q) ||
+        (s.siteCode ?? '').toLowerCase().includes(q) ||
+        (s.channel ?? '').toLowerCase().includes(q),
+      )
+      .slice(0, 40);
+  }, [stores, storeSearch]);
+
+  const outStore = useMemo(() => stores.find(s => s.id === outStoreId) ?? null, [stores, outStoreId]);
 
   const holderMatches = useMemo(() => {
     const q = holderSearch.trim().toLowerCase();
@@ -387,16 +533,28 @@ export default function PromoKitsPage() {
           copies: outCopies,
           contentsConfirmed: outConfirmed,
           note: outNote,
+          storeId: outStoreId || undefined,
+          promoterName: outPromoter,
+          lines: (outKit.lines ?? []).map(l => ({ lineId: l.id, quantity: outLineQty[l.id] ?? 0 })),
+          shortNote: outShortNote,
         }),
       });
       const data = await res.json();
       if (!res.ok) { notify(data.error ?? 'Could not book the kit out', 'error'); return; }
+      const where = outStore ? ` for ${outStore.name}` : '';
+      const shortBit = (data.missing ?? []).length
+        ? ` ${itemsLabel(data.missing.length)} were not in the kit and have been written off it.`
+        : '';
       notify(
         data.emailError
-          ? `${outKit.reference}: ${copiesLabel(outCopies)} booked out to ${outHolder.name}, but the email FAILED: ${data.emailError}`
-          : `${outKit.reference}: ${copiesLabel(outCopies)} booked out to ${outHolder.name}. Emailed ${(data.emailed ?? []).join(' and ')}.`,
+          ? `${outKit.reference}: ${copiesLabel(outCopies)} booked out to ${outHolder.name}${where}, but the email FAILED: ${data.emailError}`
+          : `${outKit.reference}: ${copiesLabel(outCopies)} booked out to ${outHolder.name}${where}. Emailed ${(data.emailed ?? []).join(' and ')}.${shortBit}`,
         data.emailError ? 'error' : 'success',
       );
+      // The delivery note is the whole point of recording a store, so offer it
+      // the moment the booking exists rather than making them find the log.
+      const newBookingId = data.booking?.id as string | undefined;
+      if (newBookingId && outStoreId) setNotePrompt({ bookingId: newBookingId, label: `${outKit.reference} at ${outStore?.name ?? 'the store'}` });
       setOutKit(null);
       await fetchAll();
     } finally {
@@ -450,7 +608,13 @@ export default function PromoKitsPage() {
           ? `${inKit.reference}: ${back} returned, but the email FAILED: ${data.emailError}`
           : data.complete
             ? `${inKit.reference}: ${back} returned in full and back in stock.`
-            : `${inKit.reference}: ${back} returned SHORT (${data.missing.length} item(s)) and back in stock, flagged.`,
+            : `${inKit.reference}: ${back} returned SHORT and back in stock. ` +
+              ((data.writtenOff ?? []).length
+                ? `${itemsLabel(data.writtenOff.length)} written off the kit — mark them Restocked once replaced.`
+                : `${itemsLabel(data.missing.length)} outstanding.`) +
+              ((data.orphaned ?? []).length
+                ? ` ${data.orphaned.join(', ')} could not be written off — no longer on the kit.`
+                : ''),
         data.emailError ? 'error' : 'success',
       );
       setInKit(null);
@@ -476,7 +640,6 @@ export default function PromoKitsPage() {
     { label: 'Out', value: stats.out, color: 'bg-amber-500', onClick: () => setStatusFilter('out') },
   ];
 
-  const outUnitsPerCopy = outKit ? kitUnits(outKit) : 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -639,6 +802,11 @@ export default function PromoKitsPage() {
               {kitSort.sorted.map(k => {
                 const a = k.availability;
                 const holders = k.openBookings;
+                // Units the kit is missing. Read off the derived stock, never
+                // off the line quantity -- the quantity is the spec and does
+                // not move when something is lost.
+                const shortU = k.lines.reduce((t, l) => t + (l.stock?.missing ?? 0), 0);
+                const shortL = k.lines.filter(l => (l.stock?.missing ?? 0) > 0).length;
                 return (
                   <tr key={k.id} className="border-t border-gray-100 hover:bg-gray-50">
                     <td className="px-3 py-2 font-mono text-xs">{k.reference}</td>
@@ -651,11 +819,32 @@ export default function PromoKitsPage() {
                     <td className="px-3 py-2 font-medium">{a.total}</td>
                     <td className={`px-3 py-2 ${a.out > 0 ? 'font-medium text-amber-700' : 'text-gray-400'}`}>{a.out}</td>
                     <td className="px-3 py-2">{k.lines.length}</td>
-                    <td className="px-3 py-2">{kitUnits(k)}</td>
+                    <td className="px-3 py-2">
+                      {kitUnits(k)}
+                      {shortU > 0 && (
+                        <span
+                          className="ml-1 text-xs font-medium text-red-600"
+                          title={k.lines
+                            .filter(l => (l.stock?.missing ?? 0) > 0)
+                            .map(l => `${l.code} ${l.description}: ${l.stock?.missing} missing`)
+                            .join('\n')}
+                        >
+                          -{shortU}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${availabilityBadge(a)}`}>
                         {availabilityLabel(a)}
                       </span>
+                      {shortU > 0 && (
+                        <span
+                          className="ml-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700"
+                          title={`${itemsLabel(shortL)} missing from this kit`}
+                        >
+                          Short ({shortL})
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       {holders.length === 0 ? (
@@ -750,6 +939,17 @@ export default function PromoKitsPage() {
                     <td className="px-3 py-2">{b.bookedOutByName}</td>
                     <td className="px-3 py-2">{b.holder.name}</td>
                     <td className="px-3 py-2 text-xs text-gray-600">{b.holder.email}</td>
+                    <td className="px-3 py-2 text-xs">
+                      {b.store ? (
+                        <>
+                          {b.store.name}
+                          {b.store.siteCode ? <span className="block text-gray-500">{b.store.siteCode}</span> : null}
+                        </>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-xs">{b.promoterName ?? <span className="text-gray-400">-</span>}</td>
                     <td className="px-3 py-2">{b.lines.length}</td>
                     <td className="px-3 py-2">{b.lines.reduce((t, l) => t + l.quantity, 0)}</td>
                     <td className="px-3 py-2 text-xs">{fmtPromoDateTime(b.returnedAt)}</td>
@@ -774,11 +974,62 @@ export default function PromoKitsPage() {
                       )}
                     </td>
                     <td className="px-3 py-2 text-xs text-gray-600 max-w-xs">{b.returnNote ?? b.outNote ?? ''}</td>
+                    <td className="px-3 py-2">
+                      <button
+                        onClick={() => void openDeliveryNote(b.id)}
+                        disabled={noteBusy === b.id}
+                        title={
+                          b.store
+                            ? 'Open the signed-for delivery note for this drop-off'
+                            : 'No store was recorded on this booking, so the note prints without one'
+                        }
+                        className="text-xs font-medium text-[var(--color-primary)] hover:underline disabled:opacity-40"
+                      >
+                        {noteBusy === b.id ? 'Building…' : 'Delivery note'}
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── Delivery note offer, straight after a book-out to a store ────── */}
+      {notePrompt && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 flex flex-col gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Print the delivery note?</h2>
+              <p className="text-sm text-gray-500">{notePrompt.label}</p>
+            </div>
+            <p className="text-sm text-gray-700">
+              The note lists everything handed over with a tick box per item, and has a signature block for
+              whoever at the store receives it. Print it, have it signed, and keep it as proof of the drop-off.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setNotePrompt(null)}
+                className="px-4 py-2 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50"
+              >
+                Not now
+              </button>
+              <button
+                onClick={async () => {
+                  const id = notePrompt.bookingId;
+                  setNotePrompt(null);
+                  await openDeliveryNote(id);
+                }}
+                className="px-4 py-2 rounded-md text-sm font-medium bg-[var(--color-primary)] text-white hover:opacity-90"
+              >
+                Open Delivery Note
+              </button>
+            </div>
+            <p className="text-xs text-gray-500">
+              You can print it again any time from the Delivery note button in the Booking Log.
+            </p>
+          </div>
         </div>
       )}
 
@@ -890,44 +1141,114 @@ export default function PromoKitsPage() {
               <div className="px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-600 uppercase border-b border-gray-200">
                 {outKit.availability.total > 1 ? '2.' : '1.'} Confirm the kit contents
               </div>
+              <div className="px-4 py-2 text-xs text-gray-500 border-b border-gray-100 flex items-center justify-between">
+                <span>Untick anything that is not physically in the kit.</span>
+                <button
+                  onClick={() => setOutLineQty(Object.fromEntries(outKit.lines.map(l => [l.id, outLineCap[l.id] ?? 0])))}
+                  className="text-xs font-medium text-[var(--color-primary)] hover:underline"
+                >
+                  Tick all
+                </button>
+              </div>
               <table className="w-full text-sm">
                 <thead className="text-xs text-gray-500 uppercase">
                   <tr className="border-b border-gray-100">
-                    <th className="px-4 py-1.5 text-left font-medium">Item</th>
-                    <th className="px-4 py-1.5 text-left font-medium">Description</th>
-                    <th className="px-4 py-1.5 text-right font-medium">Per copy</th>
-                    <th className="px-4 py-1.5 text-right font-medium">Going out</th>
                     <th className="px-4 py-1.5" />
+                    <th className="px-2 py-1.5 text-left font-medium">Item</th>
+                    <th className="px-2 py-1.5 text-left font-medium">Description</th>
+                    <th className="px-2 py-1.5 text-right font-medium">Per copy</th>
+                    <th className="px-4 py-1.5 text-right font-medium">Going out</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {outKit.lines.map(l => (
-                    <tr key={l.id} className="border-b border-gray-100 last:border-0">
-                      <td className="px-4 py-1.5 font-mono text-xs w-32">{l.code}</td>
-                      <td className="px-4 py-1.5">{l.description}</td>
-                      <td className="px-4 py-1.5 text-right w-20 text-gray-500">{l.quantity}</td>
-                      <td className="px-4 py-1.5 text-right w-24 font-medium">{l.quantity * outCopies}</td>
-                      <td className="px-4 py-1.5 text-xs text-gray-400 w-24">
-                        {l.source === 'sku' ? 'Client SKU' : 'Promo'}
-                      </td>
-                    </tr>
-                  ))}
+                  {outKit.lines.map(l => {
+                    const cap = outLineCap[l.id] ?? 0;
+                    const going = outLineQty[l.id] ?? 0;
+                    const full = going >= cap;
+                    const alreadyShort = l.stock?.missing ?? 0;
+                    return (
+                      <tr key={l.id} className={`border-b border-gray-100 last:border-0 ${full ? '' : 'bg-red-50'}`}>
+                        <td className="px-4 py-1.5 w-10">
+                          <input
+                            type="checkbox"
+                            checked={full && cap > 0}
+                            disabled={cap === 0}
+                            onChange={e => setOutLineQty(prev => ({ ...prev, [l.id]: e.target.checked ? cap : 0 }))}
+                            className="w-4 h-4 disabled:opacity-40"
+                          />
+                        </td>
+                        <td className="px-2 py-1.5 font-mono text-xs w-32">{l.code}</td>
+                        <td className="px-2 py-1.5">
+                          {l.description}
+                          <span className="block text-[11px] text-gray-400">
+                            {l.source === 'sku' ? 'Client SKU' : 'Promo'}
+                            {alreadyShort > 0 ? ` - kit is short ${unitsLabel(alreadyShort)}` : ''}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1.5 text-right w-20 text-gray-500">{l.quantity}</td>
+                        <td className="px-4 py-1.5 w-24">
+                          <input
+                            type="number"
+                            min={0}
+                            max={l.quantity * outCopies}
+                            value={going}
+                            onChange={e => {
+                              const v = Math.max(0, Math.min(l.quantity * outCopies, Math.floor(Number(e.target.value) || 0)));
+                              setOutLineQty(prev => ({ ...prev, [l.id]: v }));
+                            }}
+                            className="w-full px-2 py-1 border border-gray-300 rounded-md text-sm text-right"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
               <label className="flex items-center gap-2 px-4 py-3 bg-gray-50 border-t border-gray-200 cursor-pointer">
                 <input type="checkbox" checked={outConfirmed} onChange={e => setOutConfirmed(e.target.checked)} className="w-4 h-4" />
                 <span className="text-sm font-medium text-gray-800">
-                  I have checked all {outKit.lines.length} item{outKit.lines.length === 1 ? '' : 's'}{' '}
-                  ({outUnitsPerCopy * outCopies} unit{outUnitsPerCopy * outCopies === 1 ? '' : 's'}) are in the{' '}
+                  I have counted the {itemsLabel(outKit.lines.length)} above and the{' '}
+                  {unitsLabel(outTotalUnits)} ticked are in the{' '}
                   {outCopies === 1 ? 'kit' : `${outCopies} kits`}
                 </span>
               </label>
             </div>
 
+            {/* Anything unticked is stock the kit is about to lose, so it needs a
+                reason before it goes -- the same gate the return leg has. */}
+            {outMissing.length > 0 && (
+              <div className="border border-red-200 bg-red-50 rounded-lg p-3">
+                <div className="text-sm font-semibold text-red-800">
+                  {itemsLabel(outMissing.length)} {outMissing.length === 1 ? 'is' : 'are'} not in the kit
+                </div>
+                <ul className="mt-1 text-xs text-red-700 list-disc pl-5">
+                  {outMissing.map(m => (
+                    <li key={m.line.id}>
+                      {m.line.code} {m.line.description}: {unitsLabel(m.short)} missing
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-xs text-red-700">
+                  These will be written off the kit so it stops counting them as stock. Mark them Restocked on
+                  the kit page once they are replaced.
+                </p>
+                <div className="mt-2">
+                  <label className="block text-xs text-red-800 mb-1">Why are they missing? (required)</label>
+                  <input
+                    autoComplete="off"
+                    value={outShortNote}
+                    onChange={e => setOutShortNote(e.target.value)}
+                    placeholder="e.g. Never came back from the Boksburg activation"
+                    className="w-full px-3 py-2 border border-red-300 rounded-md text-sm bg-white"
+                  />
+                </div>
+              </div>
+            )}
+
             {/* 3. Who is taking it */}
             <div className="border border-gray-200 rounded-lg">
               <div className="px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-600 uppercase border-b border-gray-200">
-                {outKit.availability.total > 1 ? '3.' : '2.'} Who is taking the kit
+                {outKit.availability.total > 1 ? '3.' : '2.'} Who is taking the kit back
               </div>
               <div className="p-4 flex flex-col gap-2">
                 {outHolder ? (
@@ -1012,6 +1333,81 @@ export default function PromoKitsPage() {
               </div>
             </div>
 
+            {/* Where the kit is being left. OPTIONAL: a rep taking one to a
+                roadshow has no store, and a forced field only gets invented. */}
+            <div className="border border-gray-200 rounded-lg">
+              <div className="px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-600 uppercase border-b border-gray-200">
+                {outKit.availability.total > 1 ? '4.' : '3.'} Where is it going (optional)
+              </div>
+              <div className="p-4 flex flex-col gap-3">
+                {outStore ? (
+                  <div className="flex items-center justify-between gap-3 px-3 py-2 border border-[var(--color-primary)] bg-green-50 rounded-md">
+                    <div>
+                      <div className="text-sm font-medium text-gray-900">
+                        {outStore.name}
+                        {outStore.siteCode ? ` - ${outStore.siteCode}` : ''}
+                      </div>
+                      <div className="text-xs text-gray-600">
+                        {[outStore.channel, outStore.region].filter(Boolean).join(' - ')}
+                        {outStore.managerName ? ` - Manager: ${outStore.managerName}` : ''}
+                      </div>
+                    </div>
+                    <button onClick={() => { setOutStoreId(''); setStoreSearch(''); }} className="text-xs text-gray-600 hover:text-gray-900">
+                      Change
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <input
+                      autoComplete="off"
+                      value={storeSearch}
+                      onChange={e => setStoreSearch(e.target.value)}
+                      placeholder={storesLoaded ? 'Search store name, site code or channel' : 'Loading stores…'}
+                      disabled={!storesLoaded}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm disabled:bg-gray-50"
+                    />
+                    {storeSearch.trim() !== '' && (
+                      <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-md divide-y divide-gray-100">
+                        {storeMatches.map(s => (
+                          <button
+                            key={s.id}
+                            onClick={() => { setOutStoreId(s.id); setStoreSearch(''); }}
+                            className="w-full text-left px-3 py-2 hover:bg-gray-50"
+                          >
+                            <div className="text-sm text-gray-900">
+                              {s.name}
+                              {s.siteCode ? ` - ${s.siteCode}` : ''}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {[s.channel, s.region].filter(Boolean).join(' - ') || 'No channel on file'}
+                            </div>
+                          </button>
+                        ))}
+                        {storeMatches.length === 0 && (
+                          <div className="px-3 py-3 text-sm text-gray-500">No store matches that search.</div>
+                        )}
+                      </div>
+                    )}
+                    <p className="text-xs text-gray-500">
+                      Leave this blank if the kit is not being dropped at a store. Pick one and you can print a
+                      delivery note for the store to sign.
+                    </p>
+                  </>
+                )}
+
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Promoter working the kit (optional)</label>
+                  <input
+                    autoComplete="off"
+                    value={outPromoter}
+                    onChange={e => setOutPromoter(e.target.value)}
+                    placeholder="Name of the promoter on the floor"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+
             <div>
               <label className="block text-xs text-gray-600 mb-1">Note (optional)</label>
               <textarea
@@ -1025,6 +1421,7 @@ export default function PromoKitsPage() {
 
             <p className="text-xs text-gray-500">
               Booking out emails you and {outHolder ? outHolder.name : 'the person taking the kit'} the date, time, kit name and both names.
+              {outStore ? ' A delivery note for the store to sign is offered straight after.' : ''}
             </p>
 
             <div className="flex justify-end gap-2">
@@ -1033,11 +1430,33 @@ export default function PromoKitsPage() {
               </button>
               <button
                 onClick={handleBookOut}
-                disabled={!outConfirmed || !outHolder || outBusy}
-                title={!outConfirmed ? 'Tick the contents confirmation' : !outHolder ? 'Select who is taking the kit' : ''}
-                className="px-4 py-2 rounded-md text-sm font-medium bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+                disabled={
+                  !outConfirmed ||
+                  !outHolder ||
+                  outBusy ||
+                  outTotalUnits === 0 ||
+                  (outMissing.length > 0 && !outShortNote.trim())
+                }
+                title={
+                  !outConfirmed
+                    ? 'Tick the contents confirmation'
+                    : !outHolder
+                      ? 'Select who is taking the kit'
+                      : outTotalUnits === 0
+                        ? 'Nothing is ticked to go out'
+                        : outMissing.length > 0 && !outShortNote.trim()
+                          ? 'Say why the unticked items are missing'
+                          : ''
+                }
+                className={`px-4 py-2 rounded-md text-sm font-medium text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed ${
+                  outMissing.length > 0 ? 'bg-red-600' : 'bg-[var(--color-primary)]'
+                }`}
               >
-                {outBusy ? 'Booking out…' : `Book Out ${copiesLabel(outCopies)} and Email`}
+                {outBusy
+                  ? 'Booking out…'
+                  : outMissing.length > 0
+                    ? `Book Out Short and Email`
+                    : `Book Out ${copiesLabel(outCopies)} and Email`}
               </button>
             </div>
           </div>

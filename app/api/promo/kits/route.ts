@@ -7,6 +7,7 @@ import {
   nextKitReference,
   outCopiesByKit,
   kitAvailability,
+  kitLineStock,
   bookingCopies,
   isOpenBooking,
   type PromoKit,
@@ -44,10 +45,17 @@ export async function GET(req: NextRequest) {
 
   const visible = kits
     .filter(k => ctx.canSeeClient(k.clientId))
-    .map(k => ({
+    .map(k => {
+      // Per-line stock (pool / missing / present / out / free) is derived here
+      // rather than in the browser: the book-out screen has to default every
+      // line to what can actually be sent, and that depends on the whole
+      // booking log, which the grid does not hold. Built ONCE per kit.
+      const stock = kitLineStock(k, bookings);
+      return {
       ...k,
       clientName: ctx.clientName(k.clientId),
       availability: kitAvailability(k, outByKit),
+      lines: k.lines.map(l => ({ ...l, stock: stock.get(l.id) })),
       openBookings: (openByKit.get(k.id) ?? [])
         .sort((a, b) => a.bookedOutAt.localeCompare(b.bookedOutAt))
         .map(b => ({
@@ -58,7 +66,8 @@ export async function GET(req: NextRequest) {
           bookedOutAt: b.bookedOutAt,
           bookedOutByName: b.bookedOutByName,
         })),
-    }));
+      };
+    });
 
   return NextResponse.json(
     { kits: visible, scoped: ctx.visibleClientIds.size < ctx.clients.length },
@@ -132,6 +141,7 @@ export async function POST(req: NextRequest) {
       ...kit,
       clientName: ctx.clientName(clientId),
       availability: { total: totalQuantity, out: 0, available: totalQuantity },
+      lines: [],
       openBookings: [],
     },
   });

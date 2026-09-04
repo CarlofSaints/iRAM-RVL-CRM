@@ -6,6 +6,7 @@ import {
   listPromoBookings,
   outCopiesByKit,
   kitAvailability,
+  kitLineStock,
   bookingCopies,
   isOpenBooking,
   kitTotal,
@@ -30,6 +31,7 @@ export async function GET(
     return NextResponse.json({ error: 'You do not have access to that client' }, { status: 403 });
   }
 
+  const lineStockById = kitLineStock(kit, allBookings);
   const bookings = allBookings
     .filter(b => b.kitId === kitId)
     .sort((a, b) => b.bookedOutAt.localeCompare(a.bookedOutAt))
@@ -41,6 +43,7 @@ export async function GET(
         ...kit,
         clientName: ctx.clientName(kit.clientId),
         availability: kitAvailability(kit, outCopiesByKit(allBookings)),
+        lines: kit.lines.map(l => ({ ...l, stock: lineStockById.get(l.id) })),
       },
       bookings,
     },
@@ -154,12 +157,14 @@ export async function PATCH(
     });
   }
 
-  const outByKit = outCopiesByKit(await listPromoBookings());
+  const afterBookings = await listPromoBookings();
+  const stock = kitLineStock(kit, afterBookings);
   return NextResponse.json({
     kit: {
       ...kit,
       clientName: ctx.clientName(kit.clientId),
-      availability: kitAvailability(kit, outByKit),
+      availability: kitAvailability(kit, outCopiesByKit(afterBookings)),
+      lines: kit.lines.map(l => ({ ...l, stock: stock.get(l.id) })),
     },
   });
 }

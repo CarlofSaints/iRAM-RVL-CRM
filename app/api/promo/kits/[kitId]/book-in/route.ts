@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { promoContext, fullName } from '@/lib/promoScope';
 import {
   listPromoKits,
+  savePromoKits,
   listPromoBookings,
   savePromoBookings,
   outCopiesByKit,
@@ -9,6 +10,7 @@ import {
   bookingCopies,
   copiesLabel,
   isOpenBooking,
+  applyLineShortfall,
 } from '@/lib/promoData';
 import { sendPromoKitReturnEmail } from '@/lib/email';
 import { logAudit } from '@/lib/auditLog';
@@ -27,7 +29,13 @@ export const dynamic = 'force-dynamic';
  * `returned` is the tick-list from the screen: one entry per line that went
  * out, carrying how many came back. A short return still puts the copies back
  * in stock — they are physically on the shelf whether or not every item is in
- * them — but the booking is flagged short and both emails name what is missing.
+ * them — but the booking is flagged short, both emails name what is missing,
+ * AND the units that did not come back are written off the KIT.
+ *
+ * That last part is the point. Recording the shortfall only on the booking left
+ * the kit still claiming to hold a soccer ball that was lost months ago, so the
+ * next book-out sent it out again on paper. The kit's line `quantity` is the
+ * SPEC and is never touched; the loss lands on `missingQuantity` beside it.
  */
 export async function POST(
   req: NextRequest,
@@ -117,8 +125,32 @@ export async function POST(
   booking.returnedComplete = complete;
   booking.returnNote = note || undefined;
   await savePromoBookings(bookings);
-  // The kit record is untouched: closing this booking is what puts its copies
-  // back on the shelf, because availability is derived from the open bookings.
+
+  // Closing the booking is what puts the COPIES back on the shelf — availability
+  // is derived from the open bookings and is never stored on the kit.
+  //
+  // What the kit does have to be told is what did not come back with them. The
+  // units are written off the kit here, through the same helper the out leg
+  // uses, so a ball lost in a store stops being counted as kit stock. The line
+  // `quantity` (the spec) is deliberately left alone: the kit still knows it is
+  // SUPPOSED to hold a ball, which is what makes 'Restocked' meaningful later.
+  const writtenOff: Array<{ code: string; units: number }> = [];
+  const orphaned: string[] = [];
+  if (!complete) {
+    for (const l of missing) {
+      const gone = l.quantity - (l.returnedQuantity ?? 0);
+      // A line removed from the kit since it went out has nothing to write off.
+      // The booking still records the loss; the kit simply no longer has a line
+      // for it, and saying so beats silently dropping the shortfall.
+      const applied = applyLineShortfall(kit, l.lineId, gone, note, now);
+      if (applied > 0) writtenOff.push({ code: l.code, units: applied });
+      else orphaned.push(l.code);
+    }
+    if (writtenOff.length > 0) {
+      kit.updatedAt = now;
+      await savePromoKits(kits);
+    }
+  }
 
   const recipients = [...new Set([ctx.me.email, booking.holder.email, booking.bookedOutByEmail].filter(Boolean))];
   try {
@@ -135,6 +167,8 @@ export async function POST(
       receivedByName: byName,
       complete,
       copies: bookingCopies(booking),
+      storeName: booking.store ? [booking.store.name, booking.store.siteCode].filter(Boolean).join(' - ') : undefined,
+      promoterName: booking.promoterName,
       lines: booking.lines,
       note: booking.returnNote,
     });
@@ -156,7 +190,13 @@ export async function POST(
       `${booking.holder.name} <${booking.holder.email}>, received by ${byName}. ` +
       (complete
         ? 'All items returned.'
-        : `SHORT: ${missing.map(l => `${l.code} ${l.returnedQuantity ?? 0} of ${l.quantity}`).join('; ')}. Note: ${note}`) +
+        : `SHORT: ${missing.map(l => `${l.code} ${l.returnedQuantity ?? 0} of ${l.quantity}`).join('; ')}. Note: ${note}` +
+          (writtenOff.length > 0
+            ? ` Written off the kit: ${writtenOff.map(w => `${w.code} x${w.units}`).join('; ')}.`
+            : '') +
+          (orphaned.length > 0
+            ? ` NOT written off (no longer a line on the kit): ${orphaned.join(', ')}.`
+            : '')) +
       (booking.returnEmailError ? ` EMAIL FAILED: ${booking.returnEmailError}` : ` Emailed ${recipients.join(', ')}.`),
   });
 
@@ -170,6 +210,10 @@ export async function POST(
     copies: bookingCopies(booking),
     complete,
     missing: missing.map(l => ({ code: l.code, description: l.description, out: l.quantity, back: l.returnedQuantity ?? 0 })),
+    /** Units actually taken off the kit's stock, so the screen can say so. */
+    writtenOff,
+    /** Short lines that no longer exist on the kit and so could not be written off. */
+    orphaned,
     emailed: recipients,
     emailError: booking.returnEmailError ?? null,
   });

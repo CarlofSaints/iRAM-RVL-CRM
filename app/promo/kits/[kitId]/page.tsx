@@ -10,9 +10,12 @@ import {
   availabilityLabel,
   copiesLabel,
   fmtPromoDateTime,
+  itemsLabel,
   kitTotal,
   kitUnits,
+  unitsLabel,
   type KitAvailability,
+  type PromoLineStock,
 } from '@/lib/promoShared';
 
 interface KitLineDto {
@@ -21,7 +24,13 @@ interface KitLineDto {
   ref: string;
   code: string;
   description: string;
+  /** The SPEC — what a full copy of the kit should hold. Not reduced by a loss. */
   quantity: number;
+  missingQuantity?: number;
+  missingNote?: string;
+  missingAt?: string;
+  /** Derived server-side: pool / missing / present / out / free, in physical units. */
+  stock?: PromoLineStock;
   addedAt: string;
   addedByName?: string;
 }
@@ -83,6 +92,12 @@ export default function PromoKitDetailPage() {
   const [pendingQty, setPendingQty] = useState(1);
   const [addBusy, setAddBusy] = useState(false);
 
+  // Restock modal — putting a lost item back into the kit.
+  const [restockLine, setRestockLine] = useState<KitLineDto | null>(null);
+  const [restockQty, setRestockQty] = useState(1);
+  const [restockNote, setRestockNote] = useState('');
+  const [restockBusy, setRestockBusy] = useState(false);
+
   const notify = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
 
   const fetchKit = useCallback(async () => {
@@ -138,6 +153,49 @@ export default function PromoKitDetailPage() {
    * DELETE is refused while anything is out.
    */
   const copiesOut = kit?.availability.out ?? 0;
+
+  /**
+   * Lines the kit is short. A line's `quantity` is what a full copy SHOULD hold
+   * and never shrinks when something goes missing, so 'short' is read off the
+   * derived stock rather than off the quantity.
+   */
+  const shortLines = useMemo(
+    () => (kit?.lines ?? []).filter(l => (l.stock?.missing ?? 0) > 0),
+    [kit],
+  );
+  const shortUnits = useMemo(
+    () => shortLines.reduce((t, l) => t + (l.stock?.missing ?? 0), 0),
+    [shortLines],
+  );
+
+  function openRestock(line: KitLineDto) {
+    setRestockLine(line);
+    setRestockQty(line.stock?.missing ?? 1);
+    setRestockNote('');
+  }
+
+  async function handleRestock() {
+    if (!restockLine) return;
+    setRestockBusy(true);
+    try {
+      const res = await authFetch(`/api/promo/kits/${kitId}/restock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lineId: restockLine.id, quantity: restockQty, note: restockNote }),
+      });
+      const data = await res.json();
+      if (!res.ok) { notify(data.error ?? 'Could not put that back', 'error'); return; }
+      notify(
+        data.stillShort > 0
+          ? `${restockLine.code}: ${unitsLabel(data.restocked)} put back. Still short ${unitsLabel(data.stillShort)}.`
+          : `${restockLine.code}: ${unitsLabel(data.restocked)} put back. The kit is complete again.`,
+      );
+      setRestockLine(null);
+      await fetchKit();
+    } finally {
+      setRestockBusy(false);
+    }
+  }
 
   async function handleAddItem() {
     if (!kit || !pendingRef) return;
@@ -303,6 +361,17 @@ export default function PromoKitDetailPage() {
         </div>
       )}
 
+      {shortLines.length > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-900">
+          <span className="font-semibold">
+            This kit is short {itemsLabel(shortLines.length)} ({unitsLabel(shortUnits)}).
+          </span>{' '}
+          {shortLines.map(l => `${l.code} ${l.description}`).join(', ')}. Booking it out will only send what is
+          actually there. Once the {shortLines.length === 1 ? 'item has' : 'items have'} been replaced, click
+          Restocked on the row so the kit counts {shortLines.length === 1 ? 'it' : 'them'} again.
+        </div>
+      )}
+
       {/* Contents */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
         <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
@@ -321,16 +390,20 @@ export default function PromoKitDetailPage() {
               <th className="px-4 py-2 text-left font-medium">Description</th>
               <th className="px-4 py-2 text-left font-medium">Source</th>
               <th className="px-4 py-2 text-right font-medium">Qty per copy</th>
+              <th className="px-4 py-2 text-right font-medium">In stock</th>
               <th className="px-4 py-2 text-left font-medium">Added</th>
               <th className="px-4 py-2 text-right font-medium"></th>
             </tr>
           </thead>
           <tbody>
             {kit.lines.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-500">Nothing in this kit yet. Add items below.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-500">Nothing in this kit yet. Add items below.</td></tr>
             )}
-            {kit.lines.map(l => (
-              <tr key={l.id} className="border-b border-gray-100 last:border-0">
+            {kit.lines.map(l => {
+              const st = l.stock;
+              const short = st ? st.missing : 0;
+              return (
+              <tr key={l.id} className={`border-b border-gray-100 last:border-0 ${short > 0 ? 'bg-red-50' : ''}`}>
                 <td className="px-4 py-2 font-mono text-xs">{l.code}</td>
                 <td className="px-4 py-2">{l.description}</td>
                 <td className="px-4 py-2 text-xs text-gray-500">{l.source === 'sku' ? 'Client SKU' : 'Promo material'}</td>
@@ -350,11 +423,38 @@ export default function PromoKitDetailPage() {
                     l.quantity
                   )}
                 </td>
+                {/* What the kit ACTUALLY holds, against what it should. The
+                    quantity column beside this is the spec and never moves; a
+                    loss lands here, so the kit still knows what belongs in it. */}
+                <td className="px-4 py-2 text-right w-32">
+                  {st ? (
+                    short > 0 ? (
+                      <span className="text-red-700 font-semibold" title={l.missingNote ? `Missing: ${l.missingNote}` : undefined}>
+                        {st.present} of {st.pool}
+                        <span className="block text-[11px] font-normal text-red-600">
+                          {unitsLabel(short)} short
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-gray-700">{st.present} of {st.pool}</span>
+                    )
+                  ) : (
+                    <span className="text-gray-400">-</span>
+                  )}
+                </td>
                 <td className="px-4 py-2 text-xs text-gray-500">
                   {fmtPromoDateTime(l.addedAt)}
                   {l.addedByName ? ` by ${l.addedByName}` : ''}
                 </td>
-                <td className="px-4 py-2 text-right">
+                <td className="px-4 py-2 text-right whitespace-nowrap">
+                  {canManage && short > 0 && (
+                    <button
+                      onClick={() => openRestock(l)}
+                      className="text-xs font-medium text-[var(--color-primary)] hover:underline mr-3"
+                    >
+                      Restocked
+                    </button>
+                  )}
                   {canManage && (
                     <button
                       onClick={() => void patchKit({ removeLineIds: [l.id] }, `${l.code} removed`)}
@@ -365,7 +465,8 @@ export default function PromoKitDetailPage() {
                   )}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -508,6 +609,68 @@ export default function PromoKitDetailPage() {
           </tbody>
         </table>
       </div>
+
+      {/* ── Restocked: put a lost item back into the kit ─────────────────── */}
+      {restockLine && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-40 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 flex flex-col gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Put {restockLine.code} back</h2>
+              <p className="text-sm text-gray-500">
+                {restockLine.description}
+              </p>
+            </div>
+
+            <div className="bg-gray-50 border border-gray-200 rounded-md px-3 py-2 text-sm text-gray-700">
+              The kit is short {unitsLabel(restockLine.stock?.missing ?? 0)} of this item.
+              {restockLine.missingNote ? <span className="block text-xs text-gray-500 mt-1">Recorded as: {restockLine.missingNote}</span> : null}
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">How many are going back in?</label>
+              <input
+                type="number"
+                min={1}
+                max={restockLine.stock?.missing ?? 1}
+                value={restockQty}
+                onChange={e =>
+                  setRestockQty(Math.max(1, Math.min(restockLine.stock?.missing ?? 1, Math.floor(Number(e.target.value) || 1))))
+                }
+                className="w-28 px-3 py-2 border border-gray-300 rounded-md text-sm text-right"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Note (optional)</label>
+              <input
+                autoComplete="off"
+                value={restockNote}
+                onChange={e => setRestockNote(e.target.value)}
+                placeholder="e.g. New ball bought 4 Sep"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
+              />
+            </div>
+
+            <p className="text-xs text-gray-500">
+              This only changes how many of this item the kit currently HAS. What a full kit should hold stays
+              at {restockLine.quantity} per copy.
+            </p>
+
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setRestockLine(null)} className="px-4 py-2 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50">
+                Cancel
+              </button>
+              <button
+                onClick={handleRestock}
+                disabled={restockBusy}
+                className="px-4 py-2 rounded-md text-sm font-medium bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-40"
+              >
+                {restockBusy ? 'Saving…' : 'Put Back in the Kit'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

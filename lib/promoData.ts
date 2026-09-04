@@ -37,8 +37,8 @@
 import fs from 'fs';
 import path from 'path';
 import { put, get } from '@vercel/blob';
-import type { PromoLineSource } from './promoShared';
-import { kitTotal, availabilityOf } from './promoShared';
+import type { PromoLineSource, PromoLineStock } from './promoShared';
+import { kitTotal, availabilityOf, lineStock, lineMissing, linePool } from './promoShared';
 
 // The pure helpers live in promoShared.ts so the client pages can import them
 // without dragging `fs` into the browser bundle. Re-exported here so server
@@ -52,8 +52,16 @@ export {
   kitUnits,
   normArticle,
   lineKey,
+  linePool,
+  lineMissing,
+  linePresent,
+  lineStock,
+  kitShortUnits,
+  kitShortLines,
+  itemsLabel,
+  unitsLabel,
 } from './promoShared';
-export type { PromoLineSource, KitAvailability } from './promoShared';
+export type { PromoLineSource, KitAvailability, PromoLineStock } from './promoShared';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -67,6 +75,22 @@ export interface PromoKitLine {
   /** Snapshot of the description at the time it was added to the kit. */
   description: string;
   quantity: number;
+  /**
+   * Physical units of this line that are GONE — lost, broken, or never returned
+   * — counted across the whole pool of copies, not per copy.
+   *
+   * Deliberately separate from `quantity`: the quantity is the SPEC ("a full
+   * copy holds 1 soccer ball") and must survive the ball going missing,
+   * otherwise the kit forgets what it is supposed to contain and can never be
+   * checked again. ABSENT MEANS 0 — always read it through lineMissing(), which
+   * also clamps it to the pool so shrinking totalQuantity cannot leave a line
+   * reading more missing than the kit has room for.
+   */
+  missingQuantity?: number;
+  /** Why the last shortfall was recorded. Replaced each time — the audit log is the history. */
+  missingNote?: string;
+  /** When the shortfall was last changed, in either direction. */
+  missingAt?: string;
   addedAt: string;
   addedByName?: string;
 }
@@ -120,6 +144,24 @@ export interface PromoContact {
   createdByName?: string;
 }
 
+/**
+ * The store a kit was dropped at, snapshotted onto the booking.
+ *
+ * Stores are a GLOBAL masterfile (control/stores.json), not client-scoped, so
+ * the fields are copied here rather than referenced: a store renamed, or a
+ * manager who moves on, must not rewrite a delivery note already signed.
+ */
+export interface PromoBookingStore {
+  id: string;
+  name: string;
+  siteCode?: string;
+  channel?: string;
+  region?: string;
+  managerName?: string;
+  managerEmail?: string;
+  managerPhone?: string;
+}
+
 /** Who is holding a kit. Snapshotted onto the booking so a later rename can't rewrite history. */
 export interface PromoHolder {
   /** 'user' = app user, 'rep' = reps masterfile, 'contact' = promo contact. */
@@ -155,6 +197,15 @@ export interface PromoBooking {
   bookedOutByName: string;
   bookedOutByEmail: string;
   holder: PromoHolder;
+  /**
+   * Where the kit is physically sitting while it is out. OPTIONAL: most kits go
+   * to a store and are left there for the weekend, but a rep taking one to a
+   * roadshow has no store, and forcing one would make people invent it. The
+   * holder above is still the person accountable for getting it back.
+   */
+  store?: PromoBookingStore;
+  /** The promoter working the kit at that store. Free text — usually not an app user. */
+  promoterName?: string;
   /** Explicit "I have counted every item in this kit" tick from the book-out screen. */
   contentsConfirmed: boolean;
   /**
@@ -390,4 +441,59 @@ export function outCopiesByKit(bookings: PromoBooking[]): Map<string, number> {
 /** Total / out / available for one kit, given the out-count map above. */
 export function kitAvailability(kit: PromoKit, outByKit: Map<string, number>) {
   return availabilityOf(kitTotal(kit), outByKit.get(kit.id) ?? 0);
+}
+
+// ── Derived state: how many UNITS of each line are out ───────────────────────
+
+/**
+ * Units of each kit line currently out on open bookings, keyed by line id.
+ *
+ * Booking lines carry the PHYSICAL count that left (per-copy x copies), so this
+ * is already in the same units as the pool. A booking line whose kit line has
+ * since been removed simply has nothing to add to.
+ */
+export function outUnitsByLine(bookings: PromoBooking[], kitId: string): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const b of bookings) {
+    if (b.kitId !== kitId || !isOpenBooking(b)) continue;
+    for (const l of b.lines) m.set(l.lineId, (m.get(l.lineId) ?? 0) + (Number(l.quantity) || 0));
+  }
+  return m;
+}
+
+/** Per-line stock for one kit, keyed by line id. Used by the API responses. */
+export function kitLineStock(kit: PromoKit, bookings: PromoBooking[]): Map<string, PromoLineStock> {
+  const copies = kitTotal(kit);
+  const out = outUnitsByLine(bookings, kit.id);
+  const m = new Map<string, PromoLineStock>();
+  for (const l of kit.lines) m.set(l.id, lineStock(l, copies, out.get(l.id) ?? 0));
+  return m;
+}
+
+/**
+ * Record `units` of a line as gone, or give them back with a negative number.
+ *
+ * ONE function for both legs on purpose: an item can be found missing when the
+ * kit goes out (it was never in the box) or when it comes back (it did not
+ * return), and those must not drift into two slightly different rules. Returns
+ * how many units were actually applied after clamping — the caller reports
+ * that, never what it asked for.
+ */
+export function applyLineShortfall(
+  kit: PromoKit,
+  lineId: string,
+  units: number,
+  note: string | undefined,
+  at: string,
+): number {
+  const line = kit.lines.find(l => l.id === lineId);
+  if (!line) return 0;
+  const copies = kitTotal(kit);
+  const before = lineMissing(line, copies);
+  const after = Math.max(0, Math.min(linePool(line, copies), before + Math.floor(units)));
+  if (after === before) return 0;
+  line.missingQuantity = after || undefined;
+  line.missingNote = after === 0 ? undefined : (note?.trim() || line.missingNote);
+  line.missingAt = at;
+  return after - before;
 }
