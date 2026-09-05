@@ -190,6 +190,42 @@ function extractPeriodsFromHeaderRow(row: unknown[], startCol: number): AgedStoc
   return periods;
 }
 
+/**
+ * Header labels that name the vendor/supplier product code column. Massmart
+ * exports call it BMC; others spell it out.
+ */
+const VENDOR_PRODUCT_CODE_HEADERS = new Set([
+  'bmc', 'bmc code', 'vendor product code', 'vendorproductcode', 'vendor code',
+  'supplier product code', 'supplier code', 'product code',
+]);
+
+/** True for a header that names a period column (`13to24MnthQty`, `Soh Cost`). */
+function isPeriodHeader(h: string): boolean {
+  return /(qty|val|value|cost|zar|%)\s*$/.test(normalizeHeader(splitCamelAndDigits(h)));
+}
+
+/**
+ * Resolve the vendor product code column from the column-name row.
+ *
+ * The column after Barcode holds the BMC code in every export we had seen, so
+ * it used to be taken on faith. A Topline export without that column puts its
+ * first period Qty there instead, and the pick slip then printed an uplift
+ * quantity under "Product Code". Match the header instead, and fall back to
+ * `barcodeCol + 1` only when that header exists and is not a period column.
+ * Returning -1 is the honest answer: the commit step fills the code in from
+ * the client's product control file when the load carries none.
+ */
+function resolveVendorProductCodeCol(colNameRow: string[], barcodeCol: number): number {
+  if (barcodeCol < 0) return -1;
+  for (let c = 0; c < colNameRow.length; c++) {
+    if (c === barcodeCol) continue;
+    if (VENDOR_PRODUCT_CODE_HEADERS.has(normalizeHeader(colNameRow[c] ?? ''))) return c;
+  }
+  const next = normalizeHeader(colNameRow[barcodeCol + 1] ?? '');
+  if (!next || isPeriodHeader(next)) return -1;
+  return barcodeCol + 1;
+}
+
 // ── Format detection ─────────────────────────────────────────────────────────
 
 interface DetectedFormat {
@@ -273,17 +309,20 @@ function detectFormat(rows: unknown[][]): DetectedFormat | null {
       hRows[i]?.includes('barcode')
     ) {
       const barcodeCol = hRows[i].indexOf('barcode');
+      const vpcCol = resolveVendorProductCodeCol(hRows[i], barcodeCol);
       return {
         format: 'safetop',
         periodHeaderRow: Math.max(0, i - 1),
         firstDataRow: i + 1,               // skip column-name row; subtotal rows filtered in main loop
-        periodStartCol: barcodeCol + 3,     // skip Barcode, BMC, BMC category
+        // With the BMC pair present the periods start after it. Without it the
+        // first period's Qty sits right after Barcode and must not be skipped.
+        periodStartCol: vpcCol === barcodeCol + 1 ? barcodeCol + 3 : barcodeCol + 1,
         siteCodeCol: 3,
         siteNameCol: 4,
         articleCol: 5,
         descriptionCol: 6,
         barcodeCol,
-        vendorProductCodeCol: barcodeCol + 1,
+        vendorProductCodeCol: vpcCol,
         vendorCol: 1,                       // col B = "Regular Vendor"
       };
     }
@@ -349,17 +388,19 @@ function detectFormat(rows: unknown[][]): DetectedFormat | null {
       const hasBarcode = hRows[i].includes('barcode');
       if (hasBarcode) {
         const barcodeCol = hRows[i].indexOf('barcode');
+        const vpcCol = resolveVendorProductCodeCol(hRows[i], barcodeCol);
         return {
           format: 'bw-site',
           periodHeaderRow: Math.max(0, i - 1),
           firstDataRow: i + 1,
-          periodStartCol: barcodeCol + 3,   // skip Barcode, BMC, BMC desc
+          // See the SafeTop branch: only skip the BMC pair when it is there.
+          periodStartCol: vpcCol === barcodeCol + 1 ? barcodeCol + 3 : barcodeCol + 1,
           siteCodeCol: 0,
           siteNameCol: 1,
           articleCol: 2,
           descriptionCol: 3,
           barcodeCol,
-          vendorProductCodeCol: barcodeCol + 1,
+          vendorProductCodeCol: vpcCol,
           vendorCol: -1,
         };
       }
