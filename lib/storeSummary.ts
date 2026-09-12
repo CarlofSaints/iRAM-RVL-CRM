@@ -2,9 +2,9 @@
  * Consolidated store report — one row per store, in RANDS.
  *
  * Modelled on the hand-maintained "Vermont Sales Aged Stock Tracker": store,
- * site code, province, all the GRN/GRV document numbers in one cell, date
- * uplifted, then value to be collected / collected / damages / possible phantom
- * stock.
+ * site code, province, the GRN/GRV numbers and the Return Order numbers in a
+ * column each, date uplifted, then value to be collected / collected / damages
+ * / possible phantom stock.
  *
  * THE KEY DIFFERENCE TO THE UPLIFT DETAIL REPORT: that one counts UNITS, this
  * one reports VALUE. The aged-stock load gives a value per product line but the
@@ -18,6 +18,8 @@
  * collected" and contributes nothing to the brackets, which is the honest
  * treatment — inventing a price would silently move money between columns.
  */
+
+import type { StoreRef } from './storeRefs';
 
 export interface UpliftLine {
   articleCode: string;
@@ -37,8 +39,12 @@ export interface StoreSummaryInput {
   storeName: string;
   storeCode: string;
   province: string;
-  /** GRN/GRV numbers captured at receipt, across every slip for this store. */
-  documentNumbers: string[];
+  /**
+   * GRN/GRV + Return Order pairs captured at receipt, across every slip for
+   * this store. Pairs, not two lists: the tracker prints them in two columns
+   * and the reader lines them up by row, so the order has to mean something.
+   */
+  refs: StoreRef[];
   /** ISO of the uplift (GRN/GRV date, else receipted date). */
   upliftedAt?: string;
   clientName: string;
@@ -52,7 +58,7 @@ export interface StoreSummaryRow {
   storeName: string;
   storeCode: string;
   province: string;
-  documentNumbers: string[];
+  refs: StoreRef[];
   upliftedAt?: string;
   clientName: string;
   vendorNumber: string;
@@ -123,7 +129,7 @@ export function summariseStore(input: StoreSummaryInput): StoreSummaryRow {
     storeName: input.storeName,
     storeCode: input.storeCode,
     province: input.province,
-    documentNumbers: input.documentNumbers,
+    refs: input.refs,
     upliftedAt: input.upliftedAt,
     clientName: input.clientName,
     vendorNumber: input.vendorNumber,
@@ -142,12 +148,36 @@ export function summariseStore(input: StoreSummaryInput): StoreSummaryRow {
 }
 
 /** The document-number cell: every GRN/GRV for the store, as the tracker writes it. */
-export function formatDocumentNumbers(refs: string[]): string {
-  return refs
-    .map((r) => (r ?? '').trim())
-    .filter(Boolean)
-    .filter((r, i, a) => a.indexOf(r) === i)
-    .join(' / ');
+/**
+ * The GRN/GRV numbers for one store, as one cell: `5002563167 / 5002182924`.
+ *
+ * A pair whose GRN has not been issued yet holds its place with an em dash
+ * rather than collapsing, so this column and the Return Order column beside it
+ * still line up row for row — that alignment is the only thing saying which
+ * 440 belongs to which 500.
+ */
+export function formatDocumentNumbers(refs: StoreRef[]): string {
+  const out = dedupeRefs(refs).map((r) => r.grn || '—');
+  return out.every((v) => v === '—') ? '' : out.join(' / ');
+}
+
+/** The Return Order numbers for one store, aligned with formatDocumentNumbers. */
+export function formatReturnOrderNumbers(refs: StoreRef[]): string {
+  const out = dedupeRefs(refs).map((r) => r.returnOrder || '—');
+  return out.every((v) => v === '—') ? '' : out.join(' / ');
+}
+
+/** Same pair twice on two slips for one store is one piece of paperwork. */
+function dedupeRefs(refs: StoreRef[]): StoreRef[] {
+  const seen = new Set<string>();
+  const out: StoreRef[] = [];
+  for (const r of refs) {
+    const key = `${r.grn}|${r.returnOrder}`;
+    if (key === '|' || seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+  }
+  return out;
 }
 
 export interface StoreSummaryTotals {

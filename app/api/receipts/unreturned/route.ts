@@ -7,6 +7,7 @@ import type { ClientWithLinks } from '@/lib/spLinkData';
 import { logAudit } from '@/lib/auditLog';
 import { sendUnreturnedSkipEmail, sendUnreturnedStockEmail } from '@/lib/email';
 import { generateUnreturnedStockExcel } from '@/lib/unreturnedStockExcel';
+import { readStoreRefs, formatStoreRef, formatStoreRefs } from '@/lib/storeRefs';
 
 export const dynamic = 'force-dynamic';
 
@@ -243,15 +244,9 @@ export async function POST(req: NextRequest) {
           timeZone: 'Africa/Johannesburg',
         });
 
-        // GRN/GRV document number(s) — the array field, falling back to the
-        // legacy receiptStoreRef1-4 columns on older slips.
-        const storeRefs: string[] = [...(slip.receiptStoreRefs ?? [])].filter(Boolean);
-        if (storeRefs.length === 0) {
-          for (const key of ['receiptStoreRef1', 'receiptStoreRef2', 'receiptStoreRef3', 'receiptStoreRef4'] as const) {
-            const v = slip[key];
-            if (v) storeRefs.push(v);
-          }
-        }
+        // GRN/GRV document number(s) with their Return Order numbers.
+        // readStoreRefs() knows every generation of this field.
+        const refs = readStoreRefs(slip);
 
         const { buffer, filename } = await generateUnreturnedStockExcel({
           pickSlipRef: slip.id,
@@ -261,7 +256,7 @@ export async function POST(req: NextRequest) {
           vendorNumber: slip.vendorNumber,
           repName: bookedRep ? `${bookedRep.name} ${bookedRep.surname}` : (slip.bookedRepName ?? '—'),
           grnDate: slip.receiptGrnDate || '—',
-          grnNumber: storeRefs.join(', '),
+          grnNumber: formatStoreRefs(refs),
           captureDate,
           rows,
         });
@@ -281,7 +276,7 @@ export async function POST(req: NextRequest) {
           totalNotUplifted,
           unreturnedSummary: summary,
           pickSlipRef: slip.id,
-          storeRef1: (slip.receiptStoreRefs ?? [])[0] || slip.receiptStoreRef1,
+          storeRef1: refs[0] ? formatStoreRef(refs[0]) : undefined,
           attachment: { filename, content: buffer },
         });
         emailSent = true;

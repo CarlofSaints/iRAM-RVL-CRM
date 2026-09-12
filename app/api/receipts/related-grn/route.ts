@@ -6,6 +6,7 @@ import { loadControl } from '@/lib/controlData';
 import { listLoads } from '@/lib/agedStockData';
 import { listAllPickSlipRuns } from '@/lib/pickSlipData';
 import { findStickerByBarcode } from '@/lib/stickerData';
+import { readStoreRefs, grnNumbersOf } from '@/lib/storeRefs';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,8 +24,11 @@ interface ClientRecord {
  * on the receipt capture page.
  *
  * Returns:
- *   { storeRefs: string[], relatedSlipId: string } — if a related slip has GRN data
- *   { storeRefs: null } — if no related GRN found
+ *   { refs: StoreRef[], relatedSlipId: string } — if a related slip has refs
+ *   { refs: null } — if none found
+ *
+ * `storeRefs` (GRN strings only) is still returned alongside `refs` so a
+ * browser holding the previous version of the capture page keeps working.
  */
 export async function GET(req: NextRequest) {
   let guard = await requirePermission(req, 'receipt_stock');
@@ -55,7 +59,7 @@ export async function GET(req: NextRequest) {
 
   if (scopedIds.length === 0) {
     return NextResponse.json(
-      { storeRefs: null },
+      { refs: null, storeRefs: null },
       { headers: { 'Cache-Control': 'no-store' } },
     );
   }
@@ -74,7 +78,7 @@ export async function GET(req: NextRequest) {
 
   if (!targetSlip || !targetSlip.receiptBoxes || targetSlip.receiptBoxes.length === 0) {
     return NextResponse.json(
-      { storeRefs: null },
+      { refs: null, storeRefs: null },
       { headers: { 'Cache-Control': 'no-store' } },
     );
   }
@@ -94,19 +98,19 @@ export async function GET(req: NextRequest) {
 
   if (relatedSlipIds.size === 0) {
     return NextResponse.json(
-      { storeRefs: null },
+      { refs: null, storeRefs: null },
       { headers: { 'Cache-Control': 'no-store' } },
     );
   }
 
-  // Check related slips for GRN data (receiptStoreRefs)
+  // Check related slips for captured references
   for (const run of runs) {
     for (const slip of run.slips) {
       if (relatedSlipIds.has(slip.id)) {
-        const refs = slip.receiptStoreRefs?.filter(r => r.trim()) ?? [];
+        const refs = readStoreRefs(slip);
         if (refs.length > 0) {
           return NextResponse.json(
-            { storeRefs: refs, relatedSlipId: slip.id },
+            { refs, storeRefs: grnNumbersOf(refs), relatedSlipId: slip.id },
             { headers: { 'Cache-Control': 'no-store' } },
           );
         }
@@ -115,7 +119,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json(
-    { storeRefs: null },
+    { refs: null, storeRefs: null },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 }

@@ -14,6 +14,7 @@ import { generateMultiSlipDeliveryNotePdf } from '@/lib/deliveryNotePdf';
 import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
 import { sendDeliveryNoteEmail } from '@/lib/email';
 import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
+import { readStoreRefs } from '@/lib/storeRefs';
 
 export const dynamic = 'force-dynamic';
 
@@ -345,6 +346,7 @@ export async function POST(req: NextRequest) {
             siteCode: slip.siteCode,
             warehouse: slip.warehouse,
             storeRefs: slip.receiptStoreRefs ?? [],
+            refs: readStoreRefs(slip),
             receiptGrnDate: slip.receiptGrnDate,
             receiptValue: slip.receiptValue,
             manual: slip.manual,
@@ -379,6 +381,7 @@ export async function POST(req: NextRequest) {
           releaseRepName,
           releasedAt: now,
           storeRefs: slip.receiptStoreRefs ?? [],
+          refs: readStoreRefs(slip),
           receiptGrnDate: slip.receiptGrnDate,
           receiptValue: slip.receiptValue,
           manual: slip.manual,

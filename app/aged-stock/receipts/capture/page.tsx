@@ -4,6 +4,13 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import {
+  readStoreRefs,
+  normaliseStoreRefs,
+  storeRefCompletionError,
+  formatStoreRef,
+  type StoreRef,
+} from '@/lib/storeRefs';
 
 interface SlipDto {
   id: string;
@@ -27,6 +34,7 @@ interface SlipDto {
   receiptStoreRef2?: string;
   receiptStoreRef3?: string;
   receiptStoreRef4?: string;
+  receiptRefs?: StoreRef[];
   receiptStoreRefs?: string[];
   receiptGrnDate?: string;
   receiptBoxes?: ReceiptBox[];
@@ -170,7 +178,9 @@ export default function ReceiptCapturePage() {
   const [receiptTotalBoxes, setReceiptTotalBoxes] = useState('');
   const [upliftedById, setUpliftedById] = useState('');
   const [upliftedByName, setUpliftedByName] = useState('');
-  const [storeRefs, setStoreRefs] = useState<string[]>(['']);
+  // GRN + Return Order pairs. Always at least one row so the form has
+  // somewhere to type; the blank row is dropped on save.
+  const [storeRefs, setStoreRefs] = useState<StoreRef[]>([{ grn: '', returnOrder: '' }]);
   const [receiptGrnDate, setReceiptGrnDate] = useState('');
 
   // Box scanning (receipt)
@@ -269,12 +279,11 @@ export default function ReceiptCapturePage() {
           setUpliftedById(found.receiptUpliftedById ?? '');
           setUpliftedByName(found.receiptUpliftedByName ?? '');
           setReceiptGrnDate(found.receiptGrnDate ?? '');
-          // Hydrate store refs — prefer array field, fall back to legacy
-          const arrayRefs = found.receiptStoreRefs ?? [];
-          const legacyRefs = [found.receiptStoreRef1, found.receiptStoreRef2, found.receiptStoreRef3, found.receiptStoreRef4]
-            .filter((r): r is string => !!r);
-          const refs = arrayRefs.length > 0 ? arrayRefs : legacyRefs;
-          setStoreRefs(refs.length > 0 ? refs : ['']);
+          // readStoreRefs() knows all three generations of this field, so a
+          // slip captured before Return Orders existed loads with its GRNs and
+          // an empty Return Order beside each.
+          const refs = readStoreRefs(found);
+          setStoreRefs(refs.length > 0 ? refs : [{ grn: '', returnOrder: '' }]);
           setBoxes(found.receiptBoxes ?? []);
           // Hydrate release form
           setReleaseRepId(found.releaseRepId ?? '');
@@ -363,7 +372,7 @@ export default function ReceiptCapturePage() {
   useEffect(() => {
     if (!slip || !slipId || mode !== 'receipt') return;
     // Only auto-fill if store refs are currently empty
-    const hasRefs = storeRefs.some(r => r.trim());
+    const hasRefs = storeRefs.some(r => r.grn.trim() || r.returnOrder.trim());
     if (hasRefs) return;
 
     let cancelled = false;
@@ -372,8 +381,9 @@ export default function ReceiptCapturePage() {
         const res = await authFetch(`/api/receipts/related-grn?slipId=${encodeURIComponent(slipId)}`, { cache: 'no-store' });
         const data = await res.json();
         if (cancelled) return;
-        if (data.storeRefs && data.storeRefs.length > 0) {
-          setStoreRefs(data.storeRefs);
+        const suggested = normaliseStoreRefs(data.refs ?? data.storeRefs);
+        if (suggested.length > 0) {
+          setStoreRefs(suggested);
           setGrnAutoFilled(true);
           setGrnRelatedSlipId(data.relatedSlipId || '');
         }
@@ -416,11 +426,11 @@ export default function ReceiptCapturePage() {
           totalBoxes: receiptTotalBoxes ? Number(receiptTotalBoxes) : undefined,
           upliftedById,
           upliftedByName,
-          storeRef1: storeRefs[0] ?? '',
-          storeRef2: storeRefs[1] ?? '',
-          storeRef3: storeRefs[2] ?? '',
-          storeRef4: storeRefs[3] ?? '',
-          storeRefs: storeRefs.filter(r => r.trim()),
+          storeRef1: storeRefs[0]?.grn ?? '',
+          storeRef2: storeRefs[1]?.grn ?? '',
+          storeRef3: storeRefs[2]?.grn ?? '',
+          storeRef4: storeRefs[3]?.grn ?? '',
+          refs: normaliseStoreRefs(storeRefs),
           grnDate: receiptGrnDate || undefined,
           boxes: currentBoxes ?? boxes,
         }),
@@ -521,6 +531,15 @@ export default function ReceiptCapturePage() {
     if (!slip) return;
     if (!slip.nothingToReturn && boxes.length === 0) {
       notify('Scan at least one box before completing', 'error');
+      return;
+    }
+
+    // Say what is missing here rather than letting the save go through and the
+    // server reject it — the operator is at a bench with the paperwork in hand
+    // and needs to know which line to fix.
+    const refError = storeRefCompletionError(normaliseStoreRefs(storeRefs));
+    if (refError) {
+      notify(refError, 'error');
       return;
     }
 
@@ -1107,18 +1126,42 @@ export default function ReceiptCapturePage() {
                 />
               </div>
               {storeRefs.map((ref, i) => (
-                <div key={i} className="flex items-end gap-1.5">
+                <div key={i} className="flex items-end gap-1.5 md:col-span-2 lg:col-span-3">
                   <div className="flex-1">
-                    <label className="block text-xs text-gray-600 mb-1">Store Reference (GRV/GRN) {i + 1}</label>
+                    <label className="block text-xs text-gray-600 mb-1">
+                      Store Reference (GRV/GRN) {i + 1}
+                      <span className="text-gray-400 font-normal"> — optional until the courier collects</span>
+                    </label>
                     <input
                       type="text"
-                      value={ref}
+                      value={ref.grn}
+                      placeholder="e.g. 5002563167"
                       onChange={e => {
                         const next = [...storeRefs];
-                        next[i] = e.target.value;
+                        next[i] = { ...next[i], grn: e.target.value };
                         setStoreRefs(next);
                       }}
                       className="w-full px-2.5 py-1.5 border border-gray-300 rounded-md text-sm"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-xs text-gray-600 mb-1">
+                      Return Order Number {i + 1} <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={ref.returnOrder}
+                      placeholder="e.g. 4401657532"
+                      onChange={e => {
+                        const next = [...storeRefs];
+                        next[i] = { ...next[i], returnOrder: e.target.value };
+                        setStoreRefs(next);
+                      }}
+                      className={`w-full px-2.5 py-1.5 border rounded-md text-sm ${
+                        ref.grn.trim() && !ref.returnOrder.trim()
+                          ? 'border-red-400 bg-red-50'
+                          : 'border-gray-300'
+                      }`}
                     />
                   </div>
                   {storeRefs.length > 1 && (
@@ -1139,7 +1182,7 @@ export default function ReceiptCapturePage() {
                 <div className="flex items-end">
                   <button
                     type="button"
-                    onClick={() => setStoreRefs(prev => [...prev, ''])}
+                    onClick={() => setStoreRefs(prev => [...prev, { grn: '', returnOrder: '' }])}
                     className="flex items-center gap-1 text-xs font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-dark)] py-1.5"
                   >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1676,12 +1719,14 @@ export default function ReceiptCapturePage() {
               </div>
             </div>
             {/* Store refs */}
-            {storeRefs.filter(r => r.trim()).length > 0 && (
+            {normaliseStoreRefs(storeRefs).length > 0 && (
               <div className="mt-3 pt-3 border-t border-gray-100">
-                <span className="text-gray-500 text-xs block mb-1">Store References (GRV/GRN)</span>
+                <span className="text-gray-500 text-xs block mb-1">Store References (GRV/GRN &amp; Return Order)</span>
                 <div className="flex flex-wrap gap-2">
-                  {storeRefs.filter(r => r.trim()).map((ref, i) => (
-                    <span key={i} className="px-2 py-0.5 bg-gray-100 rounded text-xs font-mono">{ref}</span>
+                  {normaliseStoreRefs(storeRefs).map((ref, i) => (
+                    <span key={i} className="px-2 py-0.5 bg-gray-100 rounded text-xs font-mono">
+                      {formatStoreRef(ref)}
+                    </span>
                   ))}
                 </div>
               </div>

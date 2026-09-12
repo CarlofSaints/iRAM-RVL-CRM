@@ -3,6 +3,17 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { SHORTFALL_REASONS } from '@/lib/deliveryShortfall';
+import { formatStoreRefs, type StoreRef } from '@/lib/storeRefs';
+
+/**
+ * References for either shape on this page: a note, or one store within a
+ * multi-store note. Falls back to the GRN-only array so a note issued before
+ * Return Orders existed still prints its numbers.
+ */
+const refsOf = (x: { refs?: StoreRef[]; storeRefs?: string[] }): StoreRef[] =>
+  x.refs && x.refs.length > 0
+    ? x.refs
+    : (x.storeRefs ?? []).filter(Boolean).map((grn) => ({ grn, returnOrder: '' }));
 
 interface ContactDto {
   name: string;
@@ -23,6 +34,7 @@ interface SlipBreakdown {
   manual: boolean;
   /** GRN/GRV document number(s) captured at receipt */
   storeRefs?: string[];
+  refs?: StoreRef[];
   /** GRN/GRV document date captured at receipt */
   receiptGrnDate?: string;
 }
@@ -44,6 +56,7 @@ interface SlipSummary {
   totalBoxCount?: number;
   manual: boolean;
   storeRefs?: string[];
+  refs?: StoreRef[];
   receiptGrnDate?: string;
   contacts?: ContactDto[];
   deliveredAt?: string;
@@ -451,9 +464,9 @@ export default function DeliveryConfirmationPage() {
               never reads as the app having dropped it. */}
           {!(slip.slips && slip.slips.length > 1) && (
             <div className="mt-4 border-t border-gray-100 pt-3">
-              <span className="text-gray-500 text-xs block">GRN/GRV Document No</span>
+              <span className="text-gray-500 text-xs block">GRN/GRV Document No (Return Order)</span>
               <span className="font-mono font-medium text-sm break-words">
-                {(slip.storeRefs ?? []).filter(Boolean).join(', ') || '—'}
+                {formatStoreRefs(refsOf(slip)) || '—'}
               </span>
               {slip.receiptGrnDate && (
                 <span className="text-gray-500 text-xs block mt-0.5">Date: {slip.receiptGrnDate}</span>
@@ -504,7 +517,7 @@ export default function DeliveryConfirmationPage() {
                           <span className="block text-xs text-gray-600 mt-0.5">
                             <span className="text-gray-500">GRN/GRV: </span>
                             <span className="font-mono break-words">
-                              {(s.storeRefs ?? []).filter(Boolean).join(', ') || '—'}
+                              {formatStoreRefs(refsOf(s)) || '—'}
                             </span>
                             {s.receiptGrnDate && (
                               <span className="text-gray-500"> · {s.receiptGrnDate}</span>

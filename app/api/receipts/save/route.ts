@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/rolesData';
 import { updateSlipInRun, getPickSlipRun, type ReceiptBox } from '@/lib/pickSlipData';
 import { findAndLinkSticker, unlinkSticker } from '@/lib/stickerData';
 import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
+import { normaliseStoreRefs, grnNumbersOf, type StoreRef } from '@/lib/storeRefs';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +17,7 @@ export async function POST(req: NextRequest) {
   if (guard instanceof NextResponse) return guard;
 
   const body = await req.json();
-  const { slipId, clientId, loadId, qty, value, totalBoxes, upliftedById, upliftedByName, storeRef1, storeRef2, storeRef3, storeRef4, storeRefs, grnDate, boxes } = body as {
+  const { slipId, clientId, loadId, qty, value, totalBoxes, upliftedById, upliftedByName, storeRef1, storeRef2, storeRef3, storeRef4, storeRefs, refs, grnDate, boxes } = body as {
     slipId: string;
     clientId: string;
     loadId: string;
@@ -30,9 +31,16 @@ export async function POST(req: NextRequest) {
     storeRef3?: string;
     storeRef4?: string;
     storeRefs?: string[];
+    /** GRN + Return Order pairs. The authority; `storeRefs` is the old shape. */
+    refs?: StoreRef[];
     grnDate?: string;
     boxes?: ReceiptBox[];
   };
+
+  // Pairs when the caller sends them, else fall back to the old GRN-only array
+  // so a stale browser tab mid-capture still saves rather than silently
+  // dropping the references it is holding.
+  const receiptRefs = normaliseStoreRefs(refs ?? storeRefs);
 
   if (!slipId || !clientId || !loadId) {
     return NextResponse.json({ error: 'slipId, clientId, and loadId are required' }, { status: 400 });
@@ -90,7 +98,10 @@ export async function POST(req: NextRequest) {
     receiptStoreRef2: storeRef2,
     receiptStoreRef3: storeRef3,
     receiptStoreRef4: storeRef4,
-    receiptStoreRefs: storeRefs ?? [],
+    receiptRefs,
+    // Derived mirror, written here and only here, so an unmigrated reader shows
+    // the GRN numbers rather than nothing.
+    receiptStoreRefs: grnNumbersOf(receiptRefs),
     receiptGrnDate: grnDate,
     receiptBoxes: boxes ?? [],
   });

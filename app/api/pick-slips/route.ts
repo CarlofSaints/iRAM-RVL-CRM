@@ -5,6 +5,7 @@ import { clientScopeFor, filterClientIdsByScope } from '@/lib/clientScope';
 import { listLoads, getLoad, type AgedStockLoadMeta } from '@/lib/agedStockData';
 import { provinceName } from '@/lib/region';
 import { parsePickSlipQuery, withinDateWindow, type PickSlipQuery } from '@/lib/pickSlipQuery';
+import { readStoreRefs, matchesRefSearch } from '@/lib/storeRefs';
 import {
   listAllPickSlipRuns,
   savePickSlipRun,
@@ -185,16 +186,18 @@ export async function GET(req: NextRequest) {
   //
   // It is only sound on the GENERATED basis. That skip rests on "a run blob
   // last written before `from` cannot hold a slip generated after `from`",
-  // which holds because generating a slip writes its run. The uplift basis
-  // compares `receiptGrnDate` — a date a human types, with no upper bound — so
-  // a post-dated or mistyped GRN can sit after the blob's last write, and the
-  // prefilter would drop it before `matchesQuery` ever saw it. A filtered list
-  // cannot prove absence, so on that basis we narrow by client and load only.
+  // which holds because generating a slip writes its run. It holds on the
+  // sign-off basis too: `deliveredAt` is stamped by the app in the same write.
+  // It does NOT hold on the uplift basis, which compares `receiptGrnDate` — a
+  // date a human types, with no upper bound — so a post-dated or mistyped GRN
+  // can sit after the blob's last write and the prefilter would drop it before
+  // `matchesQuery` ever saw it. A filtered list cannot prove absence, so on
+  // that basis we narrow by client and load only.
   const runs = await listAllPickSlipRuns(
     requestedIds,
     listLoads,
     q.loadIds,
-    q.dateBasis === 'generated' ? q.from || undefined : undefined,
+    q.dateBasis === 'uplift' ? undefined : q.from || undefined,
   );
 
   // Backfill old slips missing `rows` by reading from load data.
@@ -319,6 +322,11 @@ function matchesQuery(
   }
 
   if (q.provinces.length && !q.provinces.includes(provinceOf(slip.siteCode))) return false;
+
+  // Reference search: a substring of either number on any of the slip's
+  // references. Case-insensitive and trimmed on both sides, because these are
+  // read off paper and retyped, and a stray space must not decide the answer.
+  if (q.refSearch && !matchesRefSearch(readStoreRefs(slip), q.refSearch)) return false;
 
   // WHICH date the range is measured against is the caller's to say — the
   // reports page asks about the uplift, the Picking Slips grid's "Last N days"

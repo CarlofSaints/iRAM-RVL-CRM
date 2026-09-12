@@ -91,7 +91,7 @@ const FIELD_GROUPS: FieldGroup[] = [
     fields: [
       'receiptQty', 'receiptValue', 'receiptUpliftedById', 'receiptUpliftedByName',
       'receiptStoreRef1', 'receiptStoreRef2', 'receiptStoreRef3', 'receiptStoreRef4',
-      'receiptStoreRefs', 'receiptGrnDate', 'receiptedAt', 'receiptedBy', 'receiptedByName',
+      'receiptRefs', 'receiptStoreRefs', 'receiptGrnDate', 'receiptedAt', 'receiptedBy', 'receiptedByName',
       'unreturnedStock', 'unreturnedCapturedAt', 'unreturnedCapturedBy', 'unreturnedCapturedByName',
       'unreturnedSkipped', 'unreturnedSkipReason', 'unreturnedSkipRepId', 'unreturnedSkipRepName',
     ],

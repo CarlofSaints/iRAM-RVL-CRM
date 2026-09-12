@@ -10,6 +10,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import type { StoreRef } from './storeRefs';
 import { put, get, del, list } from '@vercel/blob';
 import type { PickSlipPdfRow } from './pickSlipPdf';
 import { upperName } from './upperName';
@@ -163,7 +164,18 @@ export interface PickSlipRecord {
   bookedRepName?: string;
   /** True when booked via "Nothing to Return" — no boxes, skips box capture */
   nothingToReturn?: boolean;
-  /** Store references — replaces legacy receiptStoreRef1-4 */
+  /**
+   * Store references as GRN/GRV + Return Order PAIRS. The source of truth.
+   * Read it with `readStoreRefs()` (lib/storeRefs.ts), never directly — three
+   * generations of this field exist in live data.
+   */
+  receiptRefs?: StoreRef[];
+  /**
+   * Legacy: the GRN numbers only, replacing the even older receiptStoreRef1-4.
+   * Still WRITTEN, derived from `receiptRefs` at each write, so a reader that
+   * has not been migrated degrades to "GRNs but no Return Orders" rather than
+   * to nothing. Never the authority when `receiptRefs` is present.
+   */
   receiptStoreRefs?: string[];
   /** GRN/GRV date entered during receipt capture */
   receiptGrnDate?: string;

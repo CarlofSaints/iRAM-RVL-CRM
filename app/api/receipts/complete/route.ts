@@ -4,6 +4,7 @@ import { loadUsers } from '@/lib/userData';
 import { updateSlipInRun } from '@/lib/pickSlipData';
 import { logAudit } from '@/lib/auditLog';
 import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
+import { readStoreRefs, storeRefCompletionError } from '@/lib/storeRefs';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,6 +50,15 @@ export async function POST(req: NextRequest) {
     'Receipt capture',
   );
   if (whDenied) return whDenied;
+
+  // Every store reference needs its Return Order number. The capture form
+  // blocks this too, but a form gate is a convenience: this is the rule.
+  // Checked against what was actually PERSISTED by the preceding save, not
+  // against anything the client asserts here.
+  const refError = storeRefCompletionError(readStoreRefs(existingSlip));
+  if (refError) {
+    return NextResponse.json({ error: refError }, { status: 400 });
+  }
 
   // Resolve user name for audit
   const users = await loadUsers();

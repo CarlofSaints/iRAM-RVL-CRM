@@ -10,6 +10,7 @@ import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
 import QRCode from 'qrcode';
+import { formatStoreRefs, type StoreRef } from './storeRefs';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const bwipjs = require('bwip-js') as {
@@ -43,8 +44,10 @@ export interface DeliveryNotePdfParams {
   warehouse: string;
   releaseRepName: string;
   releasedAt: string; // ISO
-  /** GRN/GRV reference numbers */
+  /** GRN/GRV reference numbers. Legacy — `refs` carries the Return Order too. */
   storeRefs: string[];
+  /** GRN + Return Order pairs. Preferred; `storeRefs` is GRNs only. */
+  refs?: StoreRef[];
   /** GRN/GRV document date (captured at receipt) */
   receiptGrnDate?: string;
   /** GRN/GRV document value captured at receipt (string, may include "R"/commas) */
@@ -76,7 +79,7 @@ export interface DeliveryNotePdfParams {
 export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Promise<Buffer> {
   const {
     pickSlipId, clientName, vendorNumber, siteName, siteCode,
-    warehouse, releaseRepName, releasedAt, storeRefs, receiptGrnDate,
+    warehouse, releaseRepName, releasedAt, storeRefs, refs, receiptGrnDate,
     receiptValue, manual, rows, boxCount, totalBoxes, qrUrl,
     signature, signedByName, deliveredAt,
   } = params;
@@ -205,9 +208,14 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
   const tableX = marginL;
 
   // GRN/GRV number(s) + date
-  if (storeRefs.length > 0 || receiptGrnDate) {
+  // Each number prints as "5002563167 (4401657532)" — the GRN with its Return
+  // Order in brackets, the way the store's own paperwork reads. A store that has
+  // prepped but not yet been collected has no GRN and prints "— (4401657532)",
+  // so the reader can tell which of the two numbers is the missing one.
+  const refPairs = refs && refs.length > 0 ? refs : storeRefs.map(g => ({ grn: g, returnOrder: '' }));
+  if (refPairs.length > 0 || receiptGrnDate) {
     doc.font('Helvetica-Bold').fontSize(10);
-    const refText = storeRefs.length > 0 ? storeRefs.join(', ') : '—';
+    const refText = formatStoreRefs(refPairs) || '—';
     doc.text(`GRN/GRV: ${refText}${receiptGrnDate ? `   |   Date: ${receiptGrnDate}` : ''}`, leftX, y, { width: usableW });
     doc.font('Helvetica').fontSize(10);
     y += 16;
@@ -337,7 +345,10 @@ export interface MultiSlipSection {
   siteName: string;
   siteCode: string;
   warehouse: string;
+  /** GRN/GRV reference numbers. Legacy — `refs` carries the Return Order too. */
   storeRefs: string[];
+  /** GRN + Return Order pairs. Preferred; `storeRefs` is GRNs only. */
+  refs?: StoreRef[];
   receiptGrnDate?: string;
   /** GRN/GRV document value captured at receipt (string, may include "R"/commas) */
   receiptValue?: string;
@@ -497,7 +508,7 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
   ensureSpace(dnHeaderH + dnRowH);
   let colX = tableX;
   doc.font('Helvetica-Bold').fontSize(8);
-  const dnHeaders = ['Pick Slip / Store', 'GRN/GRV & Date', 'Boxes', 'Value'];
+  const dnHeaders = ['Pick Slip / Store', 'GRN/GRV (Return Order) & Date', 'Boxes', 'Value'];
   for (let c = 0; c < dnCols.length; c++) {
     doc.rect(colX, y, dnCols[c], dnHeaderH).stroke();
     doc.text(dnHeaders[c], colX + 4, y + 6, { width: dnCols[c] - 8, align: c >= 2 ? 'right' : 'left' });
@@ -532,7 +543,11 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
     // Col 1: GRN/GRV + date
     const c1x = tableX + dnCols[0];
     doc.font('Helvetica').fontSize(8);
-    doc.text(slip.storeRefs.length > 0 ? slip.storeRefs.join(', ') : '—', c1x + 4, y + 5, { width: dnCols[1] - 8 });
+    const slipRefs =
+      slip.refs && slip.refs.length > 0
+        ? slip.refs
+        : slip.storeRefs.map(g => ({ grn: g, returnOrder: '' }));
+    doc.text(formatStoreRefs(slipRefs) || '—', c1x + 4, y + 5, { width: dnCols[1] - 8 });
     if (slip.receiptGrnDate) {
       doc.fillColor('#555555');
       doc.text(`Date: ${slip.receiptGrnDate}`, c1x + 4, y + 22, { width: dnCols[1] - 8 });

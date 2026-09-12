@@ -4,6 +4,14 @@ import { getPickSlipRun, updateSlipInRun } from '@/lib/pickSlipData';
 import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 import { loadUsers } from '@/lib/userData';
 import { logAudit } from '@/lib/auditLog';
+import {
+  readStoreRefs,
+  normaliseStoreRefs,
+  storeRefCompletionError,
+  formatStoreRefs,
+  grnNumbersOf,
+  type StoreRef,
+} from '@/lib/storeRefs';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +27,7 @@ export const dynamic = 'force-dynamic';
  * Gated by the `edit_captured_pick_slips` permission (or super-admin). Every
  * change is written to the audit log with old → new values and a reason.
  *
- * Body: { clientId, loadId, value, storeRefs?, grnDate?, reason }
+ * Body: { clientId, loadId, value, refs?, storeRefs?, grnDate?, reason }
  */
 export async function POST(
   req: NextRequest,
@@ -41,6 +49,8 @@ export async function POST(
     clientId?: string;
     loadId?: string;
     value?: string;
+    /** GRN + Return Order pairs. The authority; storeRefs is the old shape. */
+    refs?: StoreRef[];
     storeRefs?: string[];
     grnDate?: string;
     reason?: string;
@@ -53,8 +63,11 @@ export async function POST(
   const value = typeof body.value === 'string' ? body.value.trim() : '';
   const grnDate = typeof body.grnDate === 'string' ? body.grnDate.trim() : '';
   const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
-  const storeRefs = Array.isArray(body.storeRefs)
-    ? body.storeRefs.map(r => (typeof r === 'string' ? r.trim() : '')).filter(Boolean)
+  // Undefined means "not supplied, leave the references alone" — a value-only
+  // correction must not wipe them. An empty array means "clear them".
+  const refsSupplied = body.refs !== undefined || body.storeRefs !== undefined;
+  const receiptRefs = refsSupplied
+    ? normaliseStoreRefs(body.refs ?? body.storeRefs)
     : undefined;
 
   if (!clientId || !loadId) {
@@ -88,7 +101,7 @@ export async function POST(
 
   // Snapshot old values for the audit trail.
   const oldValue = slip.receiptValue ?? '';
-  const oldRefs = slip.receiptStoreRefs ?? [];
+  const oldRefs = readStoreRefs(slip);
   const oldGrnDate = slip.receiptGrnDate ?? '';
 
   const now = new Date().toISOString();
@@ -100,7 +113,15 @@ export async function POST(
   };
   // Store refs / GRN date are optional — only overwrite when supplied so a
   // value-only correction leaves them intact.
-  if (storeRefs !== undefined) patch.receiptStoreRefs = storeRefs;
+  if (receiptRefs !== undefined) {
+    // A correction reaches a slip that is already captured, so the Return
+    // Order rule that gates completion applies here too — otherwise the one
+    // screen that can edit these references is the one way to strip them.
+    const refError = storeRefCompletionError(receiptRefs);
+    if (refError) return NextResponse.json({ error: refError }, { status: 400 });
+    patch.receiptRefs = receiptRefs;
+    patch.receiptStoreRefs = grnNumbersOf(receiptRefs);
+  }
   if (body.grnDate !== undefined) patch.receiptGrnDate = grnDate || undefined;
 
   const updated = await updateSlipInRun(clientId, loadId, slipId, patch);
@@ -111,8 +132,8 @@ export async function POST(
   // Build a change summary — only mention fields that actually changed.
   const changes: string[] = [];
   if (oldValue !== value) changes.push(`Value "${oldValue || '—'}" → "${value || '—'}"`);
-  if (storeRefs !== undefined && oldRefs.join(', ') !== storeRefs.join(', ')) {
-    changes.push(`Refs "${oldRefs.join(', ') || '—'}" → "${storeRefs.join(', ') || '—'}"`);
+  if (receiptRefs !== undefined && formatStoreRefs(oldRefs) !== formatStoreRefs(receiptRefs)) {
+    changes.push(`Refs "${formatStoreRefs(oldRefs) || '—'}" → "${formatStoreRefs(receiptRefs) || '—'}"`);
   }
   if (body.grnDate !== undefined && oldGrnDate !== grnDate) {
     changes.push(`GRN date "${oldGrnDate || '—'}" → "${grnDate || '—'}"`);

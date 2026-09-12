@@ -6,6 +6,7 @@ import { listLoads } from '@/lib/agedStockData';
 import { generateDeliveryNotePdf, generateMultiSlipDeliveryNotePdf } from '@/lib/deliveryNotePdf';
 import { noteBoxCounts } from '@/lib/slipBoxes';
 import { sendDeliveryNoteEmail } from '@/lib/email';
+import { readStoreRefs, grnNumbersOf } from '@/lib/storeRefs';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,6 +85,7 @@ export async function POST(req: NextRequest) {
           siteCode: s.siteCode,
           warehouse: s.warehouse,
           storeRefs: s.receiptStoreRefs ?? [],
+          refs: readStoreRefs(s),
           receiptGrnDate: s.receiptGrnDate,
           receiptValue: s.receiptValue,
           manual: s.manual,
@@ -106,13 +108,8 @@ export async function POST(req: NextRequest) {
       filename = `DN - ${slip.clientName} - ${dateFmt} (${last3s}).pdf`;
     } else {
       // Single-slip delivery note (existing behavior)
-      const storeRefs: string[] = slip.receiptStoreRefs ?? [];
-      if (storeRefs.length === 0) {
-        for (const key of ['receiptStoreRef1', 'receiptStoreRef2', 'receiptStoreRef3', 'receiptStoreRef4'] as const) {
-          const v = slip[key];
-          if (v) storeRefs.push(v);
-        }
-      }
+      const refs = readStoreRefs(slip);
+      const storeRefs = grnNumbersOf(refs);
 
       const dnRows = (slip.rows ?? []).map(r => ({
         articleCode: r.articleCode,
@@ -134,6 +131,7 @@ export async function POST(req: NextRequest) {
         releaseRepName: slip.releaseRepName ?? 'Unknown',
         releasedAt: slip.releasedAt ?? new Date().toISOString(),
         storeRefs,
+        refs,
         receiptGrnDate: slip.receiptGrnDate,
         receiptValue: slip.receiptValue,
         manual: slip.manual,

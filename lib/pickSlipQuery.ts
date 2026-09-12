@@ -41,6 +41,11 @@ export interface PickSlipQuery {
    *
    *   'generated'  the day the slip was issued. What the Picking Slips grid's
    *                "Last N days" window means — the work in front of you.
+   *   'signoff'    the day the delivery note was signed at the store
+   *                (`deliveredAt`). A slip nobody has signed for has no such
+   *                day and falls outside every window, which is the truth
+   *                about it — there is no fallback here, because "not signed
+   *                yet" is not a date.
    *   'uplift'     the day the stock was actually collected
    *                (`receiptGrnDate || receiptedAt`), falling back to the
    *                generated date for a slip not yet uplifted, so outstanding
@@ -51,10 +56,19 @@ export interface PickSlipQuery {
    * day in June and uplifted through to September. A report headed "Uplifted
    * from…" but measured on the generated date returned nothing at all for them.
    */
-  dateBasis: 'generated' | 'uplift';
+  dateBasis: 'generated' | 'uplift' | 'signoff';
   /** Inclusive ISO dates (yyyy-mm-dd), measured against `dateBasis`. */
   from: string;
   to: string;
+  /**
+   * Free-text match against a slip's GRN/GRV and Return Order numbers.
+   *
+   * Server-side on purpose: someone holding a piece of paper knows the number
+   * and usually not the client, so this has to be answerable without first
+   * narrowing to a vendor — and narrowing in the browser would mean shipping
+   * every slip there to do it.
+   */
+  refSearch: string;
 }
 
 export const EMPTY_QUERY: PickSlipQuery = {
@@ -70,6 +84,7 @@ export const EMPTY_QUERY: PickSlipQuery = {
   dateBasis: 'generated',
   from: '',
   to: '',
+  refSearch: '',
 };
 
 const splitCsv = (v: string | null | undefined): string[] =>
@@ -78,6 +93,11 @@ const splitCsv = (v: string | null | undefined): string[] =>
     .map((s) => s.trim())
     .filter(Boolean)
     .filter((s, i, a) => a.indexOf(s) === i);
+
+/** Unknown or absent basis ⇒ 'generated', which is what every old caller meant. */
+function parseDateBasis(raw: string | null): PickSlipQuery['dateBasis'] {
+  return raw === 'uplift' || raw === 'signoff' ? raw : 'generated';
+}
 
 /** Parse a query string into the canonical shape. Unknown mode ⇒ 'summary'. */
 export function parsePickSlipQuery(sp: URLSearchParams): PickSlipQuery {
@@ -95,9 +115,10 @@ export function parsePickSlipQuery(sp: URLSearchParams): PickSlipQuery {
     provinces: splitCsv(sp.get('provinces')),
     siteCodes: splitCsv(sp.get('siteCodes')),
     warehouseCodes: splitCsv(sp.get('warehouseCodes')),
-    dateBasis: sp.get('dateBasis') === 'uplift' ? 'uplift' : 'generated',
+    dateBasis: parseDateBasis(sp.get('dateBasis')),
     from: (sp.get('from') ?? '').trim(),
     to: (sp.get('to') ?? '').trim(),
+    refSearch: (sp.get('refSearch') ?? '').trim(),
   };
 }
 
@@ -116,9 +137,10 @@ export function pickSlipQueryToParams(q: Partial<PickSlipQuery>): string {
   list('provinces', q.provinces);
   list('siteCodes', q.siteCodes);
   list('warehouseCodes', q.warehouseCodes);
-  if (q.dateBasis === 'uplift') sp.set('dateBasis', 'uplift');
+  if (q.dateBasis && q.dateBasis !== 'generated') sp.set('dateBasis', q.dateBasis);
   if (q.from) sp.set('from', q.from);
   if (q.to) sp.set('to', q.to);
+  if (q.refSearch) sp.set('refSearch', q.refSearch);
   return sp.toString();
 }
 
@@ -127,6 +149,8 @@ export interface SlipDates {
   generatedAt?: string;
   receiptGrnDate?: string;
   receiptedAt?: string;
+  /** When the store signed the delivery note. */
+  deliveredAt?: string;
 }
 
 /**
@@ -151,6 +175,9 @@ export function upliftDateOf(slip: SlipDates): string {
  * Returns '' when the slip carries no usable date at all.
  */
 export function slipDayForBasis(slip: SlipDates, basis: PickSlipQuery['dateBasis']): string {
+  // No fallback on the sign-off basis: an unsigned slip has no sign-off day and
+  // must fall out of the window rather than borrow the day it was printed.
+  if (basis === 'signoff') return String(slip.deliveredAt ?? '').slice(0, 10);
   const uplift = basis === 'uplift' ? upliftDateOf(slip).slice(0, 10) : '';
   return uplift || String(slip.generatedAt ?? '').slice(0, 10);
 }
@@ -189,6 +216,7 @@ export function isQueryNarrowed(q: PickSlipQuery): boolean {
       q.siteCodes.length ||
       q.provinces.length ||
       q.warehouseCodes.length ||
+      q.refSearch ||
       q.from ||
       q.to
   );

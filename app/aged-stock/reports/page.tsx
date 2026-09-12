@@ -24,10 +24,12 @@ import {
   type ExcelViewMode,
   type ReportGroup,
 } from '@/lib/reportExport';
+import { readStoreRefs, type StoreRef } from '@/lib/storeRefs';
 import {
   summariseStore,
   totalStoreSummary,
   formatDocumentNumbers,
+  formatReturnOrderNumbers,
   type StoreSummaryRow,
   type UpliftLine,
 } from '@/lib/storeSummary';
@@ -68,6 +70,7 @@ interface SlipDto {
   totalVal: number;
   status: string;
   generatedAt: string;
+  receiptRefs?: StoreRef[];
   receiptStoreRefs?: string[];
   receiptGrnDate?: string;
   receiptedAt?: string;
@@ -75,6 +78,21 @@ interface SlipDto {
   rows: PdfRow[];
   unreturnedStock?: UnreturnedRow[];
   unreturnedSkipped?: boolean;
+  /** Sign-off: when the store signed, and who signed for it. */
+  deliveredAt?: string;
+  deliverySignedByName?: string;
+  deliveredByRepName?: string;
+  /**
+   * Earlier signed notes for this slip. A short delivery is signed for, then
+   * the slip goes back out for the boxes it still owes — so one slip can carry
+   * several genuine sign-offs and a report that only read the live fields
+   * would show the last one and quietly lose the rest.
+   */
+  deliveryHistory?: Array<{
+    deliveredAt?: string;
+    deliverySignedByName?: string;
+    deliveredByRepName?: string;
+  }>;
 }
 
 interface Facets {
@@ -95,6 +113,11 @@ interface ReportRow {
   grnRef2: string;
   grnRef3: string;
   grnRef4: string;
+  /** Return Order number matching the GRN in the same position. */
+  returnRef1: string;
+  returnRef2: string;
+  returnRef3: string;
+  returnRef4: string;
   clientName: string;
   vendorNumber: string;
   storeName: string;
@@ -112,7 +135,23 @@ interface ReportRow {
   damagedQty: number;
 }
 
-type ReportId = 'uplift-detail' | 'store-summary';
+/** One signed delivery: a store, the paperwork it went back on, and who signed. */
+interface SignoffRow {
+  signedAt: string;
+  storeCode: string;
+  storeName: string;
+  grn: string;
+  returnOrder: string;
+  receivedBy: string;
+  deliveredBy: string;
+  pickSlipId: string;
+  clientName: string;
+  vendorNumber: string;
+  /** True when this came from an earlier, short delivery rather than the last one. */
+  partial: boolean;
+}
+
+type ReportId = 'uplift-detail' | 'store-summary' | 'returns-signoff';
 
 const REPORTS: Array<{ id: ReportId; label: string; description: string }> = [
   {
@@ -123,13 +162,19 @@ const REPORTS: Array<{ id: ReportId; label: string; description: string }> = [
   {
     id: 'store-summary',
     label: 'Consolidated Store Report',
-    description: 'One row per store in RANDS — value to be collected, collected, damages and possible phantom stock, with every GRN/GRV number in one cell.',
+    description: 'One row per store in RANDS — value to be collected, collected, damages and possible phantom stock, with the GRN/GRV and Return Order numbers in a column each.',
+  },
+  {
+    id: 'returns-signoff',
+    label: 'Returns Sign-off Report',
+    description: 'What went back to each store once the delivery note was signed. Search a GRN or Return Order number, or export a vendor.',
   },
 ];
 
 const REPORT_TITLE: Record<ReportId, string> = {
   'uplift-detail': 'Uplift Detail Report',
   'store-summary': 'Consolidated Store Report',
+  'returns-signoff': 'Returns Sign-off Report',
 };
 
 /**
@@ -193,6 +238,7 @@ export default function ReportsPage() {
   const [statuses, setStatuses] = useState<Set<string>>(new Set());
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [refSearch, setRefSearch] = useState('');
 
   // Results — only populated after Run report.
   const [slips, setSlips] = useState<SlipDto[] | null>(null);
@@ -292,26 +338,37 @@ export default function ReportsPage() {
 
   const hasFilter =
     clientIds.size > 0 || vendorNumbers.size > 0 || loadIds.size > 0 ||
-    provinces.size > 0 || siteCodes.size > 0 || Boolean(from) || Boolean(to);
+    provinces.size > 0 || siteCodes.size > 0 || Boolean(from) || Boolean(to) ||
+    Boolean(refSearch.trim());
+
+  const isSignoffReport = selectedReport === 'returns-signoff';
 
   // ── Run ───────────────────────────────────────────────────────────────────
   const runReport = useCallback(async () => {
     setRunning(true);
     setRunError('');
     const qs = pickSlipQueryToParams({
-      mode: 'full',
+      // The sign-off report is about paperwork, not products — every column it
+      // prints lives on the slip itself. Asking for 'full' would pull every
+      // product row on every slip, and on top of that make the server read a
+      // whole load blob per slip whose rows were never backfilled.
+      mode: isSignoffReport ? 'summary' : 'full',
       clientIds: [...clientIds],
       vendorNumbers: [...vendorNumbers],
       loadIds: [...loadIds],
       provinces: [...provinces],
       siteCodes: [...siteCodes],
       statuses: [...statuses],
-      // This report is about what was UPLIFTED in the period, not about when
-      // the paperwork was issued. Both of Vermont Sales' and Safe Top's books
-      // were issued on one day in June and uplifted through to September, so
-      // measured on the issue date a July–September run returned nothing at
-      // all for them while every other vendor looked fine.
-      dateBasis: 'uplift',
+      // Each report measures its period against the date it is actually about,
+      // and each is a different date on the same slip. The uplift reports are
+      // about what was COLLECTED in the period, not about when the paperwork
+      // was issued: both of Vermont Sales' and Safe Top's books were issued on
+      // one day in June and uplifted through to September, so measured on the
+      // issue date a July–September run returned nothing at all for them while
+      // every other vendor looked fine. The sign-off report is about the day
+      // the store signed, which is later again.
+      dateBasis: isSignoffReport ? 'signoff' : 'uplift',
+      refSearch: refSearch.trim(),
       from, to,
     });
     try {
@@ -328,11 +385,12 @@ export default function ReportsPage() {
     } finally {
       setRunning(false);
     }
-  }, [clientIds, vendorNumbers, loadIds, provinces, siteCodes, statuses, from, to]);
+  }, [clientIds, vendorNumbers, loadIds, provinces, siteCodes, statuses, from, to, refSearch, isSignoffReport]);
 
   const resetFilters = () => {
     setClientIds(new Set()); setVendorNumbers(new Set()); setLoadIds(new Set());
     setProvinces(new Set()); setSiteCodes(new Set()); setStatuses(new Set()); setFrom(''); setTo('');
+    setRefSearch('');
     setSlips(null); setRunError('');
   };
 
@@ -341,7 +399,7 @@ export default function ReportsPage() {
     if (!slips) return [];
     const rows: ReportRow[] = [];
     for (const slip of slips) {
-      const refs = slip.receiptStoreRefs ?? [];
+      const refs = readStoreRefs(slip);
       const grnDate = upliftDateOf(slip);
       for (const row of slip.rows ?? []) {
         const ur = (slip.unreturnedStock ?? []).find((u) => u.articleCode === row.articleCode);
@@ -352,7 +410,10 @@ export default function ReportsPage() {
         const foundQty = ur ? ur.pickSlipQty - (displayQty + refusedQty + notFoundQty + damagedQty) : 0;
         rows.push({
           pickSlipId: slip.id,
-          grnRef1: refs[0] ?? '', grnRef2: refs[1] ?? '', grnRef3: refs[2] ?? '', grnRef4: refs[3] ?? '',
+          grnRef1: refs[0]?.grn ?? '', grnRef2: refs[1]?.grn ?? '',
+          grnRef3: refs[2]?.grn ?? '', grnRef4: refs[3]?.grn ?? '',
+          returnRef1: refs[0]?.returnOrder ?? '', returnRef2: refs[1]?.returnOrder ?? '',
+          returnRef3: refs[2]?.returnOrder ?? '', returnRef4: refs[3]?.returnOrder ?? '',
           clientName: slip.clientName,
           vendorNumber: slip.vendorNumber,
           storeName: slip.siteName,
@@ -388,7 +449,7 @@ export default function ReportsPage() {
     interface Bucket {
       storeName: string; storeCode: string; province: string;
       clientName: string; vendorNumber: string;
-      docs: string[]; upliftedAt?: string; uplifted: boolean;
+      refs: StoreRef[]; upliftedAt?: string; uplifted: boolean;
       lines: UpliftLine[];
     }
     const byStore = new Map<string, Bucket>();
@@ -404,11 +465,11 @@ export default function ReportsPage() {
           storeName: slip.siteName, storeCode: slip.siteCode,
           province: slip.province ?? '',
           clientName: slip.clientName, vendorNumber: slip.vendorNumber,
-          docs: [], uplifted: false, lines: [],
+          refs: [], uplifted: false, lines: [],
         };
         byStore.set(key, b);
       }
-      for (const ref of slip.receiptStoreRefs ?? []) if (ref) b.docs.push(ref);
+      for (const ref of readStoreRefs(slip)) b.refs.push(ref);
 
       const when = upliftDateOf(slip);
       if (when) {
@@ -441,7 +502,7 @@ export default function ReportsPage() {
       .map((b) =>
         summariseStore({
           storeName: b.storeName, storeCode: b.storeCode, province: b.province,
-          documentNumbers: b.docs, upliftedAt: b.upliftedAt,
+          refs: b.refs, upliftedAt: b.upliftedAt,
           clientName: b.clientName, vendorNumber: b.vendorNumber,
           lines: b.lines, uplifted: b.uplifted,
         })
@@ -452,13 +513,66 @@ export default function ReportsPage() {
 
   const storeTotals = useMemo(() => totalStoreSummary(storeRows), [storeRows]);
 
+  // ── Returns sign-off ──────────────────────────────────────────────────────
+  // One row per SIGNED delivery, not per slip. A slip short-delivered twice and
+  // then completed was signed for three times by three people on three days;
+  // reading only the live `deliveredAt` would report the last of them and drop
+  // the other two, and those are exactly the ones a query is chasing.
+  //
+  // The references belong to the slip rather than to the individual sign-off,
+  // so every sign-off of a slip repeats them — which is right: the same GRN did
+  // go back on each of those notes.
+  const signoffRows = useMemo<SignoffRow[]>(() => {
+    if (!slips) return [];
+    const out: SignoffRow[] = [];
+    for (const slip of slips) {
+      const refs = readStoreRefs(slip);
+      // A slip with no references still has to appear — it was signed for, and
+      // a report that hid it would be answering a different question.
+      const refList = refs.length > 0 ? refs : [{ grn: '', returnOrder: '' }];
+
+      const events: Array<{ at?: string; by?: string; rep?: string; partial: boolean }> = [
+        ...(slip.deliveryHistory ?? []).map((h) => ({
+          at: h.deliveredAt, by: h.deliverySignedByName, rep: h.deliveredByRepName, partial: true,
+        })),
+        { at: slip.deliveredAt, by: slip.deliverySignedByName, rep: slip.deliveredByRepName, partial: false },
+      ];
+
+      for (const e of events) {
+        if (!e.at) continue;   // not signed — not a return
+        for (const ref of refList) {
+          out.push({
+            signedAt: e.at,
+            storeCode: slip.siteCode,
+            storeName: slip.siteName,
+            grn: ref.grn,
+            returnOrder: ref.returnOrder,
+            receivedBy: e.by ?? '',
+            deliveredBy: e.rep ?? '',
+            pickSlipId: slip.id,
+            clientName: slip.clientName,
+            vendorNumber: slip.vendorNumber,
+            partial: e.partial,
+          });
+        }
+      }
+    }
+    // Most recently signed first — the question is almost always about something
+    // that just went back.
+    return out.sort((a, b) => (a.signedAt < b.signedAt ? 1 : -1));
+  }, [slips]);
+
   // ── Export ────────────────────────────────────────────────────────────────
   const excelRow = (r: ReportRow) => ({
     'Picking Slip #': r.pickSlipId,
     'GRN/GRV #1': r.grnRef1,
+    'Return Order #1': r.returnRef1,
     'GRN/GRV #2': r.grnRef2,
+    'Return Order #2': r.returnRef2,
     'GRN/GRV #3': r.grnRef3,
+    'Return Order #3': r.returnRef3,
     'GRN/GRV #4': r.grnRef4,
+    'Return Order #4': r.returnRef4,
     'Client': r.clientName,
     'Vendor #': r.vendorNumber,
     'Store Name': r.storeName,
@@ -481,7 +595,8 @@ export default function ReportsPage() {
     'Store Name': r.storeName,
     'Site Code': r.storeCode,
     'Province': r.province,
-    'Document Number(s)': formatDocumentNumbers(r.documentNumbers),
+    'GRN/GRV Number(s)': formatDocumentNumbers(r.refs),
+    'Return Order Number(s)': formatReturnOrderNumbers(r.refs),
     'Date Uplifted': r.upliftedAt ? fmtDate(r.upliftedAt) : '',
     'Value to be Collected': r.valueToBeCollected,
     'Value Collected': r.valueCollected,
@@ -494,8 +609,27 @@ export default function ReportsPage() {
     'Vendor #': r.vendorNumber,
   });
 
+  /** One signed return, exactly the six columns that were asked for plus its trail. */
+  const signoffExcelRow = (r: SignoffRow) => ({
+    'Date Returned / Signed Off': r.signedAt ? fmtDateTime(r.signedAt) : '',
+    'Site Code': r.storeCode,
+    'Store Name': r.storeName,
+    'GRN Number': r.grn,
+    'Return Order Number': r.returnOrder,
+    'Received By': r.receivedBy,
+    'Delivered By': r.deliveredBy,
+    'Pick Slip #': r.pickSlipId,
+    'Part Delivery': r.partial ? 'Yes' : '',
+    'Client': r.clientName,
+    'Vendor #': r.vendorNumber,
+  });
+
   const isStoreReport = selectedReport === 'store-summary';
-  const outputRowCount = isStoreReport ? storeRows.length : reportRows.length;
+  const outputRowCount = isStoreReport
+    ? storeRows.length
+    : isSignoffReport
+      ? signoffRows.length
+      : reportRows.length;
 
   const groupKeyOf = (r: { clientName: string; vendorNumber: string; storeName: string; storeCode: string }): string => {
     switch (splitBy) {
@@ -510,9 +644,13 @@ export default function ReportsPage() {
     setExporting(true);
     try {
       const source: Array<{ clientName: string; vendorNumber: string; storeName: string; storeCode: string }> =
-        isStoreReport ? storeRows : reportRows;
+        isStoreReport ? storeRows : isSignoffReport ? signoffRows : reportRows;
       const toExcel = (r: unknown) =>
-        isStoreReport ? storeExcelRow(r as StoreSummaryRow) : excelRow(r as ReportRow);
+        isStoreReport
+          ? storeExcelRow(r as StoreSummaryRow)
+          : isSignoffReport
+            ? signoffExcelRow(r as SignoffRow)
+            : excelRow(r as ReportRow);
 
       const byGroup = new Map<string, typeof source>();
       for (const r of source) {
@@ -654,8 +792,23 @@ export default function ReportsPage() {
                 disabled={facetsLoading}
                 widthClass="min-w-[11rem]"
               />
+              {isSignoffReport && (
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">GRN or Return Order number</label>
+                  <input
+                    type="text"
+                    value={refSearch}
+                    onChange={(e) => setRefSearch(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !running && !facetsLoading) runReport(); }}
+                    placeholder="e.g. 5002563167 or 4401657532"
+                    className="px-3 py-1.5 border border-gray-300 rounded-md text-sm w-56"
+                  />
+                </div>
+              )}
               <div>
-                <label className="block text-xs text-gray-600 mb-1">Uplifted from (GRN date)</label>
+                <label className="block text-xs text-gray-600 mb-1">
+                  {isSignoffReport ? 'Signed off from' : 'Uplifted from (GRN date)'}
+                </label>
                 <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
                   className="px-3 py-1.5 border border-gray-300 rounded-md text-sm" />
               </div>
@@ -757,6 +910,73 @@ export default function ReportsPage() {
             </div>
           )}
 
+          {/* Returns sign-off report */}
+          {slips && !running && isSignoffReport && (
+            <>
+              <p className="text-xs text-gray-500 mb-2">
+                One row per signed delivery note. A store that was short-delivered and then
+                completed signed more than once, so it appears more than once — the earlier
+                ones are marked <span className="font-semibold text-gray-700">part delivery</span>.
+              </p>
+              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                <div className="max-h-[70vh] overflow-auto">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-gray-50 sticky top-0 z-10">
+                      <tr className="text-left text-[10px] font-semibold text-gray-600 uppercase tracking-wide">
+                        <th className="px-2 py-2 whitespace-nowrap">Date Returned / Signed Off</th>
+                        <th className="px-2 py-2 whitespace-nowrap">Site Code</th>
+                        <th className="px-2 py-2 whitespace-nowrap">Store Name</th>
+                        <th className="px-2 py-2 whitespace-nowrap">GRN Number</th>
+                        <th className="px-2 py-2 whitespace-nowrap">Return Order Number</th>
+                        <th className="px-2 py-2 whitespace-nowrap">Received By</th>
+                        <th className="px-2 py-2 whitespace-nowrap">Delivered By</th>
+                        <th className="px-2 py-2 whitespace-nowrap">Pick Slip #</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {signoffRows.length === 0 ? (
+                        <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-500 text-sm">
+                          Nothing matched those filters.
+                        </td></tr>
+                      ) : (
+                        signoffRows.map((r, i) => (
+                          <tr key={`${r.pickSlipId}|${r.signedAt}|${r.grn}|${r.returnOrder}|${i}`} className="border-t border-gray-100 hover:bg-gray-50">
+                            <td className="px-2 py-1.5 whitespace-nowrap">
+                              {fmtDateTime(r.signedAt)}
+                              {r.partial && (
+                                <span className="ml-1.5 text-[10px] font-semibold text-amber-600">part delivery</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 whitespace-nowrap">{r.storeCode}</td>
+                            <td className="px-2 py-1.5 whitespace-nowrap font-medium text-gray-800">{r.storeName}</td>
+                            <td className="px-2 py-1.5 whitespace-nowrap font-mono">
+                              {r.grn || <span className="text-gray-300">—</span>}
+                            </td>
+                            <td className="px-2 py-1.5 whitespace-nowrap font-mono">
+                              {r.returnOrder || <span className="text-gray-300">—</span>}
+                            </td>
+                            <td className="px-2 py-1.5 whitespace-nowrap">
+                              {r.receivedBy || <span className="text-gray-300">—</span>}
+                            </td>
+                            <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">
+                              {r.deliveredBy || <span className="text-gray-300">—</span>}
+                            </td>
+                            <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-gray-500">{r.pickSlipId}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                {signoffRows.length.toLocaleString()} signed{' '}
+                {signoffRows.length === 1 ? 'return' : 'returns'}
+                {ranWith ? ` · run at ${ranWith}` : ''}
+              </p>
+            </>
+          )}
+
           {/* Consolidated store report */}
           {slips && !running && isStoreReport && (
             <>
@@ -808,7 +1028,8 @@ export default function ReportsPage() {
                         <th className="px-2 py-2 whitespace-nowrap">Store Name</th>
                         <th className="px-2 py-2 whitespace-nowrap">Site Code</th>
                         <th className="px-2 py-2 whitespace-nowrap">Province</th>
-                        <th className="px-2 py-2">Document Number(s)</th>
+                        <th className="px-2 py-2">GRN/GRV Number(s)</th>
+                        <th className="px-2 py-2">Return Order Number(s)</th>
                         <th className="px-2 py-2 whitespace-nowrap">Date Uplifted</th>
                         <th className="px-2 py-2 text-right whitespace-nowrap">Value to be Collected</th>
                         <th className="px-2 py-2 text-right whitespace-nowrap">Value Collected</th>
@@ -821,7 +1042,7 @@ export default function ReportsPage() {
                     </thead>
                     <tbody>
                       {storeRows.length === 0 ? (
-                        <tr><td colSpan={12} className="px-3 py-8 text-center text-gray-500 text-sm">
+                        <tr><td colSpan={13} className="px-3 py-8 text-center text-gray-500 text-sm">
                           Nothing matched those filters.
                         </td></tr>
                       ) : (
@@ -831,8 +1052,11 @@ export default function ReportsPage() {
                               <td className="px-2 py-1.5 whitespace-nowrap font-medium text-gray-800">{r.storeName}</td>
                               <td className="px-2 py-1.5 whitespace-nowrap">{r.storeCode}</td>
                               <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">{r.province || '—'}</td>
-                              <td className="px-2 py-1.5 max-w-[260px] truncate" title={formatDocumentNumbers(r.documentNumbers)}>
-                                {formatDocumentNumbers(r.documentNumbers) || <span className="text-gray-300">—</span>}
+                              <td className="px-2 py-1.5 max-w-[200px] truncate" title={formatDocumentNumbers(r.refs)}>
+                                {formatDocumentNumbers(r.refs) || <span className="text-gray-300">—</span>}
+                              </td>
+                              <td className="px-2 py-1.5 max-w-[200px] truncate" title={formatReturnOrderNumbers(r.refs)}>
+                                {formatReturnOrderNumbers(r.refs) || <span className="text-gray-300">—</span>}
                               </td>
                               <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">
                                 {r.upliftedAt ? fmtDate(r.upliftedAt) : <span className="text-amber-600">outstanding</span>}
@@ -847,7 +1071,7 @@ export default function ReportsPage() {
                             </tr>
                           ))}
                           <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold">
-                            <td colSpan={5} className="px-2 py-2 text-right text-xs text-gray-700">TOTAL</td>
+                            <td colSpan={6} className="px-2 py-2 text-right text-xs text-gray-700">TOTAL</td>
                             <td className="px-2 py-2 text-right whitespace-nowrap">{fmtCurrency(storeTotals.valueToBeCollected)}</td>
                             <td className="px-2 py-2 text-right whitespace-nowrap text-emerald-600">{fmtCurrency(storeTotals.valueCollected)}</td>
                             <td className="px-2 py-2 text-right whitespace-nowrap text-red-600">{fmtCurrency(storeTotals.damages)}</td>
@@ -866,7 +1090,7 @@ export default function ReportsPage() {
           )}
 
           {/* Report grid */}
-          {slips && !running && !isStoreReport && (
+          {slips && !running && !isStoreReport && !isSignoffReport && (
             <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
               <div className="max-h-[70vh] overflow-auto">
                 <table className="min-w-full text-xs">
@@ -874,9 +1098,13 @@ export default function ReportsPage() {
                     <tr className="text-left text-[10px] font-semibold text-gray-600 uppercase tracking-wide">
                       <th className="px-2 py-2 whitespace-nowrap">Pick Slip #</th>
                       <th className="px-2 py-2 whitespace-nowrap">GRN/GRV #1</th>
+                      <th className="px-2 py-2 whitespace-nowrap">Return Order #1</th>
                       <th className="px-2 py-2 whitespace-nowrap">GRN/GRV #2</th>
+                      <th className="px-2 py-2 whitespace-nowrap">Return Order #2</th>
                       <th className="px-2 py-2 whitespace-nowrap">GRN/GRV #3</th>
+                      <th className="px-2 py-2 whitespace-nowrap">Return Order #3</th>
                       <th className="px-2 py-2 whitespace-nowrap">GRN/GRV #4</th>
+                      <th className="px-2 py-2 whitespace-nowrap">Return Order #4</th>
                       <th className="px-2 py-2 whitespace-nowrap">Vendor</th>
                       <th className="px-2 py-2 whitespace-nowrap">Store</th>
                       <th className="px-2 py-2 whitespace-nowrap">GRN/GRV Date</th>
@@ -894,7 +1122,7 @@ export default function ReportsPage() {
                   </thead>
                   <tbody>
                     {reportRows.length === 0 ? (
-                      <tr><td colSpan={18} className="px-3 py-8 text-center text-gray-500 text-sm">
+                      <tr><td colSpan={22} className="px-3 py-8 text-center text-gray-500 text-sm">
                         Nothing matched those filters.
                       </td></tr>
                     ) : (
@@ -903,9 +1131,13 @@ export default function ReportsPage() {
                           <tr key={i} className="border-t border-gray-100 hover:bg-gray-50">
                             <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px]">{r.pickSlipId}</td>
                             <td className="px-2 py-1.5 whitespace-nowrap">{r.grnRef1}</td>
+                            <td className="px-2 py-1.5 whitespace-nowrap">{r.returnRef1}</td>
                             <td className="px-2 py-1.5 whitespace-nowrap">{r.grnRef2}</td>
+                            <td className="px-2 py-1.5 whitespace-nowrap">{r.returnRef2}</td>
                             <td className="px-2 py-1.5 whitespace-nowrap">{r.grnRef3}</td>
+                            <td className="px-2 py-1.5 whitespace-nowrap">{r.returnRef3}</td>
                             <td className="px-2 py-1.5 whitespace-nowrap">{r.grnRef4}</td>
+                            <td className="px-2 py-1.5 whitespace-nowrap">{r.returnRef4}</td>
                             <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">{r.vendorNumber}</td>
                             <td className="px-2 py-1.5 whitespace-nowrap">{r.storeName} ({r.storeCode})</td>
                             <td className="px-2 py-1.5 whitespace-nowrap text-gray-500">{r.grnDateTime}</td>
@@ -922,7 +1154,7 @@ export default function ReportsPage() {
                           </tr>
                         ))}
                         <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold">
-                          <td colSpan={11} className="px-2 py-2 text-right text-xs text-gray-700">TOTAL</td>
+                          <td colSpan={15} className="px-2 py-2 text-right text-xs text-gray-700">TOTAL</td>
                           <td className="px-2 py-2 text-right whitespace-nowrap">{totals.agedQty.toLocaleString()}</td>
                           <td className="px-2 py-2 text-right whitespace-nowrap">{fmtCurrency(totals.agedVal)}</td>
                           <td className="px-2 py-2 text-right whitespace-nowrap text-emerald-600">{totals.foundQty.toLocaleString()}</td>

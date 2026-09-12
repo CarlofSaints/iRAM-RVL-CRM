@@ -12,6 +12,7 @@ import { generateDeliveryNotePdf, generateMultiSlipDeliveryNotePdf } from '@/lib
 import { noteBoxCounts, hasOutstandingBoxes } from '@/lib/slipBoxes';
 import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
 import { sendPickSlipEmail } from '@/lib/email';
+import { readStoreRefs } from '@/lib/storeRefs';
 
 export const dynamic = 'force-dynamic';
 
@@ -78,6 +79,7 @@ export async function GET(
     status: r.slip.status,
     manual: r.slip.manual ?? false,
     storeRefs: r.slip.receiptStoreRefs ?? [],
+    refs: readStoreRefs(r.slip),
     receiptGrnDate: r.slip.receiptGrnDate,
   }));
 
@@ -98,6 +100,7 @@ export async function GET(
     totalBoxCount,
     manual: slip.manual ?? false,
     storeRefs: slip.receiptStoreRefs ?? [],
+    refs: readStoreRefs(slip),
     receiptGrnDate: slip.receiptGrnDate,
     contacts,
     deliveredAt: slip.deliveredAt,
@@ -368,6 +371,7 @@ export async function POST(
           siteCode: slip.siteCode,
           warehouse: slip.warehouse,
           storeRefs: slip.receiptStoreRefs ?? [],
+          refs: readStoreRefs(slip),
           receiptGrnDate: slip.receiptGrnDate,
           receiptValue: slip.receiptValue,
           manual: slip.manual,
@@ -395,6 +399,7 @@ export async function POST(
         releaseRepName: firstSlip.releaseRepName ?? '',
         releasedAt: firstSlip.releasedAt ?? now,
         storeRefs: firstSlip.receiptStoreRefs ?? [],
+        refs: readStoreRefs(firstSlip),
         receiptGrnDate: firstSlip.receiptGrnDate,
         receiptValue: firstSlip.receiptValue,
         manual: firstSlip.manual,

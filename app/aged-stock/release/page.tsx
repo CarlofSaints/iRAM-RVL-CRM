@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
 import { releasableBoxes } from '@/lib/slipBoxes';
+import { readStoreRefs, formatStoreRefs, type StoreRef } from '@/lib/storeRefs';
 
 interface ReceiptBox {
   id: string;
@@ -29,6 +30,7 @@ interface SlipDto {
   /** Boxes still owed after a short release. When present this — not
    *  receiptBoxes — is what the slip can put on a note. See lib/slipBoxes.ts. */
   outstandingBoxes?: ReceiptBox[];
+  receiptRefs?: StoreRef[];
   receiptStoreRefs?: string[];
   receiptGrnDate?: string;
   manual?: boolean;
@@ -823,10 +825,10 @@ export default function ReleasePage() {
                     </div>
                   </div>
 
-                  {/* GRN/GRV refs */}
-                  {(ds.slip.receiptStoreRefs ?? []).length > 0 && (
+                  {/* GRN/GRV refs, each with its Return Order in brackets */}
+                  {readStoreRefs(ds.slip).length > 0 && (
                     <p className="text-xs text-gray-500 mb-2">
-                      GRN/GRV: {ds.slip.receiptStoreRefs!.join(', ')}
+                      GRN/GRV: {formatStoreRefs(readStoreRefs(ds.slip))}
                     </p>
                   )}
 

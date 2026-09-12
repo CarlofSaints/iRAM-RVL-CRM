@@ -7,6 +7,7 @@ import { useAuth, authFetch } from '@/lib/useAuth';
 import StatusBadge from '@/components/StatusBadge';
 import { validRevertTargets, clearedStageDescriptions } from '@/lib/pickSlipRevert';
 import { provinceName } from '@/lib/region';
+import { readStoreRefs, normaliseStoreRefs, type StoreRef } from '@/lib/storeRefs';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -70,6 +71,7 @@ interface SlipDto {
   receiptTotalBoxes?: number;
   receiptedAt?: string;
   receiptValue?: string;
+  receiptRefs?: StoreRef[];
   receiptStoreRefs?: string[];
   receiptGrnDate?: string;
   receiptValueCorrectedAt?: string;
@@ -268,7 +270,7 @@ export default function PickingSlipsPage() {
   // Correct GRN/GRV modal — fix captured value/refs/date on a released/delivered slip
   const [correctSlip, setCorrectSlip] = useState<SlipDto | null>(null);
   const [correctValue, setCorrectValue] = useState('');
-  const [correctRefs, setCorrectRefs] = useState<string[]>(['']);
+  const [correctRefs, setCorrectRefs] = useState<StoreRef[]>([{ grn: '', returnOrder: '' }]);
   const [correctGrnDate, setCorrectGrnDate] = useState('');
   const [correctReason, setCorrectReason] = useState('');
   const [correctSaving, setCorrectSaving] = useState(false);
@@ -916,8 +918,8 @@ export default function PickingSlipsPage() {
   function openCorrect(slip: SlipDto) {
     setCorrectSlip(slip);
     setCorrectValue(slip.receiptValue ?? '');
-    const refs = slip.receiptStoreRefs ?? [];
-    setCorrectRefs(refs.length > 0 ? refs : ['']);
+    const refs = readStoreRefs(slip);
+    setCorrectRefs(refs.length > 0 ? refs : [{ grn: '', returnOrder: '' }]);
     setCorrectGrnDate(slip.receiptGrnDate ?? '');
     setCorrectReason('');
   }
@@ -937,7 +939,7 @@ export default function PickingSlipsPage() {
           clientId: correctSlip.clientId,
           loadId: correctSlip.loadId,
           value: correctValue.trim(),
-          storeRefs: correctRefs.map(r => r.trim()).filter(Boolean),
+          refs: normaliseStoreRefs(correctRefs),
           grnDate: correctGrnDate,
           reason: correctReason.trim(),
         }),
@@ -2542,15 +2544,30 @@ export default function PickingSlipsPage() {
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
             />
 
-            <label className="block text-xs font-medium text-gray-600 mb-1">Store References (GRV/GRN)</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Store References — GRV/GRN and Return Order
+            </label>
             <div className="space-y-2 mb-4">
               {correctRefs.map((ref, i) => (
                 <div key={i} className="flex gap-2">
                   <input
                     type="text"
-                    value={ref}
-                    onChange={e => setCorrectRefs(prev => prev.map((r, j) => (j === i ? e.target.value : r)))}
-                    placeholder={`Reference ${i + 1}`}
+                    value={ref.grn}
+                    onChange={e =>
+                      setCorrectRefs(prev => prev.map((r, j) => (j === i ? { ...r, grn: e.target.value } : r)))
+                    }
+                    placeholder={`GRN/GRV ${i + 1}`}
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                  />
+                  <input
+                    type="text"
+                    value={ref.returnOrder}
+                    onChange={e =>
+                      setCorrectRefs(prev =>
+                        prev.map((r, j) => (j === i ? { ...r, returnOrder: e.target.value } : r))
+                      )
+                    }
+                    placeholder={`Return Order ${i + 1} *`}
                     className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30"
                   />
                   {correctRefs.length > 1 && (
@@ -2566,12 +2583,16 @@ export default function PickingSlipsPage() {
               ))}
               {correctRefs.length < 4 && (
                 <button
-                  onClick={() => setCorrectRefs(prev => [...prev, ''])}
+                  onClick={() => setCorrectRefs(prev => [...prev, { grn: '', returnOrder: '' }])}
                   className="text-xs font-medium text-amber-700 hover:text-amber-800"
                 >
                   + Add reference
                 </button>
               )}
+              <p className="text-xs text-gray-500">
+                The Return Order number is required on every line. The GRN/GRV number is not — a
+                store that has only prepped its stock does not have one yet.
+              </p>
             </div>
 
             <label className="block text-xs font-medium text-gray-600 mb-1">Reason (recorded in the audit log)</label>
