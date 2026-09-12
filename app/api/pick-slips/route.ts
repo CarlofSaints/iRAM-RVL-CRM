@@ -4,7 +4,7 @@ import { loadUsers } from '@/lib/userData';
 import { clientScopeFor, filterClientIdsByScope } from '@/lib/clientScope';
 import { listLoads, getLoad, type AgedStockLoadMeta } from '@/lib/agedStockData';
 import { provinceName } from '@/lib/region';
-import { parsePickSlipQuery, type PickSlipQuery } from '@/lib/pickSlipQuery';
+import { parsePickSlipQuery, withinDateWindow, type PickSlipQuery } from '@/lib/pickSlipQuery';
 import {
   listAllPickSlipRuns,
   savePickSlipRun,
@@ -182,7 +182,20 @@ export async function GET(req: NextRequest) {
 
   // `q.from` also narrows which run blobs are read, not just which slips are
   // returned — that is where the page-load latency actually goes.
-  const runs = await listAllPickSlipRuns(requestedIds, listLoads, q.loadIds, q.from || undefined);
+  //
+  // It is only sound on the GENERATED basis. That skip rests on "a run blob
+  // last written before `from` cannot hold a slip generated after `from`",
+  // which holds because generating a slip writes its run. The uplift basis
+  // compares `receiptGrnDate` — a date a human types, with no upper bound — so
+  // a post-dated or mistyped GRN can sit after the blob's last write, and the
+  // prefilter would drop it before `matchesQuery` ever saw it. A filtered list
+  // cannot prove absence, so on that basis we narrow by client and load only.
+  const runs = await listAllPickSlipRuns(
+    requestedIds,
+    listLoads,
+    q.loadIds,
+    q.dateBasis === 'generated' ? q.from || undefined : undefined,
+  );
 
   // Backfill old slips missing `rows` by reading from load data.
   // Tracks which runs were modified so we can persist the backfill.
@@ -307,14 +320,11 @@ function matchesQuery(
 
   if (q.provinces.length && !q.provinces.includes(provinceOf(slip.siteCode))) return false;
 
-  // Date range is inclusive on both ends and compares yyyy-mm-dd prefixes, so a
-  // timezone never shifts a slip out of the day the user picked.
-  if (q.from || q.to) {
-    const day = (slip.generatedAt ?? '').slice(0, 10);
-    if (!day) return false;
-    if (q.from && day < q.from) return false;
-    if (q.to && day > q.to) return false;
-  }
+  // WHICH date the range is measured against is the caller's to say — the
+  // reports page asks about the uplift, the Picking Slips grid's "Last N days"
+  // means the day the slip was issued. The rule itself lives in the query
+  // contract beside the flag that selects it, so the two cannot drift.
+  if (!withinDateWindow(slip, q)) return false;
 
   return true;
 }

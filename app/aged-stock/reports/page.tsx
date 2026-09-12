@@ -17,7 +17,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
 import { MultiSelect, type MultiSelectOption } from '@/components/MultiSelect';
-import { pickSlipQueryToParams } from '@/lib/pickSlipQuery';
+import { pickSlipQueryToParams, upliftDateOf } from '@/lib/pickSlipQuery';
 import {
   exportReport,
   EXCEL_VIEW_LABELS,
@@ -306,6 +306,12 @@ export default function ReportsPage() {
       provinces: [...provinces],
       siteCodes: [...siteCodes],
       statuses: [...statuses],
+      // This report is about what was UPLIFTED in the period, not about when
+      // the paperwork was issued. Both of Vermont Sales' and Safe Top's books
+      // were issued on one day in June and uplifted through to September, so
+      // measured on the issue date a July–September run returned nothing at
+      // all for them while every other vendor looked fine.
+      dateBasis: 'uplift',
       from, to,
     });
     try {
@@ -336,7 +342,7 @@ export default function ReportsPage() {
     const rows: ReportRow[] = [];
     for (const slip of slips) {
       const refs = slip.receiptStoreRefs ?? [];
-      const grnDate = slip.receiptGrnDate || slip.receiptedAt || '';
+      const grnDate = upliftDateOf(slip);
       for (const row of slip.rows ?? []) {
         const ur = (slip.unreturnedStock ?? []).find((u) => u.articleCode === row.articleCode);
         const displayQty = ur?.display ?? 0;
@@ -404,7 +410,7 @@ export default function ReportsPage() {
       }
       for (const ref of slip.receiptStoreRefs ?? []) if (ref) b.docs.push(ref);
 
-      const when = slip.receiptGrnDate || slip.receiptedAt;
+      const when = upliftDateOf(slip);
       if (when) {
         b.uplifted = true;
         // Earliest uplift date for the store — the tracker records when the
@@ -649,7 +655,7 @@ export default function ReportsPage() {
                 widthClass="min-w-[11rem]"
               />
               <div>
-                <label className="block text-xs text-gray-600 mb-1">Uplifted from</label>
+                <label className="block text-xs text-gray-600 mb-1">Uplifted from (GRN date)</label>
                 <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
                   className="px-3 py-1.5 border border-gray-300 rounded-md text-sm" />
               </div>

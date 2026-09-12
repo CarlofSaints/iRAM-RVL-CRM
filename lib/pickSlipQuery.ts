@@ -36,7 +36,23 @@ export interface PickSlipQuery {
   provinces: string[];
   siteCodes: string[];
   warehouseCodes: string[];
-  /** Inclusive ISO dates (yyyy-mm-dd) against the slip's generated date. */
+  /**
+   * Which date `from`/`to` are measured against.
+   *
+   *   'generated'  the day the slip was issued. What the Picking Slips grid's
+   *                "Last N days" window means — the work in front of you.
+   *   'uplift'     the day the stock was actually collected
+   *                (`receiptGrnDate || receiptedAt`), falling back to the
+   *                generated date for a slip not yet uplifted, so outstanding
+   *                work still appears in the window it was issued in.
+   *
+   * These are different questions, and one slip answers them with dates months
+   * apart: Vermont Sales' and Safe Top's entire books were issued on a single
+   * day in June and uplifted through to September. A report headed "Uplifted
+   * from…" but measured on the generated date returned nothing at all for them.
+   */
+  dateBasis: 'generated' | 'uplift';
+  /** Inclusive ISO dates (yyyy-mm-dd), measured against `dateBasis`. */
   from: string;
   to: string;
 }
@@ -51,6 +67,7 @@ export const EMPTY_QUERY: PickSlipQuery = {
   provinces: [],
   siteCodes: [],
   warehouseCodes: [],
+  dateBasis: 'generated',
   from: '',
   to: '',
 };
@@ -78,6 +95,7 @@ export function parsePickSlipQuery(sp: URLSearchParams): PickSlipQuery {
     provinces: splitCsv(sp.get('provinces')),
     siteCodes: splitCsv(sp.get('siteCodes')),
     warehouseCodes: splitCsv(sp.get('warehouseCodes')),
+    dateBasis: sp.get('dateBasis') === 'uplift' ? 'uplift' : 'generated',
     from: (sp.get('from') ?? '').trim(),
     to: (sp.get('to') ?? '').trim(),
   };
@@ -98,9 +116,61 @@ export function pickSlipQueryToParams(q: Partial<PickSlipQuery>): string {
   list('provinces', q.provinces);
   list('siteCodes', q.siteCodes);
   list('warehouseCodes', q.warehouseCodes);
+  if (q.dateBasis === 'uplift') sp.set('dateBasis', 'uplift');
   if (q.from) sp.set('from', q.from);
   if (q.to) sp.set('to', q.to);
   return sp.toString();
+}
+
+/** The subset of a slip any of these date rules needs. */
+export interface SlipDates {
+  generatedAt?: string;
+  receiptGrnDate?: string;
+  receiptedAt?: string;
+}
+
+/**
+ * When a slip was UPLIFTED: the GRN/GRV date the receiver typed, else the
+ * moment the receipt was captured. '' when it has not been uplifted yet.
+ *
+ * One definition, because the reports page prints this in its "GRN/GRV Date"
+ * and "Date Uplifted" columns and the date filter selects on it — a filter that
+ * disagreed with the column beside it would be indefensible.
+ */
+export function upliftDateOf(slip: SlipDates): string {
+  return String(slip.receiptGrnDate || slip.receiptedAt || '');
+}
+
+/**
+ * The day a slip counts as under a given basis, as yyyy-mm-dd.
+ *
+ * On the uplift basis it falls back to the generated date when the slip has not
+ * been uplifted yet. That fallback is what keeps outstanding work in the window
+ * it was issued in, so a store summary run over a date range still shows its
+ * amber "outstanding" rows and its Uplifted percentage still means something.
+ * Returns '' when the slip carries no usable date at all.
+ */
+export function slipDayForBasis(slip: SlipDates, basis: PickSlipQuery['dateBasis']): string {
+  const uplift = basis === 'uplift' ? upliftDateOf(slip).slice(0, 10) : '';
+  return uplift || String(slip.generatedAt ?? '').slice(0, 10);
+}
+
+/**
+ * Is this slip inside the query's date window?
+ *
+ * Inclusive on both ends, compared as yyyy-mm-dd prefixes so a timezone never
+ * shifts a slip out of the day the user picked. No window ⇒ everything matches.
+ */
+export function withinDateWindow(
+  slip: SlipDates,
+  q: Pick<PickSlipQuery, 'dateBasis' | 'from' | 'to'>
+): boolean {
+  if (!q.from && !q.to) return true;
+  const day = slipDayForBasis(slip, q.dateBasis);
+  if (!day) return false;
+  if (q.from && day < q.from) return false;
+  if (q.to && day > q.to) return false;
+  return true;
 }
 
 /**
