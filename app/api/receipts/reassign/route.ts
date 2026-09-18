@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { multiStoreDnFileName } from '@/lib/deliveryNoteFileName';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { verifyReleaseCode, masterCodeAuditNote } from '@/lib/releaseCodeAuth';
@@ -198,9 +199,12 @@ export async function POST(req: NextRequest) {
           totalBoxes: noteBoxCounts(slip).asked,
         })),
       });
-      const dateStr = releasedAt.slice(0, 10);
-      const last3s = resolvedSlips.map(({ slip }) => slip.id.slice(-3)).join(', ');
-      pdfFileName = `${firstSlip.clientName} - ${dateStr} (${last3s}).pdf`;
+      // Same name as the note it replaces, so SharePoint keeps one copy.
+      pdfFileName = multiStoreDnFileName({
+        clientName: firstSlip.clientName,
+        warehouse: firstSlip.warehouseCode || firstSlip.warehouse,
+        at: releasedAt,
+      });
     } else {
       const slip = firstSlip;
       const boxes = slip.releaseBoxes ?? [];

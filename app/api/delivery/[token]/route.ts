@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { multiStoreDnFileName } from '@/lib/deliveryNoteFileName';
 import { loadControl } from '@/lib/controlData';
 import { listLoads } from '@/lib/agedStockData';
 import { findAllSlipsByDeliveryToken, updateSlipInRun, type PickSlipRecord, type DeliveryHistoryEntry } from '@/lib/pickSlipData';
@@ -432,9 +433,13 @@ export async function POST(
 
         let pdfFileName: string;
         if (isMulti) {
-          const dateFmt = now.slice(0, 10);
-          const last3s = delivered.map(r => r.slip.id.slice(-3)).join(', ');
-          pdfFileName = `${firstSlip.clientName} - ${dateFmt} (${last3s}) - SIGNED.pdf`;
+          // Release time, not sign-off time, so it pairs with the unsigned note.
+          pdfFileName = multiStoreDnFileName({
+            clientName: firstSlip.clientName,
+            warehouse: firstSlip.warehouseCode || firstSlip.warehouse,
+            at: firstSlip.releasedAt ?? now,
+            signed: true,
+          });
         } else {
           pdfFileName = `${firstSlip.siteName} ${firstSlip.siteCode} - DN-${firstSlip.id} - SIGNED.pdf`;
         }

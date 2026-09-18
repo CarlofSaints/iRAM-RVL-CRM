@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { multiStoreDnFileName } from '@/lib/deliveryNoteFileName';
 import { requirePermission } from '@/lib/rolesData';
 import { getPickSlipRun, findAllSlipsByDeliveryToken } from '@/lib/pickSlipData';
 import { loadControl } from '@/lib/controlData';
@@ -103,9 +104,11 @@ export async function POST(req: NextRequest) {
         deliveredAt: slip.deliveredAt,
       });
 
-      const dateFmt = (slip.releasedAt ?? new Date().toISOString()).slice(0, 10);
-      const last3s = allTokenSlips.map(r => r.slip.id.slice(-3)).join(', ');
-      filename = `DN - ${slip.clientName} - ${dateFmt} (${last3s}).pdf`;
+      filename = multiStoreDnFileName({
+        clientName: slip.clientName,
+        warehouse: slip.warehouseCode || slip.warehouse,
+        at: slip.releasedAt ?? new Date().toISOString(),
+      });
     } else {
       // Single-slip delivery note (existing behavior)
       const refs = readStoreRefs(slip);

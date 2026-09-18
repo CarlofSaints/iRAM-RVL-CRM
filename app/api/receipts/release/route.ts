@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { multiStoreDnFileName } from '@/lib/deliveryNoteFileName';
 import { randomUUID } from 'crypto';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
@@ -420,10 +421,11 @@ export async function POST(req: NextRequest) {
           })),
         });
 
-        // Multi-slip filename: {clientName} - {YYYY-MM-DD} ({last3OfSlip1}, {last3OfSlip2}).pdf
-        const dateStr = now.slice(0, 10);
-        const last3s = resolvedSlips.map(({ slip }) => slip.id.slice(-3)).join(', ');
-        pdfFileName = `${firstSlip.clientName} - ${dateStr} (${last3s}).pdf`;
+        pdfFileName = multiStoreDnFileName({
+          clientName: firstSlip.clientName,
+          warehouse: firstSlip.warehouseCode || firstSlip.warehouse,
+          at: now,
+        });
       } else {
         // Single-slip delivery note (unchanged)
         const slip = firstSlip;
