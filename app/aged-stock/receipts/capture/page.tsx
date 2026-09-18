@@ -537,7 +537,7 @@ export default function ReceiptCapturePage() {
     // Say what is missing here rather than letting the save go through and the
     // server reject it — the operator is at a bench with the paperwork in hand
     // and needs to know which line to fix.
-    const refError = storeRefCompletionError(normaliseStoreRefs(storeRefs));
+    const refError = storeRefCompletionError(normaliseStoreRefs(storeRefs), { nothingToReturn: slip.nothingToReturn });
     if (refError) {
       notify(refError, 'error');
       return;
@@ -1146,7 +1146,10 @@ export default function ReceiptCapturePage() {
                   </div>
                   <div className="flex-1">
                     <label className="block text-xs text-gray-600 mb-1">
-                      Return Order Number {i + 1} <span className="text-red-500">*</span>
+                      Return Order Number {i + 1}{' '}
+                      {slip.nothingToReturn
+                        ? <span className="text-gray-400 font-normal">(optional — nothing returned)</span>
+                        : <span className="text-red-500">*</span>}
                     </label>
                     <input
                       type="text"

@@ -144,8 +144,14 @@ export function matchesRefSearch(refs: StoreRef[], search: string): boolean {
  * Return Order exists from the moment the store preps the stock, while the GRN
  * is only generated when the courier collects. Enforced on the server as well
  * as in the form, because a form gate is a convenience and not a rule.
+ *
+ * A slip booked as "Nothing to Return" is exempt: no stock went back, so the
+ * store never raised a Return Order, and the rule made it impossible to
+ * capture the uplift detail and close the slip (18 Sep 2026). Pass the slip's
+ * STORED flag, never one the client sends.
  */
-export function storeRefCompletionError(refs: StoreRef[]): string {
+export function storeRefCompletionError(refs: StoreRef[], opts: { nothingToReturn?: boolean } = {}): string {
+  if (opts.nothingToReturn) return '';
   if (refs.length === 0) {
     return 'Add at least one Return Order number before completing the receipt.';
   }

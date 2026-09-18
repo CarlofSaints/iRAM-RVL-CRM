@@ -117,7 +117,7 @@ export async function POST(
     // A correction reaches a slip that is already captured, so the Return
     // Order rule that gates completion applies here too — otherwise the one
     // screen that can edit these references is the one way to strip them.
-    const refError = storeRefCompletionError(receiptRefs);
+    const refError = storeRefCompletionError(receiptRefs, { nothingToReturn: slip.nothingToReturn });
     if (refError) return NextResponse.json({ error: refError }, { status: 400 });
     patch.receiptRefs = receiptRefs;
     patch.receiptStoreRefs = grnNumbersOf(receiptRefs);

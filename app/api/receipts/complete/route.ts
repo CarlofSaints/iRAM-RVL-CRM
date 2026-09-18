@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   // blocks this too, but a form gate is a convenience: this is the rule.
   // Checked against what was actually PERSISTED by the preceding save, not
   // against anything the client asserts here.
-  const refError = storeRefCompletionError(readStoreRefs(existingSlip));
+  const refError = storeRefCompletionError(readStoreRefs(existingSlip), { nothingToReturn: existingSlip.nothingToReturn });
   if (refError) {
     return NextResponse.json({ error: refError }, { status: 400 });
   }
