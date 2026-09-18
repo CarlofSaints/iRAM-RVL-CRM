@@ -11,7 +11,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { StoreRef } from './storeRefs';
-import { put, get, del, list } from '@vercel/blob';
+import { put, get, del, list, BlobPreconditionFailedError } from '@vercel/blob';
 import type { PickSlipPdfRow } from './pickSlipPdf';
 import { upperName } from './upperName';
 
@@ -508,6 +508,84 @@ export async function updateSlipInRun(
   run.slips[idx] = { ...run.slips[idx], ...patch };
   await savePickSlipRun(run);
   return run.slips[idx];
+}
+
+/**
+ * Patch slips in ONE run, but only if every one of them is still in an
+ * `allowedStatuses` status at the moment of the write.
+ *
+ * `updateSlipInRun` is read-then-write with no check between, so two requests
+ * that read the same run both see `captured` and both write. That is exactly
+ * how a release tapped twice became two releases, each minting its own
+ * delivery token and emailing its own PDF, with only the last token surviving
+ * on the slip — every other PDF carried a QR code that says "Invalid Link".
+ * Between 27 Aug and 18 Sep 2026 the audit log holds 250 such repeats.
+ *
+ * On Vercel the write is conditional on the blob's ETag, so whichever request
+ * writes second is refused, re-reads, finds the slip already moved on and
+ * returns it in `conflicts` instead of overwriting.
+ */
+export async function claimSlipsInRun(
+  clientId: string,
+  loadId: string,
+  patches: Map<string, Partial<PickSlipRecord>>,
+  allowedStatuses: string[],
+): Promise<{ ok: true; slips: PickSlipRecord[] } | { ok: false; conflicts: PickSlipRecord[]; missing: string[] }> {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    let run: PickSlipRunIndex | null = null;
+    let etag: string | undefined;
+    if (process.env.VERCEL) {
+      const res = await get(runKey(clientId, loadId), { access: 'private', useCache: false });
+      if (res && res.statusCode === 200) {
+        etag = res.blob.etag;
+        run = JSON.parse(await new Response(res.stream).text()) as PickSlipRunIndex;
+        for (const slip of run.slips) {
+          slip.status = normalizeStatus(slip.status);
+          slip.siteName = upperName(slip.siteName);
+          slip.siteCode = upperName(slip.siteCode);
+          slip.clientName = upperName(slip.clientName);
+        }
+      }
+    } else {
+      run = await getPickSlipRun(clientId, loadId);
+    }
+    if (!run) return { ok: false, conflicts: [], missing: [...patches.keys()] };
+
+    const missing = [...patches.keys()].filter(id => !run!.slips.some(s => s.id === id));
+    const conflicts = run.slips.filter(s => patches.has(s.id) && !allowedStatuses.includes(s.status));
+    if (missing.length > 0 || conflicts.length > 0) return { ok: false, conflicts, missing };
+
+    const claimed: PickSlipRecord[] = [];
+    run.slips = run.slips.map(s => {
+      const patch = patches.get(s.id);
+      if (!patch) return s;
+      const next = { ...s, ...patch };
+      claimed.push(next);
+      return next;
+    });
+
+    if (!process.env.VERCEL) {
+      await savePickSlipRun(run);
+      return { ok: true, slips: claimed };
+    }
+    try {
+      await put(runKey(clientId, loadId), JSON.stringify(run, null, 2), {
+        access: 'private',
+        contentType: 'application/json',
+        allowOverwrite: true,
+        addRandomSuffix: false,
+        ifMatch: etag,
+      });
+      return { ok: true, slips: claimed };
+    } catch (err) {
+      if (!(err instanceof BlobPreconditionFailedError)) throw err;
+      // Someone else wrote this run between our read and our write. Re-read and
+      // judge again — it may have been an unrelated slip, or it may have been
+      // the other copy of this very release.
+      await new Promise(r => setTimeout(r, 100 + Math.random() * 200));
+    }
+  }
+  throw new Error(`Pick slip run ${clientId}/${loadId} kept changing while saving — try again`);
 }
 
 /**

@@ -4,7 +4,7 @@ import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { verifyReleaseCode, masterCodeAuditNote } from '@/lib/releaseCodeAuth';
 import { loadControl } from '@/lib/controlData';
-import { updateSlipInRun, getPickSlipRun, type ReceiptBox, type PickSlipRecord } from '@/lib/pickSlipData';
+import { updateSlipInRun, getPickSlipRun, claimSlipsInRun, savePickSlipRun, type ReceiptBox, type PickSlipRecord } from '@/lib/pickSlipData';
 import { listSpLinks } from '@/lib/spLinkData';
 import { findSlipsForBarcodes } from '@/lib/stickerData';
 import { releasableBoxes, releasableBarcodes } from '@/lib/slipBoxes';
@@ -278,17 +278,23 @@ export async function POST(req: NextRequest) {
     const deliveryToken = randomUUID();
     const isMulti = resolvedSlips.length > 1;
 
-    // Update all slips with shared delivery token
-    const updatedSlips: PickSlipRecord[] = [];
+    // ── Claim every slip BEFORE anything is printed or emailed ──
+    // The status check at the top of this route is a read; on its own it
+    // cannot stop a second copy of the same request that read the slips at the
+    // same moment. Tapping Release twice used to produce two releases, two
+    // delivery tokens and two emailed PDFs, and only the token written last
+    // worked — the store scanned the other one and got "Invalid Link"
+    // (DIS-CHEM ALBEMARLE GARDENS, 18 Sep 2026). claimSlipsInRun writes
+    // conditionally, so only one copy wins; the loser is refused below and
+    // sends nothing.
+    const byRun = new Map<string, { clientId: string; loadId: string; patches: Map<string, Partial<PickSlipRecord>> }>();
     for (const { payload, slip } of resolvedSlips) {
       const left = shortfall.get(slip.id) ?? [];
-      const slipIsShort = left.length > 0;
-      const askedFor = releasableBoxes(slip).length;
-      const sent = (payload.releaseBoxes ?? []).length;
-
-      const updated = await updateSlipInRun(payload.clientId, payload.loadId, payload.slipId, {
+      const key = `${payload.clientId}/${payload.loadId}`;
+      if (!byRun.has(key)) byRun.set(key, { clientId: payload.clientId, loadId: payload.loadId, patches: new Map() });
+      byRun.get(key)!.patches.set(payload.slipId, {
         // Only the slips that are actually short carry the partial badge.
-        status: slipIsShort ? 'partial-release' : 'in-transit',
+        status: left.length > 0 ? 'partial-release' : 'in-transit',
         releaseRepId,
         releaseRepName,
         releaseBoxes: payload.releaseBoxes ?? [],
@@ -301,6 +307,57 @@ export async function POST(req: NextRequest) {
         // stock. See releasableBoxes().
         outstandingBoxes: left,
       });
+    }
+    // A fixed order, so two racing copies of one release collide on the SAME
+    // first run and the loser stops before it has claimed anything.
+    const runs = [...byRun.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, r]) => r);
+    const claimedSlips: PickSlipRecord[] = [];
+    const claimedRuns: typeof runs = [];
+    for (const r of runs) {
+      const res = await claimSlipsInRun(r.clientId, r.loadId, r.patches, ['captured', 'failed-release']);
+      if (res.ok) {
+        claimedSlips.push(...res.slips);
+        claimedRuns.push(r);
+        continue;
+      }
+      // Undo any run this request already claimed, so a refused release leaves
+      // nothing half-done. Only slips still carrying OUR token are put back.
+      for (const done of claimedRuns) {
+        const originals = new Map<string, Partial<PickSlipRecord>>();
+        for (const { payload, slip } of resolvedSlips) {
+          if (payload.clientId === done.clientId && payload.loadId === done.loadId) originals.set(slip.id, slip);
+        }
+        const run = await getPickSlipRun(done.clientId, done.loadId);
+        if (!run) continue;
+        run.slips = run.slips.map(s =>
+          originals.has(s.id) && s.deliveryToken === deliveryToken ? ({ ...s, ...originals.get(s.id) } as PickSlipRecord) : s,
+        );
+        await savePickSlipRun(run);
+      }
+      const already = res.conflicts.map(s => `${s.id} (${s.siteName}) is already ${s.status}`);
+      return NextResponse.json(
+        {
+          ok: false,
+          code: 'already-released',
+          error:
+            (already.length
+              ? `${already.join('; ')}. This release was already sent — it was probably tapped twice. `
+              : `Pick slip ${res.missing.join(', ')} could not be found. `) +
+            `Nothing more was released and no second delivery note was sent.`,
+        },
+        { status: 409, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
+
+    const claimedById = new Map(claimedSlips.map(s => [s.id, s]));
+    const updatedSlips: PickSlipRecord[] = [];
+    for (const { payload, slip } of resolvedSlips) {
+      const left = shortfall.get(slip.id) ?? [];
+      const slipIsShort = left.length > 0;
+      const askedFor = releasableBoxes(slip).length;
+      const sent = (payload.releaseBoxes ?? []).length;
+
+      const updated = claimedById.get(payload.slipId);
       if (updated) updatedSlips.push(updated);
 
       await logAudit({

@@ -424,7 +424,26 @@ export default function ReleasePage() {
   }
 
   // ── Release handler ──
+  // Locked from the FIRST tap. The re-check inside releaseNow() reads every
+  // releasable slip and takes seconds, and until 18 Sep 2026 the button only
+  // disabled itself after it. The screen looked idle, people tapped again, and
+  // each tap became its own release with its own delivery note — only one of
+  // whose QR codes worked. A ref, not state: two taps in the same frame both
+  // see the old state value.
+  const releaseInFlight = useRef(false);
   async function handleRelease() {
+    if (releaseInFlight.current) return;
+    releaseInFlight.current = true;
+    setReleasing(true);
+    try {
+      await releaseNow();
+    } finally {
+      releaseInFlight.current = false;
+      setReleasing(false);
+    }
+  }
+
+  async function releaseNow() {
     if (!releaseRepId || !releaseCode.trim()) {
       notify('Select a rep and enter the release code', 'error');
       return;
@@ -545,7 +564,7 @@ export default function ReleasePage() {
         setShowPartialModal(false);
         // A stale or duplicate label is a data problem, not a typo — reload so
         // the next scan is judged against what the server actually has.
-        if (data.code === 'stale-barcode') {
+        if (data.code === 'stale-barcode' || data.code === 'already-released') {
           setScanError(data.error);
           setScannedBarcodes([]);
           await loadData();
