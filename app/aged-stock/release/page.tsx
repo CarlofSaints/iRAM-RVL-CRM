@@ -544,12 +544,18 @@ export default function ReleasePage() {
       if (data.ok) {
         const shortSlips = (data.shortSlips ?? []) as Array<{ slipId: string; outstanding: number }>;
         const owed = shortSlips.reduce((n, s) => n + s.outstanding, 0);
-        notify(
+        const base =
           owed > 0
             ? `Released ${toRelease.length} slip(s) — ${owed} box(es) stayed behind on ` +
               `${shortSlips.length} slip(s). They come back to Release once this delivery note is signed off.`
-            : `Released — ${toRelease.length} slip(s) in transit`,
-          'success',
+            : `Released — ${toRelease.length} slip(s) in transit`;
+        // A delivery note that never reached the rep must say so here, not only
+        // in the server log.
+        notify(
+          data.emailSent === false
+            ? `${base} Delivery note NOT emailed: ${data.emailError || 'unknown error'}`
+            : base,
+          data.emailSent === false ? 'error' : 'success',
         );
         // Reset
         setScannedBarcodes([]);

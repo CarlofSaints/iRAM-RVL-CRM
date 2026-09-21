@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
   const me = users.find(u => u.id === guard.userId);
   const userName = me ? `${me.name} ${me.surname}` : guard.userId;
 
-  const reps = await loadControl<{ id: string; releaseCode?: string }>('reps');
+  const reps = await loadControl<{ id: string; email?: string; releaseCode?: string }>('reps');
   const rep = reps.find(r => r.id === newRepId);
   const repUser = users.find(u => u.id === newRepId);
   if (!rep && !repUser) {
@@ -260,7 +260,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Resend delivery note email to the NEW rep
-    const repEmail = repUser?.email;
+    // The picker offers Control Centre reps first, so newRepId is usually a REP
+    // record id — it is never also a user id (the two are created separately).
+    // Read the rep's own email first, and only fall back to a portal user.
+    const repEmail = rep?.email?.trim() || repUser?.email?.trim();
     if (repEmail) {
       try {
         const subject = isMulti

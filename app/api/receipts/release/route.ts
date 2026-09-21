@@ -199,7 +199,7 @@ export async function POST(req: NextRequest) {
   const me = users.find(u => u.id === guard.userId);
 
   // Look up the rep's stored release code
-  const reps = await loadControl<{ id: string; releaseCode?: string }>('reps');
+  const reps = await loadControl<{ id: string; email?: string; releaseCode?: string }>('reps');
   const rep = reps.find(r => r.id === releaseRepId);
   const repUser = users.find(u => u.id === releaseRepId);
   const storedCode = rep?.releaseCode || repUser?.releaseCode;
@@ -377,6 +377,10 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Generate & upload delivery note PDF ──
+    // Reported back to the screen: a delivery note that never reached the rep
+    // used to fail into a console warning nobody reads.
+    let emailSent = false;
+    let emailError: string | undefined;
     try {
       const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'https://iram-rvl-crm.vercel.app';
       const qrUrl = `${siteUrl}/delivery/${deliveryToken}`;
@@ -483,7 +487,9 @@ export async function POST(req: NextRequest) {
 
       // Email delivery note to the release rep
       try {
-        const repEmail = repUser?.email;
+        // releaseRepId is normally a Control Centre REP id (never also a user
+        // id), so the rep record is where the address lives.
+        const repEmail = rep?.email?.trim() || repUser?.email?.trim();
         if (repEmail) {
           const subject = isMulti
             ? `Delivery Note — ${resolvedSlips.length} slips — ${firstSlip.clientName}`
@@ -504,13 +510,17 @@ export async function POST(req: NextRequest) {
             qrUrl,
             attachments: [{ filename: pdfFileName, content: pdfBuffer }],
           });
+          emailSent = true;
         } else {
+          emailError = 'No email address on file for the selected rep';
           console.warn('[release] No email found for release rep', releaseRepId, '— delivery note email skipped');
         }
       } catch (emailErr) {
-        console.error('[release] Failed to email delivery note to rep:', emailErr instanceof Error ? emailErr.message : emailErr);
+        emailError = emailErr instanceof Error ? emailErr.message : 'Failed to send email';
+        console.error('[release] Failed to email delivery note to rep:', emailError);
       }
     } catch (err) {
+      emailError = emailError || (err instanceof Error ? err.message : 'Delivery note generation failed');
       console.error('[release] Delivery note generation/upload failed:', err instanceof Error ? err.message : err);
     }
 
@@ -527,6 +537,8 @@ export async function POST(req: NextRequest) {
         })),
         slip: updatedSlips[0] ?? null,
         slips: updatedSlips,
+        emailSent,
+        emailError,
       },
       { headers: { 'Cache-Control': 'no-store' } },
     );
