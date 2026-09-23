@@ -655,7 +655,12 @@ export default function SwapOutImportPage() {
                           </td>
                         )}
                         <td className="px-4 py-2 text-gray-600">
-                          {c.lines.map((l) => `${l.product} × ${l.quantity}`).join(', ')}
+                          {c.lines.map((l, idx) => (
+                            <div key={idx}>
+                              {l.product} × {l.quantity}
+                              {l.description && <span className="ml-1 text-xs text-amber-600">({l.description})</span>}
+                            </div>
+                          ))}
                         </td>
                       </tr>
                     );

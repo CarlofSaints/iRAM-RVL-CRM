@@ -375,6 +375,11 @@ export default function SwapOutDetailPage() {
         <h1 className="text-2xl font-bold text-gray-900">
           {rec.pickingNumber || <span className="text-gray-400 italic">No picking number</span>}
         </h1>
+        {rec.podNumber && (
+          <span className="px-2.5 py-0.5 rounded-md text-sm font-mono bg-emerald-50 border border-emerald-200 text-emerald-800">
+            POD {rec.podNumber}
+          </span>
+        )}
         <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
           {STATUS_LABELS[rec.status] ?? rec.status}
         </span>
@@ -387,7 +392,6 @@ export default function SwapOutDetailPage() {
         {rec.storeCode ? ` (${rec.storeCode})` : ''}
         {rec.region ? ` · ${rec.region}` : ''}{rec.channel ? ` · ${rec.channel}` : ''}
         {' · '}{totals.requested} requested · {totals.out} out · {totals.back} back
-        {rec.podNumber && <> · POD <span className="font-mono text-gray-700">{rec.podNumber}</span></>}
       </p>
       {rec.pickingNote && (
         <div className="rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-2 -mt-2">

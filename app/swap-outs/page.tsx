@@ -17,6 +17,8 @@ interface SwapOutDto {
   id: string;
   clientId: string;
   pickingNumber: string;
+  /** Major Tech's delivery doc for the good replacement stock — set once captured. */
+  podNumber?: string;
   requestDate?: string;
   channel?: string;
   storeName: string;
@@ -131,7 +133,7 @@ export default function SwapOutsListPage() {
     if (statusFilter && r.status !== statusFilter) return false;
     if (search) {
       const q = search.trim().toLowerCase();
-      const hay = `${r.pickingNumber} ${r.storeName} ${r.region ?? ''}`.toLowerCase();
+      const hay = `${r.pickingNumber} ${r.podNumber ?? ''} ${r.storeName} ${r.region ?? ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -189,6 +191,7 @@ export default function SwapOutsListPage() {
   // Sortable grid — defaults to newest request date first.
   const { sorted, sortCol, sortDir, toggleSort } = useTableSort(filtered, {
     pickingNumber: (r) => r.pickingNumber,
+    pod: (r) => r.podNumber,
     client: (r) => clientName(r.clientId),
     store: (r) => r.storeName,
     region: (r) => r.region,
@@ -231,7 +234,7 @@ export default function SwapOutsListPage() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Scan / search picking #, store…"
+          placeholder="Scan / search picking #, POD #, store…"
           className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-64 focus:ring-2 focus:ring-[var(--color-primary)] outline-none"
           autoFocus
         />
@@ -355,6 +358,7 @@ export default function SwapOutsListPage() {
                 />
               </th>
               <SortableTh col="pickingNumber" label="Picking #" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
+              <SortableTh col="pod" label="POD #" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
               <SortableTh col="client" label="Client" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
               <SortableTh col="store" label="Store" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
               <SortableTh col="region" label="Region" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 font-medium" />
@@ -385,6 +389,9 @@ export default function SwapOutsListPage() {
                     {r.pickingNumber || <span className="text-gray-400 italic">no picking #</span>}
                   </Link>
                 </td>
+                <td className="px-4 py-3 font-mono text-xs text-gray-700 whitespace-nowrap">
+                  {r.podNumber || <span className="text-gray-300">—</span>}
+                </td>
                 <td className="px-4 py-3 text-gray-700">{clientName(r.clientId)}</td>
                 <td className="px-4 py-3 text-gray-700">{r.storeName}</td>
                 <td className="px-4 py-3 text-gray-500">{r.region ?? '—'}</td>
@@ -405,7 +412,7 @@ export default function SwapOutsListPage() {
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-400">No swap-outs found.</td></tr>
+              <tr><td colSpan={12}className="px-4 py-8 text-center text-gray-400">No swap-outs found.</td></tr>
             )}
           </tbody>
         </table>

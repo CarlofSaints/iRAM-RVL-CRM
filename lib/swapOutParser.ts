@@ -10,7 +10,10 @@
  *   - A completely blank row separates one block from the next — ignored.
  *   - The picking number may sit on only the first row of a block, on every row,
  *     or be replaced by a free-text note from the supplier
- *     (e.g. "please provide correct stock code") — captured as `pickingNote`.
+ *     (e.g. "please provide correct stock code", "No Stock/ETA 06.10.2026").
+ *     A note on a row that carries a PRODUCT belongs to that line and is put in
+ *     the line description (the item still imports); a note on a row with no
+ *     product is kept on the consignment as `pickingNote`.
  *   - There is NO site/store code, so every store needs mapping to a FLOW store
  *     by hand after the parse.
  *
@@ -153,6 +156,8 @@ export function parseSwapOutWorkbook(buffer: Buffer): ParseResult {
   let current: ParsedSwapOut | null = null;
   let rawPickingForCurrent = '';
   let noteForCurrent = '';
+  /** Supplier notes that landed on a product line — reported back on the preview. */
+  const lineNotes: string[] = [];
 
   const finalize = (c: ParsedSwapOut | null) => {
     if (!c || c.lines.length === 0) return;
@@ -201,16 +206,19 @@ export function parseSwapOutWorkbook(buffer: Buffer): ParseResult {
 
     // Capture the picking number wherever it appears within the block. Anything
     // in that column that isn't a picking number is a supplier comment.
+    const product = norm(get(row, 'product'));
+    let rowNote = '';
     if (pickingCell) {
       if (PICKING_RE.test(pickingCell)) rawPickingForCurrent = pickingCell;
+      else if (product) rowNote = pickingCell; // e.g. "No Stock/ETA 06.10.2026" on that item
       else noteForCurrent = pickingCell;
     }
 
-    const product = norm(get(row, 'product'));
     if (!product) continue;
+    if (rowNote) lineNotes.push(`Row ${i + 1} (${current.storeName}, ${product}): supplier note "${rowNote}", added to the description.`);
     current.lines.push({
       product,
-      description: norm(get(row, 'description')) || undefined,
+      description: [norm(get(row, 'description')), rowNote].filter(Boolean).join(' · ') || undefined,
       quantity: Number(get(row, 'quantity')) || 0,
     });
   }
@@ -228,6 +236,7 @@ export function parseSwapOutWorkbook(buffer: Buffer): ParseResult {
       warnings.push(`Row ${c.sheetRow} (${c.storeName}): supplier note — "${c.pickingNote}".`);
     }
   }
+  warnings.push(...lineNotes);
   if (consignments.length === 0) warnings.push('No swap-out lines found in the sheet.');
   return { consignments, warnings };
 }
