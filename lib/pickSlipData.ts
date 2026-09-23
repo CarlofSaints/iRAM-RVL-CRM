@@ -537,7 +537,11 @@ export async function claimSlipsInRun(
     if (process.env.VERCEL) {
       const res = await get(runKey(clientId, loadId), { access: 'private', useCache: false });
       if (res && res.statusCode === 200) {
-        etag = res.blob.etag;
+        // A large run comes back compressed with a WEAK etag (W/"…"). If-Match
+        // never matches a weak etag, so every write was refused and a big run
+        // (Topline 1142, 111 slips, 1.1MB) could not be released at all. The
+        // hash is the blob's real etag, so compare on it without the prefix.
+        etag = res.blob.etag?.replace(/^W\//, '');
         run = JSON.parse(await new Response(res.stream).text()) as PickSlipRunIndex;
         for (const slip of run.slips) {
           slip.status = normalizeStatus(slip.status);

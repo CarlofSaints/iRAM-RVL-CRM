@@ -540,7 +540,12 @@ export default function ReleasePage() {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      // A server crash answers with a non-JSON body. Say that, with the status,
+      // rather than calling it a network error. The scans are kept either way.
+      const data = await res.json().catch(() => ({
+        ok: false,
+        error: `Release failed on the server (HTTP ${res.status}). Nothing was released and your scans are still here, so try again.`,
+      }));
       if (data.ok) {
         const shortSlips = (data.shortSlips ?? []) as Array<{ slipId: string; outstanding: number }>;
         const owed = shortSlips.reduce((n, s) => n + s.outstanding, 0);

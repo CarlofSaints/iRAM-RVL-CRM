@@ -315,7 +315,14 @@ export async function POST(req: NextRequest) {
     const claimedSlips: PickSlipRecord[] = [];
     const claimedRuns: typeof runs = [];
     for (const r of runs) {
-      const res = await claimSlipsInRun(r.clientId, r.loadId, r.patches, ['captured', 'failed-release']);
+      // A throw here (the run would not save) must still undo the runs already
+      // claimed, or those slips sit in transit with no delivery note.
+      let saveError = '';
+      const res = await claimSlipsInRun(r.clientId, r.loadId, r.patches, ['captured', 'failed-release'])
+        .catch((err: unknown) => {
+          saveError = err instanceof Error ? err.message : String(err);
+          return { ok: false as const, conflicts: [] as PickSlipRecord[], missing: [] as string[] };
+        });
       if (res.ok) {
         claimedSlips.push(...res.slips);
         claimedRuns.push(r);
@@ -334,6 +341,17 @@ export async function POST(req: NextRequest) {
           originals.has(s.id) && s.deliveryToken === deliveryToken ? ({ ...s, ...originals.get(s.id) } as PickSlipRecord) : s,
         );
         await savePickSlipRun(run);
+      }
+      if (saveError) {
+        console.error('[release] claim failed:', saveError);
+        return NextResponse.json(
+          {
+            ok: false,
+            code: 'save-failed',
+            error: `The release could not be saved (${saveError}). Nothing was released. Your scans are kept, so try again.`,
+          },
+          { status: 503, headers: { 'Cache-Control': 'no-store' } },
+        );
       }
       const already = res.conflicts.map(s => `${s.id} (${s.siteName}) is already ${s.status}`);
       return NextResponse.json(
