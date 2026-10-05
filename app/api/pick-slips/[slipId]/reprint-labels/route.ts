@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/rolesData';
 import { getPickSlipRun, type ReceiptBox } from '@/lib/pickSlipData';
 import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 import { generateStickerPdf } from '@/lib/stickerPdf';
+import { stickerFieldsForSlip } from '@/lib/stickerFields';
 import { loadSettings, resolveLayout, profileFor } from '@/lib/settingsData';
 import { loadUsers } from '@/lib/userData';
 import { logAudit } from '@/lib/auditLog';
@@ -17,8 +18,8 @@ export const dynamic = 'force-dynamic';
  * the *same* barcode. Non-destructive: it does not touch the box records or
  * their sticker links, so it's allowed in any status (unlike Adjust/Remove).
  *
- * Reprints reproduce the original blank-field sticker (barcode + ruled fields),
- * so the reprint is a true like-for-like replacement of the printed label.
+ * Reprints come out FILLED (store, vendor, reference, rep, box N of M), read
+ * back off this slip — the same fields booking printed on the original.
  *
  * Body:  { clientId, loadId, barcodes: string[] }
  * Query: ?format=roll|a4sheet  (defaults to the configured sticker layout;
@@ -79,7 +80,10 @@ export async function POST(
   const profile = profileFor(settings, layout);
 
   const pdfBuffer = await generateStickerPdf({
-    stickers: orderedBarcodes.map(barcodeValue => ({ barcodeValue })),
+    stickers: orderedBarcodes.map(barcodeValue => ({
+      barcodeValue,
+      fields: stickerFieldsForSlip(slip, barcodeValue) ?? undefined,
+    })),
     warehouseName: slip.warehouse,
     stickerWidthMm: profile.widthMm,
     stickerHeightMm: profile.heightMm,
