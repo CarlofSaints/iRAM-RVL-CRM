@@ -114,21 +114,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ty
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  // Channel rename cascade — update all stores that reference the old name
+  // Channel rename cascade — every store on the old OR new name, in any
+  // casing, takes the exact new spelling. A case-only rename ("Dis-Chem" ->
+  // "DIS-CHEM") used to be skipped, stranding 124 stores on the old spelling
+  // where Manual Capture's exact-match filter could not find them. Saving a
+  // channel unchanged now also heals stores that drifted.
   let storesUpdated = 0;
   if (type === 'channels' && updates.name) {
-    const oldName = String(items[idx].name ?? '');
+    const oldKey = String(items[idx].name ?? '').toLowerCase();
     const newName = String(updates.name);
-    if (oldName && oldName.toLowerCase() !== newName.toLowerCase()) {
-      const stores = await loadControl<Record<string, unknown>>('stores');
-      for (const store of stores) {
-        if (String(store.channel ?? '').toLowerCase() === oldName.toLowerCase()) {
-          store.channel = newName;
-          storesUpdated++;
-        }
+    const newKey = newName.toLowerCase();
+    const stores = await loadControl<Record<string, unknown>>('stores');
+    for (const store of stores) {
+      const ch = String(store.channel ?? '');
+      const key = ch.toLowerCase();
+      if ((key === newKey || (oldKey && key === oldKey)) && ch !== newName) {
+        store.channel = newName;
+        storesUpdated++;
       }
-      if (storesUpdated > 0) await saveControl('stores', stores);
     }
+    if (storesUpdated > 0) await saveControl('stores', stores);
   }
 
   items[idx] = { ...items[idx], ...updates };
