@@ -7,7 +7,7 @@ import { useAuth, authFetch } from '@/lib/useAuth';
 import StatusBadge from '@/components/StatusBadge';
 import { validRevertTargets, clearedStageDescriptions } from '@/lib/pickSlipRevert';
 import { provinceName } from '@/lib/region';
-import { readStoreRefs, normaliseStoreRefs, type StoreRef } from '@/lib/storeRefs';
+import { readStoreRefs, normaliseStoreRefs, matchesRefSearch, type StoreRef } from '@/lib/storeRefs';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -476,7 +476,9 @@ export default function PickingSlipsPage() {
       const hay = `${s.siteName} ${s.siteCode}`.toLowerCase();
       if (!hay.includes(sq)) return false;
     }
-    if (rq && !s.id.toLowerCase().includes(rq)) return false;
+    // Reference box finds a slip by its own ID or by any GRN/GRV or Return
+    // Order number captured against it.
+    if (rq && !s.id.toLowerCase().includes(rq) && !matchesRefSearch(readStoreRefs(s), rq)) return false;
     if (typeFilter === 'manual' && !s.manual) return false;
     if (typeFilter === 'loaded' && s.manual) return false;
     return true;
@@ -1401,7 +1403,7 @@ export default function PickingSlipsPage() {
           <input
             value={refQuery}
             onChange={e => setRefQuery(e.target.value)}
-            placeholder="Pick slip ID"
+            placeholder="Pick slip, GRN/GRV or Return Order #"
             className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm"
           />
         </div>
