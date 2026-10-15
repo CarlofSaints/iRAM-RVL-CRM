@@ -384,16 +384,26 @@ export interface MultiSlipDeliveryNotePdfParams {
   }>;
 }
 
+/** Delivery-note order: store name A–Z, then pick slip number. */
+export function byStoreThenSlip(
+  a: { siteName: string; pickSlipId: string },
+  b: { siteName: string; pickSlipId: string },
+): number {
+  return a.siteName.localeCompare(b.siteName, 'en', { sensitivity: 'base' })
+    || a.pickSlipId.localeCompare(b.pickSlipId, 'en', { numeric: true });
+}
+
 /**
  * Generate a multi-slip delivery note PDF covering multiple pick slips.
  * Each slip gets its own product table section, followed by a combined box
  * summary table and grand totals.
  */
 export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDeliveryNotePdfParams): Promise<Buffer> {
-  const {
-    clientName, vendorNumber, releaseRepName, releasedAt, qrUrl,
-    slips, signature, signedByName, deliveredAt, notDelivered,
-  } = params;
+  const { clientName, vendorNumber, releaseRepName, releasedAt, qrUrl, signature, signedByName, deliveredAt } = params;
+  // Store name, then pick slip number — callers pass slips in scan order,
+  // which can't be checked against the client's list.
+  const slips = [...params.slips].sort(byStoreThenSlip);
+  const notDelivered = params.notDelivered ? [...params.notDelivered].sort(byStoreThenSlip) : undefined;
 
   // Parse signature image if provided
   let signatureBuffer: Buffer | null = null;

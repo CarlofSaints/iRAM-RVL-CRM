@@ -9,7 +9,7 @@ import { resolveShortfall } from '@/lib/deliveryShortfall';
 import { getClient, listSpLinks } from '@/lib/spLinkData';
 import { loadUsers } from '@/lib/userData';
 import { logAudit } from '@/lib/auditLog';
-import { generateDeliveryNotePdf, generateMultiSlipDeliveryNotePdf } from '@/lib/deliveryNotePdf';
+import { generateDeliveryNotePdf, generateMultiSlipDeliveryNotePdf, byStoreThenSlip } from '@/lib/deliveryNotePdf';
 import { noteBoxCounts, hasOutstandingBoxes } from '@/lib/slipBoxes';
 import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
 import { sendPickSlipEmail } from '@/lib/email';
@@ -83,6 +83,12 @@ export async function GET(
     refs: readStoreRefs(r.slip),
     receiptGrnDate: r.slip.receiptGrnDate,
   }));
+  // Same order as the printed note (store, then pick slip), so the vendor can
+  // tick down the paper and the screen together.
+  slipsArray.sort((a, b) => byStoreThenSlip(
+    { siteName: a.siteName, pickSlipId: a.slipId },
+    { siteName: b.siteName, pickSlipId: b.slipId },
+  ));
 
   return NextResponse.json({
     // Backward-compat fields from first slip
