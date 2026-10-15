@@ -1759,6 +1759,15 @@ export default function PickingSlipsPage() {
                             )}
                           </>
                         )}
+                        {/* captured: View (read-only — Release opens the release screen) */}
+                        {canManage && s.status === 'captured' && (
+                          <button
+                            onClick={() => router.push(`/aged-stock/receipts/capture?slipId=${encodeURIComponent(s.id)}&clientId=${encodeURIComponent(s.clientId)}&loadId=${encodeURIComponent(s.loadId)}&view=1`)}
+                            className="px-2 py-1 text-xs font-medium text-gray-600 border border-gray-200 rounded hover:bg-gray-50"
+                          >
+                            View
+                          </button>
+                        )}
                         {/* captured: Edit (correct value/qty without re-capturing) */}
                         {s.status === 'captured' && canEditCaptured && (
                           <button

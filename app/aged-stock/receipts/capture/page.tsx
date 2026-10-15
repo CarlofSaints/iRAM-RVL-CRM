@@ -245,8 +245,13 @@ export default function ReceiptCapturePage() {
   const [grnRelatedSlipId, setGrnRelatedSlipId] = useState('');
 
   const editOverride = searchParams.get('edit') === '1';
+  // ?view=1 opens any slip read-only — e.g. a Captured slip, which would
+  // otherwise land on the Release screen.
+  const viewOverride = searchParams.get('view') === '1';
   const mode: PageMode = slip
-    ? (editOverride && (slip.status === 'captured' || slip.status === 'failed-release') ? 'receipt' : resolveMode(slip.status))
+    ? (viewOverride
+        ? 'view'
+        : editOverride && (slip.status === 'captured' || slip.status === 'failed-release') ? 'receipt' : resolveMode(slip.status))
     : 'receipt';
 
   // ── Load slip + reps ──
