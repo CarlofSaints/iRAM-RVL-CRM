@@ -64,6 +64,70 @@ interface SlipSummary {
   slips?: SlipBreakdown[];
 }
 
+/** A sign-off that could not be sent (no signal, or the server failed) and is
+ *  kept on this phone until it goes through. */
+interface PendingSignOff {
+  savedAt: string;
+  payload: {
+    securityCode: string;
+    vendorName: string;
+    signature?: string;
+    signedCopyPhoto?: string;
+    capturedAt: string;
+    deliveredSlipIds?: string[];
+    shortReasons?: Record<string, { reasonKey: string; note: string }>;
+  };
+  lastError?: string;
+}
+
+const pendingKey = (token: string) => `iramflow_pending_delivery_${token}`;
+
+function readPending(token: string): PendingSignOff | null {
+  try {
+    const raw = localStorage.getItem(pendingKey(token));
+    return raw ? (JSON.parse(raw) as PendingSignOff) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** False when the phone's storage refused it (full, or private mode). */
+function writePending(token: string, p: PendingSignOff): boolean {
+  try {
+    localStorage.setItem(pendingKey(token), JSON.stringify(p));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearPending(token: string) {
+  try { localStorage.removeItem(pendingKey(token)); } catch { /* nothing to clear */ }
+}
+
+/** Shrinks a camera photo to a JPEG the server and the phone's storage can
+ *  hold (~200-400KB). A raw phone photo is 3-6MB. */
+function compressPhoto(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const max = 1600;
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { reject(new Error('no canvas')); return; }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/jpeg', 0.7));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('unreadable image')); };
+    img.src = url;
+  });
+}
+
 function fmtDateTime(iso: string): string {
   try {
     const d = new Date(iso);
@@ -101,36 +165,63 @@ export default function DeliveryConfirmationPage() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
 
+  // Signed on paper instead: a photo of the signed delivery note.
+  const [signMode, setSignMode] = useState<'draw' | 'photo'>('draw');
+  const [signedCopyPhoto, setSignedCopyPhoto] = useState('');
+  const [photoBusy, setPhotoBusy] = useState(false);
+
+  // A sign-off saved on this phone because it could not be sent yet.
+  const [pending, setPending] = useState<PendingSignOff | null>(null);
+  const [pendingNotStored, setPendingNotStored] = useState(false);
+  const [alreadyDone, setAlreadyDone] = useState(false);
+  // No signal when the page first loaded the delivery details.
+  const [loadFailedOffline, setLoadFailedOffline] = useState(false);
+  const sendingRef = useRef(false);
+  const justFailedRef = useRef(false);
+
   // ── Load slip data ──
-  useEffect(() => {
+  const loadSlip = useCallback(async () => {
     if (!token) return;
-    (async () => {
-      try {
-        const res = await fetch(`/api/delivery/${token}`, { cache: 'no-store' });
-        const data = await res.json();
-        if (res.ok) {
-          setSlip(data);
-          setDeliveredIds(((data.slips ?? []) as SlipBreakdown[]).map(s => s.slipId));
-        } else {
-          setError(data.error || 'Failed to load delivery details');
-        }
-      } catch {
-        setError('Network error — please try again');
-      } finally {
-        setLoading(false);
+    setLoading(true);
+    setLoadFailedOffline(false);
+    try {
+      const res = await fetch(`/api/delivery/${token}`, { cache: 'no-store' });
+      const data = await res.json();
+      if (res.ok) {
+        setSlip(data);
+        setDeliveredIds(((data.slips ?? []) as SlipBreakdown[]).map(s => s.slipId));
+      } else {
+        setError(data.error || 'Failed to load delivery details');
       }
-    })();
+    } catch {
+      // No signal (or the server did not answer) is not an invalid link.
+      setLoadFailedOffline(true);
+    } finally {
+      setLoading(false);
+    }
   }, [token]);
 
+  useEffect(() => {
+    if (!token) return;
+    setPending(readPending(token));
+    loadSlip();
+  }, [token, loadSlip]);
+
   // ── Signature pad setup ──
+  const lastCanvasWidth = useRef(0);
   const initCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Set canvas to actual display size
+    // Set canvas to actual display size. Resizing a canvas wipes it, and a
+    // phone fires `resize` whenever the keyboard opens or closes — so only
+    // re-initialise when the width really changed (a rotation), and say so.
     const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.width === lastCanvasWidth.current) return;
+    if (lastCanvasWidth.current !== 0) setHasSignature(false);
+    lastCanvasWidth.current = rect.width;
     canvas.width = rect.width * 2; // 2x for retina
     canvas.height = rect.height * 2;
     ctx.scale(2, 2);
@@ -143,10 +234,12 @@ export default function DeliveryConfirmationPage() {
   }, []);
 
   useEffect(() => {
+    // The canvas is unmounted while in photo mode; a fresh one must re-init.
+    lastCanvasWidth.current = 0;
     initCanvas();
     window.addEventListener('resize', initCanvas);
     return () => window.removeEventListener('resize', initCanvas);
-  }, [initCanvas, slip]);
+  }, [initCanvas, slip, signMode, pending]);
 
   function getPos(e: React.TouchEvent | React.MouseEvent): { x: number; y: number } {
     const canvas = canvasRef.current!;
@@ -214,8 +307,12 @@ export default function DeliveryConfirmationPage() {
       setSubmitError('Please enter the name of the person receiving the stock');
       return;
     }
-    if (!hasSignature) {
+    if (signMode === 'draw' && !hasSignature) {
       setSubmitError('Please provide a signature');
+      return;
+    }
+    if (signMode === 'photo' && !signedCopyPhoto) {
+      setSubmitError('Please take a photo of the signed delivery note');
       return;
     }
 
@@ -248,31 +345,139 @@ export default function DeliveryConfirmationPage() {
       }
     }
 
+    const payload: PendingSignOff['payload'] = {
+      securityCode: securityCode.trim(),
+      vendorName: vendorName.trim(),
+      ...(signMode === 'draw' ? { signature: getSignatureBase64() } : { signedCopyPhoto }),
+      capturedAt: new Date().toISOString(),
+      // Omitted for a single-store note, which keeps the all-or-nothing path.
+      ...(allSlips.length > 1 ? { deliveredSlipIds: deliveredIds, shortReasons } : {}),
+    };
+
     setSubmitting(true);
+    try {
+      await sendSignOff(payload, false);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  /**
+   * Sends a sign-off. If it cannot get through — no signal, or the server
+   * failed — it is kept on this phone and retried until it does, instead of
+   * losing what the receiver signed. A clear "no" from the server (wrong code,
+   * missing name) is shown so it can be fixed; that is not worth retrying.
+   */
+  async function sendSignOff(payload: PendingSignOff['payload'], isRetry: boolean) {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    let failure = '';
     try {
       const res = await fetch(`/api/delivery/${token}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          securityCode: securityCode.trim(),
-          vendorName: vendorName.trim(),
-          signature: getSignatureBase64(),
-          // Omitted for a single-store note, which keeps the all-or-nothing path.
-          ...(allSlips.length > 1 ? { deliveredSlipIds: deliveredIds, shortReasons } : {}),
-        }),
+        // A queued sign-off is sent without its capture time on the first try
+        // only; once saved, the time it was filled in is what matters.
+        body: JSON.stringify(isRetry ? payload : { ...payload, capturedAt: undefined }),
       });
+      let data: { error?: string; alreadyConfirmed?: boolean; notDelivered?: typeof shortResult } | null = null;
+      try { data = await res.json(); } catch { /* server answered with something that is not JSON */ }
 
-      const data = await res.json();
-      if (res.ok) {
+      if (res.ok && data) {
+        clearPending(token);
+        setPending(null);
         setShortResult(data.notDelivered ?? []);
         setSuccess(true);
-      } else {
-        setSubmitError(data.error || 'Failed to confirm delivery');
+        return;
       }
+      if (data?.alreadyConfirmed) {
+        // An earlier attempt landed before the signal dropped.
+        clearPending(token);
+        setPending(null);
+        setAlreadyDone(true);
+        setSuccess(true);
+        return;
+      }
+      if (res.status >= 400 && res.status < 500 && data?.error) {
+        // The server read it and said no. Put the details back on the form so
+        // the person can fix them, and stop retrying.
+        clearPending(token);
+        setPending(null);
+        restoreForm(payload);
+        setSubmitError(data.error);
+        // Opened with no signal, the form was never loaded — load it now.
+        if (!slip) loadSlip();
+        return;
+      }
+      failure = data?.error || `The server did not respond properly (HTTP ${res.status}).`;
     } catch {
-      setSubmitError('Network error — please try again');
+      failure = typeof navigator !== 'undefined' && navigator.onLine === false
+        ? 'No signal on this phone.'
+        : 'Could not reach the server.';
     } finally {
-      setSubmitting(false);
+      sendingRef.current = false;
+    }
+
+    // Could not get through: keep it on the phone.
+    const kept: PendingSignOff = {
+      savedAt: pending?.savedAt ?? new Date().toISOString(),
+      payload,
+      lastError: failure,
+    };
+    setPendingNotStored(!writePending(token, kept));
+    justFailedRef.current = true; // don't fire a second attempt straight away
+    setPending(kept);
+  }
+
+  function restoreForm(payload: PendingSignOff['payload']) {
+    setSecurityCode(payload.securityCode);
+    setVendorName(payload.vendorName);
+    if (slip?.contacts?.some(c => `${c.name} ${c.surname}`.trim() === payload.vendorName)) {
+      setContactMode('select');
+    } else {
+      setContactMode('other');
+    }
+    if (payload.deliveredSlipIds) setDeliveredIds(payload.deliveredSlipIds);
+    if (payload.shortReasons) setShortReasons(payload.shortReasons);
+    if (payload.signedCopyPhoto) {
+      setSignMode('photo');
+      setSignedCopyPhoto(payload.signedCopyPhoto);
+    } else {
+      // A drawn signature cannot be put back on the pad; ask for it again.
+      setSignMode('draw');
+      setHasSignature(false);
+    }
+  }
+
+  // While a sign-off is waiting on this phone, send it as soon as there is
+  // signal, and keep trying every 20 seconds in case `online` never fires.
+  useEffect(() => {
+    if (!pending) return;
+    const attempt = () => { if (navigator.onLine !== false) sendSignOff(pending.payload, true); };
+    // Found waiting when the page opened: try at once. Just failed: wait.
+    if (!justFailedRef.current) attempt();
+    justFailedRef.current = false;
+    window.addEventListener('online', attempt);
+    const timer = window.setInterval(attempt, 20000);
+    return () => {
+      window.removeEventListener('online', attempt);
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending?.savedAt, pending?.payload.capturedAt]);
+
+  async function onPhotoPicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setSubmitError('');
+    setPhotoBusy(true);
+    try {
+      setSignedCopyPhoto(await compressPhoto(file));
+    } catch {
+      setSubmitError('That photo could not be read. Please take it again.');
+    } finally {
+      setPhotoBusy(false);
     }
   }
 
@@ -283,6 +488,72 @@ export default function DeliveryConfirmationPage() {
         <div className="text-center">
           <div className="h-10 w-10 border-4 border-[#7CC042] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
           <p className="text-gray-500 text-sm">Loading delivery details...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Saved on this phone, waiting for signal ──
+  if (pending && !success) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="bg-white rounded-xl shadow-sm border border-amber-300 p-8 max-w-md w-full text-center">
+          <div className="w-14 h-14 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-7 h-7 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h1 className="text-xl font-bold text-gray-900 mb-2">Saved on this phone. Not sent yet.</h1>
+          <p className="text-gray-600 text-sm mb-3">
+            The delivery is signed but could not be sent. It will send by itself as soon as this
+            phone has signal. You do not need to sign again.
+          </p>
+          <p className="text-gray-600 text-sm mb-4">
+            You can close this page. To finish, open the same link again (scan the QR code on the
+            delivery note) when you have signal.
+          </p>
+          <div className="text-left text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4 space-y-1">
+            <p><span className="text-gray-500">Received by:</span> <strong>{pending.payload.vendorName}</strong></p>
+            <p><span className="text-gray-500">Signed:</span> {pending.payload.signedCopyPhoto ? 'on paper (photo saved)' : 'on the phone'}</p>
+            <p><span className="text-gray-500">Saved:</span> {fmtDateTime(pending.savedAt)}</p>
+            {pending.lastError && <p><span className="text-gray-500">Last try:</span> {pending.lastError}</p>}
+          </div>
+          {pendingNotStored && (
+            <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">
+              This phone would not let the page save it. <strong>Keep this page open</strong> until it
+              sends, or it will be lost.
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => sendSignOff(pending.payload, true)}
+            className="w-full py-3 bg-[#7CC042] text-white rounded-xl text-base font-bold hover:bg-[#5a9a2e]"
+          >
+            Send now
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── No signal when the page opened ──
+  if (loadFailedOffline) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 max-w-md w-full text-center">
+          <h1 className="text-xl font-bold text-gray-900 mb-2">No signal</h1>
+          <p className="text-gray-600 text-sm mb-4">
+            The delivery details could not be loaded. Get the receiver to sign the paper delivery
+            note, then open this link again when you have signal and choose
+            &quot;Signed on paper? Use a photo&quot;.
+          </p>
+          <button
+            type="button"
+            onClick={loadSlip}
+            className="w-full py-3 bg-[#7CC042] text-white rounded-xl text-base font-bold hover:bg-[#5a9a2e]"
+          >
+            Try again
+          </button>
         </div>
       </div>
     );
@@ -341,7 +612,9 @@ export default function DeliveryConfirmationPage() {
           </div>
           <h1 className="text-xl font-bold text-gray-900 mb-2">Delivery Confirmed</h1>
           <p className="text-gray-500 text-sm">
-            Thank you. The delivery has been confirmed and recorded.
+            {alreadyDone
+              ? 'This delivery was already confirmed. Nothing more to do.'
+              : 'Thank you. The delivery has been confirmed and recorded.'}
           </p>
 
           {shortResult.length > 0 && (
@@ -674,7 +947,7 @@ export default function DeliveryConfirmationPage() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-5">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Signature</h2>
-              {hasSignature && (
+              {signMode === 'draw' && hasSignature && (
                 <button
                   type="button"
                   onClick={clearSignature}
@@ -684,6 +957,53 @@ export default function DeliveryConfirmationPage() {
                 </button>
               )}
             </div>
+
+            {/* Two ways to sign. Paper is for when the phone has no signal or
+                the receiver has already signed the printed note. */}
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              <button
+                type="button"
+                onClick={() => { setSignMode('draw'); setHasSignature(false); setSubmitError(''); }}
+                className={`py-2 rounded-lg text-xs font-semibold border ${signMode === 'draw' ? 'bg-[#7CC042] text-white border-[#7CC042]' : 'bg-white text-gray-700 border-gray-300'}`}
+              >
+                Sign on the phone
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSignMode('photo'); setSubmitError(''); }}
+                className={`py-2 rounded-lg text-xs font-semibold border ${signMode === 'photo' ? 'bg-[#7CC042] text-white border-[#7CC042]' : 'bg-white text-gray-700 border-gray-300'}`}
+              >
+                Signed on paper? Use a photo
+              </button>
+            </div>
+
+            {signMode === 'photo' ? (
+              <div>
+                <p className="text-xs text-gray-500 mb-3">
+                  Get the receiver to sign and date the printed delivery note, then take a clear photo
+                  of the signed page. The photo is attached to the signed delivery note.
+                </p>
+                {signedCopyPhoto ? (
+                  <div>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={signedCopyPhoto} alt="Signed delivery note" className="w-full rounded-lg border border-gray-200" />
+                    <label className="mt-2 block text-center text-xs font-medium text-[#5a9a2e] underline cursor-pointer">
+                      Retake photo
+                      <input type="file" accept="image/*" className="hidden" onChange={onPhotoPicked} />
+                    </label>
+                  </div>
+                ) : (
+                  <label className="flex flex-col items-center justify-center gap-1 h-[140px] border-2 border-dashed border-gray-300 rounded-lg cursor-pointer text-gray-600 text-sm font-medium">
+                    {photoBusy ? 'Preparing photo...' : 'Tap to take a photo of the signed page'}
+                    <span className="text-xs text-gray-400 font-normal">or choose one already taken</span>
+                    {/* No `capture` attribute: the phone offers camera OR
+                        gallery, so a photo taken earlier with no signal works. */}
+                    <input type="file" accept="image/*" className="hidden" onChange={onPhotoPicked} disabled={photoBusy} />
+                  </label>
+                )}
+              </div>
+            ) : (
+            <>
             <p className="text-xs text-gray-500 mb-3">
               Sign below with your finger or stylus.
             </p>
@@ -704,6 +1024,8 @@ export default function DeliveryConfirmationPage() {
             {!hasSignature && (
               <p className="text-center text-gray-400 text-xs mt-2">Draw your signature above</p>
             )}
+            </>
+            )}
           </div>
 
           {/* Error message */}
@@ -716,7 +1038,8 @@ export default function DeliveryConfirmationPage() {
           {/* Submit */}
           <button
             type="submit"
-            disabled={submitting || !securityCode.trim() || !vendorName.trim() || !hasSignature}
+            disabled={submitting || photoBusy || !securityCode.trim() || !vendorName.trim()
+              || (signMode === 'draw' ? !hasSignature : !signedCopyPhoto)}
             className="w-full py-3.5 bg-[#7CC042] text-white rounded-xl text-base font-bold hover:bg-[#5a9a2e] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-sm"
           >
             {submitting && <div className="h-5 w-5 border-2 border-white border-t-transparent rounded-full animate-spin" />}

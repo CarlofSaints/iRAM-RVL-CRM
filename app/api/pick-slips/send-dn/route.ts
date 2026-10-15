@@ -8,6 +8,7 @@ import { generateDeliveryNotePdf, generateMultiSlipDeliveryNotePdf } from '@/lib
 import { noteBoxCounts } from '@/lib/slipBoxes';
 import { sendDeliveryNoteEmail } from '@/lib/email';
 import { readStoreRefs, grnNumbersOf } from '@/lib/storeRefs';
+import { loadSignedCopy } from '@/lib/deliverySignedCopy';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,6 +68,8 @@ export async function POST(req: NextRequest) {
   const clientIds = clients.map(c => c.id);
   const allTokenSlips = await findAllSlipsByDeliveryToken(slip.deliveryToken, clientIds, listLoads);
   const isMulti = allTokenSlips.length > 1;
+  // A note signed on paper has no drawn signature — reprint its photo instead.
+  const signedCopyPhoto = await loadSignedCopy(slip.deliverySignedCopyKey);
 
   try {
     let pdfBuffer: Buffer;
@@ -100,6 +103,7 @@ export async function POST(req: NextRequest) {
           totalBoxes: noteBoxCounts(s).asked,
         })),
         signature: slip.deliverySignature,
+        signedCopyPhoto,
         signedByName: slip.deliverySignedByName,
         deliveredAt: slip.deliveredAt,
       });
@@ -143,6 +147,7 @@ export async function POST(req: NextRequest) {
         stickerBarcodes,
         qrUrl,
         signature: slip.deliverySignature,
+        signedCopyPhoto,
         signedByName: slip.deliverySignedByName,
         deliveredAt: slip.deliveredAt,
       });

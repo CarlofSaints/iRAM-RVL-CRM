@@ -63,6 +63,8 @@ export interface DeliveryHistoryEntry {
   deliveryNoteSignedSpWebUrl?: string;
   deliveredAt?: string;
   deliverySignedByName?: string;
+  /** See PickSlipRecord.deliverySignedCopyKey. */
+  deliverySignedCopyKey?: string;
   deliveredByRepName?: string;
 }
 
@@ -243,6 +245,9 @@ export interface PickSlipRecord {
   deliveryShortCount?: number;
   /** Vendor signature — base64 PNG from canvas pad */
   deliverySignature?: string;
+  /** Blob key of a photo of the hand-signed paper note, when the receiver
+   *  signed on paper instead of on the phone. See lib/deliverySignedCopy.ts. */
+  deliverySignedCopyKey?: string;
   /** Name of vendor rep who signed */
   deliverySignedByName?: string;
   /** ISO timestamp of delivery confirmation */

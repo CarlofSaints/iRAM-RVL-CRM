@@ -67,6 +67,9 @@ export interface DeliveryNotePdfParams {
   qrUrl: string;
   /** Optional base64 PNG signature — if provided, rendered in the signature block */
   signature?: string;
+  /** Photo of the hand-signed paper note (data URL). Printed on its own last
+   *  page; stands in for `signature` when the receiver signed on paper. */
+  signedCopyPhoto?: string;
   /** Name of the person who signed */
   signedByName?: string;
   /** ISO timestamp of when delivery was confirmed */
@@ -81,7 +84,7 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
     pickSlipId, clientName, vendorNumber, siteName, siteCode,
     warehouse, releaseRepName, releasedAt, storeRefs, refs, receiptGrnDate,
     receiptValue, manual, rows, boxCount, totalBoxes, qrUrl,
-    signature, signedByName, deliveredAt,
+    signature, signedCopyPhoto, signedByName, deliveredAt,
   } = params;
 
   const docVal = documentValue(receiptValue, rows);
@@ -94,6 +97,7 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
       signatureBuffer = Buffer.from(base64Data, 'base64');
     } catch { /* skip */ }
   }
+  const photoBuffer = dataUrlToBuffer(signedCopyPhoto);
 
   const pageW = 595.28; // A4
   const marginL = 40;
@@ -270,15 +274,12 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
 
   // ── Physical signature block ──
   y += 10;
-  if (signatureBuffer) {
+  if (signatureBuffer || photoBuffer) {
     // Signed version — show signature image + name + date
     doc.font('Helvetica-Bold').fontSize(9);
     doc.text('Received By:', tableX, y);
     y += 14;
-    try {
-      doc.image(signatureBuffer, tableX, y, { height: 50 });
-    } catch { /* skip */ }
-    y += 55;
+    y = drawSignatureOrPhotoNote(doc, signatureBuffer, tableX, y);
     doc.font('Helvetica').fontSize(9);
     if (signedByName) {
       doc.text(`Name: ${signedByName}`, tableX, y);
@@ -330,12 +331,55 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
   }
   doc.fillColor('#000000');
 
+  if (photoBuffer) drawSignedCopyPage(doc, photoBuffer, { marginL, marginT, usableW, pageH, marginB });
+
   doc.end();
 
   return new Promise<Buffer>((resolve, reject) => {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
   });
+}
+
+// ── Signed-on-paper photo ───────────────────────────────────────────────────
+
+function dataUrlToBuffer(dataUrl: string | undefined): Buffer | null {
+  if (!dataUrl) return null;
+  try {
+    const buf = Buffer.from(dataUrl.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+    return buf.length > 0 ? buf : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The drawn signature, or — when the receiver signed the paper copy instead —
+ *  a line pointing at the photo on the last page. Returns the new y. */
+function drawSignatureOrPhotoNote(doc: PDFKit.PDFDocument, signatureBuffer: Buffer | null, x: number, y: number): number {
+  if (signatureBuffer) {
+    try { doc.image(signatureBuffer, x, y, { height: 50 }); } catch { /* skip */ }
+    return y + 55;
+  }
+  doc.font('Helvetica-Oblique').fontSize(9);
+  doc.text('Signed on the paper delivery note. Photo of the signed copy on the last page.', x, y + 4);
+  return y + 22;
+}
+
+/** Last page: the photo of the hand-signed paper note, fitted to the page. */
+function drawSignedCopyPage(
+  doc: PDFKit.PDFDocument,
+  photo: Buffer,
+  m: { marginL: number; marginT: number; usableW: number; pageH: number; marginB: number },
+): void {
+  doc.addPage();
+  doc.font('Helvetica-Bold').fontSize(12).fillColor('#000000');
+  doc.text('Signed paper copy (photo)', m.marginL, m.marginT);
+  const top = m.marginT + 24;
+  try {
+    doc.image(photo, m.marginL, top, { fit: [m.usableW, m.pageH - top - m.marginB], align: 'center' });
+  } catch {
+    doc.font('Helvetica').fontSize(9).text('The photo could not be read.', m.marginL, top);
+  }
 }
 
 // ── Multi-slip delivery note ────────────────────────────────────────────────
@@ -370,6 +414,8 @@ export interface MultiSlipDeliveryNotePdfParams {
   qrUrl: string;
   slips: MultiSlipSection[];
   signature?: string;
+  /** See DeliveryNotePdfParams.signedCopyPhoto. */
+  signedCopyPhoto?: string;
   signedByName?: string;
   deliveredAt?: string;
   /** Stores that were on this delivery note but NOT physically handed over.
@@ -399,7 +445,7 @@ export function byStoreThenSlip(
  * summary table and grand totals.
  */
 export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDeliveryNotePdfParams): Promise<Buffer> {
-  const { clientName, vendorNumber, releaseRepName, releasedAt, qrUrl, signature, signedByName, deliveredAt } = params;
+  const { clientName, vendorNumber, releaseRepName, releasedAt, qrUrl, signature, signedCopyPhoto, signedByName, deliveredAt } = params;
   // Store name, then pick slip number — callers pass slips in scan order,
   // which can't be checked against the client's list.
   const slips = [...params.slips].sort(byStoreThenSlip);
@@ -413,6 +459,7 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
       signatureBuffer = Buffer.from(base64Data, 'base64');
     } catch { /* skip */ }
   }
+  const photoBuffer = dataUrlToBuffer(signedCopyPhoto);
 
   const pageW = 595.28; // A4
   const marginL = 40;
@@ -655,12 +702,11 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
   // ── Physical signature block ──
   ensureSpace(80);
   y += 10;
-  if (signatureBuffer) {
+  if (signatureBuffer || photoBuffer) {
     doc.font('Helvetica-Bold').fontSize(9);
     doc.text('Received By:', tableX, y);
     y += 14;
-    try { doc.image(signatureBuffer, tableX, y, { height: 50 }); } catch { /* skip */ }
-    y += 55;
+    y = drawSignatureOrPhotoNote(doc, signatureBuffer, tableX, y);
     doc.font('Helvetica').fontSize(9);
     if (signedByName) {
       doc.text(`Name: ${signedByName}`, tableX, y);
@@ -710,6 +756,8 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
     doc.text('Powered by OuterJoin', marginL, brandY, { width: usableW, align: 'center' });
   }
   doc.fillColor('#000000');
+
+  if (photoBuffer) drawSignedCopyPage(doc, photoBuffer, { marginL, marginT, usableW, pageH, marginB });
 
   doc.end();
 

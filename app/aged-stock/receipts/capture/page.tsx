@@ -56,6 +56,9 @@ interface SlipDto {
   deliveredAt?: string;
   deliverySignedByName?: string;
   deliverySignature?: string;
+  /** Set when the receiver signed the paper note and a photo was sent instead. */
+  deliverySignedCopyKey?: string;
+  deliveryNoteSignedSpWebUrl?: string;
   deliveredByRepName?: string;
   deliveryNoteSpWebUrl?: string;
 }
@@ -1843,6 +1846,16 @@ export default function ReceiptCapturePage() {
                   <span className="text-emerald-600 text-xs block mb-2">Signature</span>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={slip.deliverySignature} alt="Delivery signature" className="max-w-[300px] h-auto border border-emerald-200 rounded bg-white p-1" />
+                </div>
+              )}
+              {!slip.deliverySignature && slip.deliverySignedCopyKey && (
+                <div className="mt-4 pt-3 border-t border-emerald-200 text-sm text-emerald-800">
+                  Signed on the paper delivery note. The photo of the signed page is the last page of the{' '}
+                  {slip.deliveryNoteSignedSpWebUrl ? (
+                    <a href={slip.deliveryNoteSignedSpWebUrl} target="_blank" rel="noopener noreferrer" className="font-medium underline">
+                      signed delivery note
+                    </a>
+                  ) : 'signed delivery note'}.
                 </div>
               )}
             </div>

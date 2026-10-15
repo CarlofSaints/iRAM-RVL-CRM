@@ -14,6 +14,7 @@ import { noteBoxCounts, hasOutstandingBoxes } from '@/lib/slipBoxes';
 import { resolveSharedItem, createFolder, uploadNewFile } from '@/lib/graphIram';
 import { sendPickSlipEmail } from '@/lib/email';
 import { readStoreRefs } from '@/lib/storeRefs';
+import { parseSignedCopy, saveSignedCopy } from '@/lib/deliverySignedCopy';
 
 export const dynamic = 'force-dynamic';
 
@@ -137,8 +138,17 @@ export async function POST(
   const { securityCode, vendorName, signature } = body as {
     securityCode: string;
     vendorName: string;
-    signature: string; // base64 PNG
+    signature?: string; // base64 PNG drawn on the phone
   };
+  // Signed on paper instead: a photo of the signed delivery note. Either this
+  // or `signature` is required.
+  const signedCopyPhoto: string | undefined =
+    typeof body.signedCopyPhoto === 'string' && body.signedCopyPhoto ? body.signedCopyPhoto : undefined;
+  // When the phone had no signal the sign-off was kept on the phone and sent
+  // later; this is when it was filled in there. Audit only — deliveredAt stays
+  // the server's clock.
+  const capturedOnPhoneAt: string | undefined =
+    typeof body.capturedAt === 'string' && !Number.isNaN(Date.parse(body.capturedAt)) ? body.capturedAt : undefined;
 
   // Per-store confirmation. `deliveredSlipIds` lists the stores physically
   // handed over; anything else on the token was left behind. Omitting the field
@@ -157,8 +167,12 @@ export async function POST(
   if (!vendorName?.trim()) {
     return NextResponse.json({ error: 'Vendor representative name is required' }, { status: 400 });
   }
-  if (!signature) {
+  if (!signature && !signedCopyPhoto) {
     return NextResponse.json({ error: 'Signature is required' }, { status: 400 });
+  }
+  const parsedPhoto = signedCopyPhoto ? parseSignedCopy(signedCopyPhoto) : null;
+  if (parsedPhoto && 'error' in parsedPhoto) {
+    return NextResponse.json({ error: parsedPhoto.error }, { status: 400 });
   }
 
   // Find ALL slips with this token
@@ -174,7 +188,9 @@ export async function POST(
   for (const { slip } of results) {
     if (slip.status !== 'in-transit' && slip.status !== 'partial-release') {
       if (slip.status === 'delivered') {
-        return NextResponse.json({ error: 'This delivery has already been confirmed' }, { status: 400 });
+        // `alreadyConfirmed` lets a phone resending a saved sign-off stop
+        // retrying: the first attempt may have landed before the signal died.
+        return NextResponse.json({ error: 'This delivery has already been confirmed', alreadyConfirmed: true }, { status: 400 });
       }
       return NextResponse.json({ error: `Cannot confirm delivery for slip ${slip.id} with status "${slip.status}"` }, { status: 400 });
     }
@@ -202,6 +218,25 @@ export async function POST(
 
   const repName = results[0].slip.releaseRepName || 'Unknown Rep';
   const now = new Date().toISOString();
+
+  // The photo is the signature of record, so it is stored before any slip is
+  // marked delivered — a delivery must never be confirmed with its proof lost.
+  let signedCopyKey: string | undefined;
+  if (parsedPhoto && !('error' in parsedPhoto)) {
+    try {
+      signedCopyKey = await saveSignedCopy(token, parsedPhoto.bytes, parsedPhoto.contentType);
+    } catch (err) {
+      console.error('[delivery] failed to store signed-copy photo', err instanceof Error ? err.message : err);
+      return NextResponse.json(
+        { error: 'The photo of the signed delivery note could not be saved. Nothing was confirmed. Please try again.' },
+        { status: 503 },
+      );
+    }
+  }
+  const signedOnPaper = !!signedCopyKey && !signature;
+  const auditSuffix =
+    (signedCopyKey ? (signedOnPaper ? ' — signed on PAPER, photo of the signed copy attached' : ' — photo of the signed paper copy attached') : '')
+    + (capturedOnPhoneAt ? ` — filled in on the phone at ${capturedOnPhoneAt} with no signal and sent later` : '');
 
   // ── Split the delivery into what arrived and what didn't ──
   const deliveredSet = deliveredSlipIds ? new Set(deliveredSlipIds) : null;
@@ -253,6 +288,7 @@ export async function POST(
         deliveryNoteSpWebUrl: slip.deliveryNoteSpWebUrl,
         deliveredAt: now,
         deliverySignedByName: vendorName.trim(),
+        deliverySignedCopyKey: signedCopyKey,
         deliveredByRepName: repName,
       };
 
@@ -272,6 +308,7 @@ export async function POST(
         deliveredAt: now,
         deliverySignedByName: vendorName.trim(),
         deliverySignature: signature,
+        deliverySignedCopyKey: signedCopyKey,
         deliveredByRepId: releaseRepId,
         deliveredByRepName: repName,
       });
@@ -291,7 +328,8 @@ export async function POST(
           ? ` — this store went out SHORT: ${owed.length} box(es) (${owed.map(b => b.stickerBarcode).join(', ')}) `
             + `stayed in the warehouse. This delivery is filed in the slip's history and the slip is back on `
             + `Captured so the outstanding stock can be released on its own delivery note.`
-          : ''),
+          : '')
+        + auditSuffix,
     });
   }
 
@@ -392,6 +430,7 @@ export async function POST(
           totalBoxes: noteBoxCounts(slip).asked,
         })),
         signature,
+        signedCopyPhoto,
         signedByName: vendorName.trim(),
         deliveredAt: now,
       });
@@ -421,6 +460,7 @@ export async function POST(
         stickerBarcodes: (firstSlip.releaseBoxes ?? []).map(b => b.stickerBarcode),
         qrUrl,
         signature,
+        signedCopyPhoto,
         signedByName: vendorName.trim(),
         deliveredAt: now,
       });
@@ -524,7 +564,9 @@ export async function POST(
         </div>`;
 
       const bodyHtml = `
-        <p style="margin:0 0 14px;font-size:14px;">Stock has been delivered and signed for. The signed delivery note is attached.</p>
+        <p style="margin:0 0 14px;font-size:14px;">Stock has been delivered and signed for. The signed delivery note is attached.${
+          signedOnPaper ? ' It was signed on the paper copy; a photo of the signed page is on the last page of the PDF.' : ''
+        }</p>
         ${shortHtml}
         <table style="background:#f9f9f9;border:1px solid #eee;border-radius:6px;padding:14px 16px;width:100%;margin-bottom:20px;">
           ${isMulti ? `<tr><td style="padding:4px 12px 4px 0;color:#666;font-size:13px;">Slips</td><td style="font-size:13px;"><strong>${delivered.length}</strong></td></tr>` : ''}

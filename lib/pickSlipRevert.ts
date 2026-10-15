@@ -113,7 +113,7 @@ const FIELD_GROUPS: FieldGroup[] = [
     idx: 4.5,
     label: 'Delivery confirmation & signature',
     fields: [
-      'deliverySignature', 'deliverySignedByName', 'deliveredAt', 'deliveredByRepId', 'deliveredByRepName',
+      'deliverySignature', 'deliverySignedCopyKey', 'deliverySignedByName', 'deliveredAt', 'deliveredByRepId', 'deliveredByRepName',
     ],
   },
 ];
