@@ -156,6 +156,7 @@ export default function StickerLabelsPage() {
   const [editLinks, setEditLinks] = useState<string[]>([]);
   const [editNewLink, setEditNewLink] = useState('');
   const [editReason, setEditReason] = useState('');
+  const [editWholeBatch, setEditWholeBatch] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Delete modal
@@ -309,6 +310,7 @@ export default function StickerLabelsPage() {
     setEditLinks([...result.sticker.linkedPickSlipIds]);
     setEditNewLink('');
     setEditReason('');
+    setEditWholeBatch(false);
     setEditOpen(true);
   }
 
@@ -329,6 +331,7 @@ export default function StickerLabelsPage() {
           body: JSON.stringify({
             barcodeValue: barcode,
             linkedPickSlipIds: editLinks,
+            applyLinksToBatch: editWholeBatch,
             reason: editReason.trim(),
           }),
         },
@@ -339,8 +342,12 @@ export default function StickerLabelsPage() {
         return;
       }
       const cascaded = (data.cascadedSlipIds ?? []) as string[];
+      const batchChanged = (data.batchChanged ?? []) as string[];
       notify(
         `Saved ${barcode}` +
+        (editWholeBatch
+          ? `, pick slips updated on ${batchChanged.length} sticker${batchChanged.length === 1 ? '' : 's'} in the batch`
+          : '') +
         (cascaded.length ? ` — box list updated on ${cascaded.length} pick slip${cascaded.length === 1 ? '' : 's'}` : ''),
       );
       setEditOpen(false);
@@ -820,6 +827,23 @@ export default function StickerLabelsPage() {
               <p className="text-xs text-gray-500 mt-1">
                 The pick slip must exist and be within your access, or the save is refused.
               </p>
+              {result.sticker.batchQuantity > 1 && (
+                <label className="mt-3 flex items-start gap-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-sm text-gray-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editWholeBatch}
+                    onChange={e => setEditWholeBatch(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    Apply these pick slip changes to all {result.sticker.batchQuantity} stickers in this batch
+                    <span className="block text-xs text-gray-500">
+                      Slips you add are added to every sticker, slips you remove are removed from every sticker.
+                      The sticker number only changes on this one.
+                    </span>
+                  </span>
+                </label>
+              )}
             </div>
 
             <div className="mb-4">

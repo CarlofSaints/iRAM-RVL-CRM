@@ -644,21 +644,47 @@ export async function updateStickerRecord(
     sticker.barcodeValue = normBarcode(patch.barcodeValue);
   }
 
-  if (patch.linkedPickSlipIds) {
-    const ids = [...new Set(patch.linkedPickSlipIds.filter(Boolean))];
-    if (ids.length === 0) {
-      sticker.linkedPickSlipIds = undefined;
-      sticker.linkedPickSlipId = undefined;
-      sticker.linkedAt = undefined;
-    } else {
-      sticker.linkedPickSlipIds = ids;
-      sticker.linkedPickSlipId = ids[0]; // keep the legacy field in sync
-      sticker.linkedAt = sticker.linkedAt ?? new Date().toISOString();
-    }
-  }
+  if (patch.linkedPickSlipIds) setStickerLinks(sticker, patch.linkedPickSlipIds);
 
   await saveBatch(batch);
   return hitFrom(batch, sticker, true);
+}
+
+function setStickerLinks(sticker: Sticker, linkIds: string[]): void {
+  const ids = [...new Set(linkIds.filter(Boolean))];
+  if (ids.length === 0) {
+    sticker.linkedPickSlipIds = undefined;
+    sticker.linkedPickSlipId = undefined;
+    sticker.linkedAt = undefined;
+  } else {
+    sticker.linkedPickSlipIds = ids;
+    sticker.linkedPickSlipId = ids[0]; // keep the legacy field in sync
+    sticker.linkedAt = sticker.linkedAt ?? new Date().toISOString();
+  }
+}
+
+/**
+ * Add / remove pick slip links on EVERY sticker in a batch in one write.
+ * A diff, not an overwrite: a sticker's other links are left alone.
+ * Returns the barcodes whose links actually changed.
+ */
+export async function updateBatchLinks(
+  batchId: string,
+  add: string[],
+  remove: string[],
+): Promise<string[] | null> {
+  const batch = await getBatch(batchId);
+  if (!batch) return null;
+  const changed: string[] = [];
+  for (const s of batch.stickers) {
+    const before = s.linkedPickSlipIds ?? (s.linkedPickSlipId ? [s.linkedPickSlipId] : []);
+    const after = [...before.filter(id => !remove.includes(id)), ...add.filter(id => !before.includes(id))];
+    if (after.length === before.length && after.every(id => before.includes(id))) continue;
+    setStickerLinks(s, after);
+    changed.push(s.barcodeValue);
+  }
+  if (changed.length) await saveBatch(batch);
+  return changed;
 }
 
 /**

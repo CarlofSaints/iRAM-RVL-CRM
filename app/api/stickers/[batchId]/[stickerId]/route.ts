@@ -7,6 +7,7 @@ import {
   getBatch,
   findBarcodeClash,
   updateStickerRecord,
+  updateBatchLinks,
   deleteSticker,
 } from '@/lib/stickerData';
 import { resolveSlipsForBarcode, type StickerSlipRef } from '@/lib/stickerLookup';
@@ -66,7 +67,7 @@ function renameBoxes(
  *
  * Edit one box label: its number, and which pick slips it is linked to.
  *
- * Body: { barcodeValue?, linkedPickSlipIds?, reason }
+ * Body: { barcodeValue?, linkedPickSlipIds?, reason, applyLinksToBatch? }
  *
  * Renaming cascades into the pick slip's own box list, because THAT is the copy
  * a release reads — the registry is only an index built from it. A number
@@ -83,7 +84,7 @@ export async function PATCH(
   const guard = await requirePermission(req, 'load_aged_stock');
   if (guard instanceof NextResponse) return guard;
 
-  let body: { barcodeValue?: string; linkedPickSlipIds?: unknown; reason?: string };
+  let body: { barcodeValue?: string; linkedPickSlipIds?: unknown; reason?: string; applyLinksToBatch?: boolean };
   try { body = await req.json(); }
   catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }); }
 
@@ -198,20 +199,32 @@ export async function PATCH(
     }
   }
 
+  const toBatch = body.applyLinksToBatch === true && !!nextLinks;
+
   const updated = await updateStickerRecord(batchId, stickerId, {
     ...(wantsRename ? { barcodeValue: newBarcode } : {}),
-    ...(nextLinks ? { linkedPickSlipIds: nextLinks } : {}),
+    ...(nextLinks && !toBatch ? { linkedPickSlipIds: nextLinks } : {}),
   });
   if (!updated) {
     return NextResponse.json({ error: 'Sticker disappeared while saving' }, { status: 409 });
   }
+
+  // Whole batch: apply what changed on THIS sticker (added / removed slips) to every sticker.
+  const add = (nextLinks ?? []).filter(id => !registryLinks.includes(id));
+  const remove = nextLinks ? registryLinks.filter(id => !nextLinks.includes(id)) : [];
+  const batchChanged = toBatch ? (await updateBatchLinks(batchId, add, remove)) ?? [] : [];
 
   const changes: string[] = [];
   if (wantsRename) {
     changes.push(`number ${oldBarcode} -> ${newBarcode}`);
     if (cascaded.length) changes.push(`box list rewritten on ${cascaded.join(', ')}`);
   }
-  if (nextLinks) {
+  if (toBatch) {
+    changes.push(
+      `WHOLE BATCH links: added [${add.join(', ')}], removed [${remove.join(', ')}] ` +
+      `on ${batchChanged.length} sticker(s): ${batchChanged.join(', ')}`,
+    );
+  } else if (nextLinks) {
     changes.push(`links [${registryLinks.join(', ')}] -> [${nextLinks.join(', ')}]`);
   }
 
@@ -224,7 +237,7 @@ export async function PATCH(
   });
 
   return NextResponse.json(
-    { ok: true, sticker: updated, cascadedSlipIds: cascaded },
+    { ok: true, sticker: updated, cascadedSlipIds: cascaded, batchChanged },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 }
