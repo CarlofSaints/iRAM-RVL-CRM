@@ -62,22 +62,20 @@ const st = (k: string) => talStage(k)!;
 
 // Collect at TAL: 140431168 has 2 slots, only 1 found; an extra unit is refused.
 let r = applyScan(b, st('collect_tal'), [
-  { instructionNo: '140431168', rrn: 'rrn-a', serial: 's1' },
-  { instructionNo: '139751845', rrn: 'RRN-B', serial: 's2' },
+  { instructionNo: '140431168', rrn: 'rrn-a' },
+  { instructionNo: '139751845', rrn: 'RRN-B' },
 ], new Set(), actor, now);
 assert.ok(r.ok);
 assert.equal(r.missing.reduce((t, m) => t + m.count, 0), 3);
 b = r.booking!;
 assert.equal(statusCounts(b).missing_tal, 3);
 assert.equal(statusCounts(b).collected_tal, 2);
-assert.ok(!applyScan(b, st('collect_tal'), [{ instructionNo: '139751845', rrn: 'RRN-X', serial: 'x' }], new Set(), actor).ok, 'IN full');
-assert.ok(!applyScan(b, st('collect_tal'), [{ instructionNo: '139842696', rrn: 'RRN-Z', serial: 'z' }], new Set(['RRN-Z']), actor).ok, 'RRN on another booking');
-assert.ok(!applyScan(b, st('collect_tal'), [{ instructionNo: '139842696', rrn: 'RRN-Y' }], new Set(), actor).ok, 'serial required');
+assert.ok(!applyScan(b, st('collect_tal'), [{ instructionNo: '139751845', rrn: 'RRN-X' }], new Set(), actor).ok, 'IN full');
+assert.ok(!applyScan(b, st('collect_tal'), [{ instructionNo: '139842696', rrn: 'RRN-Z' }], new Set(['RRN-Z']), actor).ok, 'RRN on another booking');
 
-// Receipt into iRam: serial must match; wrong IN refused; unscanned unit reported missing.
-assert.ok(!applyScan(b, st('receipt_iram'), [{ instructionNo: '140431168', rrn: 'RRN-A', serial: 'WRONG' }], new Set(), actor).ok);
-assert.ok(!applyScan(b, st('receipt_iram'), [{ instructionNo: '139751845', rrn: 'RRN-A', serial: 'S1' }], new Set(), actor).ok);
-r = applyScan(b, st('receipt_iram'), [{ instructionNo: '140431168', rrn: 'RRN-A', serial: 'S1' }], new Set(), { ...actor, warehouseName: 'Gauteng' }, now);
+// Receipt into iRam: wrong IN refused; unscanned unit reported missing.
+assert.ok(!applyScan(b, st('receipt_iram'), [{ instructionNo: '139751845', rrn: 'RRN-A' }], new Set(), actor).ok);
+r = applyScan(b, st('receipt_iram'), [{ instructionNo: '140431168', rrn: 'RRN-A' }], new Set(), { ...actor, warehouseName: 'Gauteng' }, now);
 assert.ok(r.ok);
 assert.deepEqual(r.missing.map((m) => m.rrn), ['RRN-B']);
 assert.equal(r.booking!.units.find((u) => u.rrn === 'RRN-A')!.warehouseName, 'Gauteng');
@@ -89,9 +87,9 @@ assert.ok(!applyScan(b, st('receipt_iram'), [], new Set(), actor).ok, 'empty sca
 // Return to TAL needs the Zendesk ticket first, then moves repaired units to TAL.
 const done: TalBooking = {
   ...b, region: 'CPT',
-  units: [{ rrn: 'R1', instructionNo: '139751845', serial: 'S', status: 'repaired_iram', statusAt: now, warehouseName: 'WC', history: [] },
-    { rrn: 'R2', instructionNo: '139751845', serial: 'S2', status: 'unrepairable', notFixedReason: 'neglect', statusAt: now, history: [] },
-    { rrn: 'R3', instructionNo: '139751845', serial: 'S3', status: 'unrepairable', notFixedReason: 'beyond_repair', statusAt: now, history: [] }],
+  units: [{ rrn: 'R1', instructionNo: '139751845', status: 'repaired_iram', statusAt: now, warehouseName: 'WC', history: [] },
+    { rrn: 'R2', instructionNo: '139751845', status: 'unrepairable', notFixedReason: 'neglect', statusAt: now, history: [] },
+    { rrn: 'R3', instructionNo: '139751845', status: 'unrepairable', notFixedReason: 'beyond_repair', statusAt: now, history: [] }],
 };
 assert.ok(!applyScan(done, st('return_tal'), [{ instructionNo: '139751845', rrn: 'R1' }], new Set(), actor).ok, 'no ticket');
 r = applyScan({ ...done, returnTicket: '12345' }, st('return_tal'), [{ instructionNo: '139751845', rrn: 'R1' }], new Set(), actor, now);

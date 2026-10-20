@@ -35,7 +35,7 @@ export default function TalBookingsPage() {
     if (statusFilter && !statusCounts(b)[statusFilter as TalStatus]) return false;
     if (search) {
       const q = search.trim().toUpperCase();
-      const hay = [b.brn, b.returnTicket ?? '', ...b.instructions.map((i) => i.instructionNo), ...b.units.flatMap((u) => [u.rrn, u.serial])].join(' ');
+      const hay = [b.brn, b.returnTicket ?? '', ...b.instructions.map((i) => i.instructionNo), ...b.units.map((u) => u.rrn)].join(' ');
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -68,7 +68,7 @@ export default function TalBookingsPage() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Scan / search booking ref, instruction, RRN, serial…"
+          placeholder="Scan / search booking ref, instruction, RRN, ticket…"
           className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-80 focus:ring-2 focus:ring-[var(--color-primary)] outline-none"
           autoFocus
         />

@@ -133,7 +133,6 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
                   <tr>
                     {canManage && <th className="px-4 py-2 w-8" />}
                     <th className="px-4 py-2">RRN</th>
-                    <th className="px-4 py-2">Serial</th>
                     <th className="px-4 py-2">Status</th>
                     <th className="px-4 py-2">Since</th>
                     <th className="px-4 py-2">Location</th>
@@ -152,7 +151,6 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
                         </td>
                       )}
                       <td className="px-4 py-2 font-mono">{u.rrn}</td>
-                      <td className="px-4 py-2 font-mono">{u.serial || '—'}</td>
                       <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${TAL_STATUS_BADGE[u.status]}`}>{TAL_STATUS_LABELS[u.status]}</span>
                         {u.notFixedReason && <div className="text-xs text-gray-500 mt-0.5">{NOT_FIXED_REASONS[u.notFixedReason].label}</div>}
                       </td>
