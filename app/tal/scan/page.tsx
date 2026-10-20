@@ -85,6 +85,8 @@ function TalScanInner() {
     if (!res.ok) return deny('Not found', data.error || `Nothing found for ${code}`);
     const b: TalBooking = data.booking;
     setBooking(b);
+    // A half-scanned unit (RRN waiting for its serial) belongs to the old booking.
+    setPendingRrn(''); setSerialInput('');
     const fromUnit = b.units.find((u) => u.rrn === code)?.instructionNo;
     const ins = fromUnit ?? (b.instructions.some((i) => i.instructionNo === code) ? code : '');
     setCurrentIn(ins);

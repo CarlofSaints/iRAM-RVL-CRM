@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { loadControl } from '@/lib/controlData';
-import { listTalBookings, saveTalBookings, findBookingByCode } from '@/lib/talData';
+import { listTalBookings, mutateTalBookings, findBookingByCode } from '@/lib/talData';
 import { normCode, type TalBooking, type TalInstruction } from '@/lib/talShared';
 
 export const dynamic = 'force-dynamic';
@@ -60,15 +60,6 @@ export async function POST(req: NextRequest) {
   }
   if (!instructions.length) return NextResponse.json({ error: 'Add at least one instruction number' }, { status: 400 });
 
-  const all = await listTalBookings();
-  if (all.some((b) => b.brn === brn)) {
-    return NextResponse.json({ error: `Booking ${brn} is already loaded` }, { status: 409 });
-  }
-  const taken = instructions.find((i) => all.some((b) => b.instructions.some((x) => x.instructionNo === i.instructionNo)));
-  if (taken) {
-    return NextResponse.json({ error: `Instruction ${taken.instructionNo} is already on another booking` }, { status: 409 });
-  }
-
   const me = (await loadUsers()).find((u) => u.id === guard.userId);
   const byName = me ? `${me.name} ${me.surname}` : 'Unknown';
   const clients = await loadControl<{ id: string; name: string }>('clients');
@@ -88,6 +79,15 @@ export async function POST(req: NextRequest) {
     createdAt: now,
     updatedAt: now,
   };
-  await saveTalBookings([...all, rec]);
-  return NextResponse.json({ booking: rec });
+  // Duplicate checks run inside the write so two uploads of the same PDF can't both land.
+  return mutateTalBookings<NextResponse>((all) => {
+    if (all.some((b) => b.brn === brn)) {
+      return { result: NextResponse.json({ error: `Booking ${brn} is already loaded` }, { status: 409 }) };
+    }
+    const taken = instructions.find((i) => all.some((b) => b.instructions.some((x) => x.instructionNo === i.instructionNo)));
+    if (taken) {
+      return { result: NextResponse.json({ error: `Instruction ${taken.instructionNo} is already on another booking` }, { status: 409 }) };
+    }
+    return { save: [...all, rec], result: NextResponse.json({ booking: rec }) };
+  });
 }

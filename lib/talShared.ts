@@ -291,12 +291,16 @@ export function parseBookingText(text: string): ParsedBooking {
     if (m >= 0) bookingDate = `${d[3]}-${String(m + 1).padStart(2, '0')}-${d[2].padStart(2, '0')}`;
   }
 
-  // Collection Details rows: "Takealot  <IN>  ...  <qty>". The vendor barcode column is an image.
+  // Collection Details rows: "Takealot <IN> ... <qty>". The PDF reader may put each
+  // cell on its own line, so a row is everything up to the next "Takealot", and the
+  // qty is the first small number after the IN. No qty found = 0, which the import
+  // screen flags and the save refuses, so it is typed in rather than guessed.
   const instructions: TalInstruction[] = [];
   const details = text.split(/Collection\s+Details:?/i)[1] ?? '';
-  for (const m of details.matchAll(/Takealot\s+(?:[^\n\d]*?\s)?(\d{6,})\b([^\n]*)/gi)) {
-    const qty = Number(m[2].match(/\b(\d{1,3})\s*$/)?.[1] ?? 1);
-    instructions.push({ instructionNo: m[1], qty: qty > 0 ? qty : 1 });
+  for (const row of details.split(/\bTakealot\b/i).slice(1)) {
+    const m = row.match(/\b(\d{6,})\b([\s\S]*)/);
+    if (!m) continue;
+    instructions.push({ instructionNo: m[1], qty: Number(m[2].match(/\b(\d{1,3})\b/)?.[1] ?? 0) });
   }
   return { brn, bookingDate, timeSlot, supplierName, instructions };
 }

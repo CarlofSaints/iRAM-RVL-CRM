@@ -4,13 +4,12 @@ import { loadUsers } from '@/lib/userData';
 import { loadControl } from '@/lib/controlData';
 import { verifyReleaseCode, masterCodeAuditNote } from '@/lib/releaseCodeAuth';
 import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
-import { listTalBookings, saveTalBookings } from '@/lib/talData';
-import { applyScan, talStage, type TalScan } from '@/lib/talShared';
+import { mutateTalBookings } from '@/lib/talData';
+import { applyScan, talStage, normCode, type TalScan } from '@/lib/talShared';
 
 export const dynamic = 'force-dynamic';
 
 interface Person { id: string; name?: string; surname?: string; releaseCode?: string }
-interface Warehouse { id: string; name: string; code?: string }
 
 /**
  * POST /api/tal/[id]/scan { stage, scans: [{instructionNo, rrn, serial}], repId?, securityCode?, warehouseId?, dryRun? }
@@ -27,19 +26,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!stage) return NextResponse.json({ error: 'Unknown scan stage' }, { status: 400 });
   const scans: TalScan[] = Array.isArray(body.scans) ? body.scans.slice(0, 2000) : [];
 
-  const all = await listTalBookings();
-  const b = all.find((x) => x.id === id);
-  if (!b) return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
-
   const users = await loadUsers();
   const me = users.find((u) => u.id === guard.userId);
   const actor: Parameters<typeof applyScan>[4] = { byUserId: guard.userId, byName: me ? `${me.name} ${me.surname}` : 'Unknown' };
 
   // Warehouse receipts: the collecting rep proves it with their release code, as on Book Stock into WH.
+  const access = await resolveWarehouseAccess(guard.userId);
   if (stage.needsRepAndWarehouse) {
-    const wh = (await loadControl<Warehouse>('warehouses')).find((w) => w.id === body.warehouseId);
+    const wh = access.warehouses.find((w) => w.id === body.warehouseId);
     if (!wh) return NextResponse.json({ error: 'Choose the receiving warehouse' }, { status: 400 });
-    const denied = denyIfOutOfScope(await resolveWarehouseAccess(guard.userId), [wh.code || wh.name], 'Receipting');
+    const denied = denyIfOutOfScope(access, [wh.code || wh.name], 'Receipting');
     if (denied) return denied;
 
     const rep: Person | undefined =
@@ -58,11 +54,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     actor.warehouseName = wh.name;
   }
 
-  const elsewhere = new Set(all.filter((x) => x.id !== id).flatMap((x) => x.units.map((u) => u.rrn)));
-  const result = applyScan(b, stage, scans, elsewhere, actor);
-  if (!result.ok || body.dryRun) {
-    return NextResponse.json({ errors: result.errors, missing: result.missing }, { status: result.ok ? 200 : 400 });
-  }
-  await saveTalBookings(all.map((x) => (x.id === id ? result.booking! : x)));
-  return NextResponse.json({ booking: result.booking, missing: result.missing });
+  return mutateTalBookings<NextResponse>((all) => {
+    const b = all.find((x) => x.id === id);
+    if (!b) return { result: NextResponse.json({ error: 'Booking not found' }, { status: 404 }) };
+    // Units already in a warehouse can only be moved by someone with access to it.
+    const scanned = new Set(scans.map((s) => normCode(s.rrn)));
+    const held = b.units.filter((u) => scanned.has(u.rrn) && u.warehouseName).map((u) => u.warehouseName);
+    const denied = denyIfOutOfScope(access, held, stage.label);
+    if (denied) return { result: denied };
+
+    const elsewhere = new Set(all.filter((x) => x.id !== id).flatMap((x) => x.units.map((u) => u.rrn)));
+    const r = applyScan(b, stage, scans, elsewhere, actor);
+    if (!r.ok || body.dryRun) {
+      return { result: NextResponse.json({ errors: r.errors, missing: r.missing }, { status: r.ok ? 200 : 400 }) };
+    }
+    return {
+      save: all.map((x) => (x.id === id ? r.booking! : x)),
+      result: NextResponse.json({ booking: r.booking, missing: r.missing }),
+    };
+  });
 }

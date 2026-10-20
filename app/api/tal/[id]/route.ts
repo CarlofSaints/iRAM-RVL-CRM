@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
-import { listTalBookings, saveTalBookings } from '@/lib/talData';
+import { listTalBookings, mutateTalBookings } from '@/lib/talData';
+import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 import { normCode } from '@/lib/talShared';
 
 export const dynamic = 'force-dynamic';
@@ -28,37 +29,43 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const rrns = new Set<string>((Array.isArray(body.unrepairable) ? body.unrepairable : []).map(normCode));
   if (!rrns.size) return NextResponse.json({ error: 'Select at least one unit' }, { status: 400 });
 
-  const all = await listTalBookings();
-  const b = all.find((x) => x.id === id);
-  if (!b) return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
-  const bad = [...rrns].filter((r) => b.units.find((u) => u.rrn === r)?.status !== 'receipted_bsc');
-  if (bad.length) return NextResponse.json({ error: `Only units at BSC can be marked unrepairable: ${bad.join(', ')}` }, { status: 400 });
-
   const me = (await loadUsers()).find((u) => u.id === guard.userId);
   const byName = me ? `${me.name} ${me.surname}` : 'Unknown';
   const note = String(body.note ?? '').trim().slice(0, 300) || undefined;
-  const now = new Date().toISOString();
-  for (const u of b.units) {
-    if (!rrns.has(u.rrn)) continue;
-    u.status = 'unrepairable';
-    u.statusAt = now;
-    u.history.push({ status: 'unrepairable', at: now, byUserId: guard.userId, byName, note });
-  }
-  b.history.push({ status: 'unrepairable', at: now, byUserId: guard.userId, byName, note: `${rrns.size} unit(s) marked unrepairable${note ? `: ${note}` : ''}` });
-  b.updatedAt = now;
-  await saveTalBookings(all);
-  return NextResponse.json({ booking: b });
+  const access = await resolveWarehouseAccess(guard.userId);
+
+  return mutateTalBookings<NextResponse>((all) => {
+    const b = all.find((x) => x.id === id);
+    if (!b) return { result: NextResponse.json({ error: 'Booking not found' }, { status: 404 }) };
+    const bad = [...rrns].filter((r) => b.units.find((u) => u.rrn === r)?.status !== 'receipted_bsc');
+    if (bad.length) {
+      return { result: NextResponse.json({ error: `Only units at BSC can be marked unrepairable: ${bad.join(', ')}` }, { status: 400 }) };
+    }
+    const picked = b.units.filter((u) => rrns.has(u.rrn));
+    const denied = denyIfOutOfScope(access, picked.map((u) => u.warehouseName), 'Marking unrepairable');
+    if (denied) return { result: denied };
+
+    const now = new Date().toISOString();
+    for (const u of picked) {
+      u.status = 'unrepairable';
+      u.statusAt = now;
+      u.history.push({ status: 'unrepairable', at: now, byUserId: guard.userId, byName, note });
+    }
+    b.history.push({ status: 'unrepairable', at: now, byUserId: guard.userId, byName, note: `${rrns.size} unit(s) marked unrepairable${note ? `: ${note}` : ''}` });
+    b.updatedAt = now;
+    return { save: all, result: NextResponse.json({ booking: b }) };
+  });
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requirePermission(req, 'manage_pick_slips');
   if (guard instanceof NextResponse) return guard;
   const { id } = await params;
-  const all = await listTalBookings();
-  const b = all.find((x) => x.id === id);
-  if (!b) return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
-  // Scanned units are a stock record, so only a booking nobody has scanned can go.
-  if (b.units.length) return NextResponse.json({ error: 'This booking has scanned units and cannot be deleted' }, { status: 400 });
-  await saveTalBookings(all.filter((x) => x.id !== id));
-  return NextResponse.json({ ok: true });
+  return mutateTalBookings<NextResponse>((all) => {
+    const b = all.find((x) => x.id === id);
+    if (!b) return { result: NextResponse.json({ error: 'Booking not found' }, { status: 404 }) };
+    // Scanned units are a stock record, so only a booking nobody has scanned can go.
+    if (b.units.length) return { result: NextResponse.json({ error: 'This booking has scanned units and cannot be deleted' }, { status: 400 }) };
+    return { save: all.filter((x) => x.id !== id), result: NextResponse.json({ ok: true }) };
+  });
 }

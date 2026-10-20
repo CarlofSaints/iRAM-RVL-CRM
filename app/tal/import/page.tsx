@@ -28,7 +28,7 @@ export default function TalImportPage() {
     const p: ParsedBooking = data.parsed;
     setForm(p);
     if (!data.textFound) setNote('This PDF has no readable text (probably a scan). Type the details in below.');
-    else if (!p.brn || !p.instructions.length) setNote('Some details could not be read. Fill in the blanks below before saving.');
+    else if (!p.brn || !p.instructions.length || p.instructions.some((i) => !i.qty)) setNote('Some details could not be read. Fill in the blanks below before saving.');
     else setNote(`Read ${p.instructions.length} instruction(s). Check them against the PDF, then save.`);
   };
 

@@ -18,6 +18,19 @@ assert.equal(p.bookingDate, '2025-05-16');
 assert.equal(p.timeSlot, '08:00');
 assert.deepEqual(p.instructions.map((i) => [i.instructionNo, i.qty]), [['139751845', 1], ['139842696', 1], ['139923902', 1], ['140431168', 2]]);
 
+// Each cell on its own line, and one row with no qty at all (left 0 for the user to fill).
+const q = parseBookingText(`Collection Details:
+Takealot
+139751845
+1
+Takealot
+140431168
+2
+Takealot
+150000001
+Printed by system`);
+assert.deepEqual(q.instructions.map((i) => [i.instructionNo, i.qty]), [['139751845', 1], ['140431168', 2], ['150000001', 0]]);
+
 const now = '2026-10-20T08:00:00.000Z';
 let b: TalBooking = {
   id: 'b1', brn: p.brn, instructions: p.instructions, units: [], history: [], createdAt: now, updatedAt: now,
