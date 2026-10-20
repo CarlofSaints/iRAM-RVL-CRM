@@ -29,6 +29,7 @@ export default function TalImportPage() {
     setForm(p);
     if (!data.textFound) setNote('This PDF has no readable text (probably a scan). Type the details in below.');
     else if (!p.brn || !p.instructions.length || p.instructions.some((i) => !i.qty)) setNote('Some details could not be read. Fill in the blanks below before saving.');
+    else if (p.totalUnits && p.totalUnits !== p.instructions.reduce((t, i) => t + i.qty, 0)) setNote(`The PDF says ${p.totalUnits} unit(s) to collect but the quantities below add up to ${p.instructions.reduce((t, i) => t + i.qty, 0)}. Check them against the PDF before saving.`);
     else setNote(`Read ${p.instructions.length} instruction(s). Check them against the PDF, then save.`);
   };
 
