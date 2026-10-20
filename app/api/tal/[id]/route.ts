@@ -3,7 +3,7 @@ import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { listTalBookings, mutateTalBookings } from '@/lib/talData';
 import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
-import { normCode } from '@/lib/talShared';
+import { normCode, NOT_FIXED_REASONS, type NotFixedReason } from '@/lib/talShared';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,20 +17,39 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 /**
- * PATCH /api/tal/[id] { unrepairable: string[], note } — mark units BSC kept as
- * Unrepairable. Units left behind stay "Receipted by BSC" until someone does
- * this, because BSC may still release them on a later collection.
+ * PATCH /api/tal/[id]
+ *  { returnTicket } — Takealot's Zendesk ticket approving the return (unlocks Return to TAL).
+ *  { unrepairable: string[], reason, note } — mark units BSC kept as Unrepairable.
+ *    Units left behind stay "Receipted by BSC" until someone does this, because
+ *    BSC may still release them on a later collection.
  */
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requirePermission(req, 'manage_pick_slips');
   if (guard instanceof NextResponse) return guard;
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
+  const me = (await loadUsers()).find((u) => u.id === guard.userId);
+  const byName = me ? `${me.name} ${me.surname}` : 'Unknown';
+
+  if ('returnTicket' in body) {
+    const ticket = String(body.returnTicket ?? '').trim().replace(/^#/, '');
+    if (!/^[A-Za-z0-9-]{1,30}$/.test(ticket)) return NextResponse.json({ error: 'Enter the Zendesk ticket number (letters and digits only)' }, { status: 400 });
+    return mutateTalBookings<NextResponse>((all) => {
+      const b = all.find((x) => x.id === id);
+      if (!b) return { result: NextResponse.json({ error: 'Booking not found' }, { status: 404 }) };
+      const now = new Date().toISOString();
+      b.history.push({ status: 'repaired_iram', at: now, byUserId: guard.userId, byName, note: `Zendesk ticket ${ticket} recorded${b.returnTicket ? ` (was ${b.returnTicket})` : ''}` });
+      b.returnTicket = ticket;
+      b.updatedAt = now;
+      return { save: all, result: NextResponse.json({ booking: b }) };
+    });
+  }
+
+  const reason = String(body.reason ?? '') as NotFixedReason;
+  if (!Object.hasOwn(NOT_FIXED_REASONS, reason)) return NextResponse.json({ error: 'Choose why BSC did not fix the unit(s)' }, { status: 400 });
   const rrns = new Set<string>((Array.isArray(body.unrepairable) ? body.unrepairable : []).map(normCode));
   if (!rrns.size) return NextResponse.json({ error: 'Select at least one unit' }, { status: 400 });
 
-  const me = (await loadUsers()).find((u) => u.id === guard.userId);
-  const byName = me ? `${me.name} ${me.surname}` : 'Unknown';
   const note = String(body.note ?? '').trim().slice(0, 300) || undefined;
   const access = await resolveWarehouseAccess(guard.userId);
 
@@ -49,9 +68,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     for (const u of picked) {
       u.status = 'unrepairable';
       u.statusAt = now;
-      u.history.push({ status: 'unrepairable', at: now, byUserId: guard.userId, byName, note });
+      u.notFixedReason = reason;
+      u.history.push({ status: 'unrepairable', at: now, byUserId: guard.userId, byName, note: [NOT_FIXED_REASONS[reason].label, note].filter(Boolean).join(': ') });
     }
-    b.history.push({ status: 'unrepairable', at: now, byUserId: guard.userId, byName, note: `${rrns.size} unit(s) marked unrepairable${note ? `: ${note}` : ''}` });
+    b.history.push({ status: 'unrepairable', at: now, byUserId: guard.userId, byName, note: `${rrns.size} unit(s) marked unrepairable, ${NOT_FIXED_REASONS[reason].label}${note ? `: ${note}` : ''}` });
     b.updatedAt = now;
     return { save: all, result: NextResponse.json({ booking: b }) };
   });

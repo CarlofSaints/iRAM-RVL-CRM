@@ -43,6 +43,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Time slot must be HH:MM' }, { status: 400 });
   }
 
+  const region = body.region;
+  if (region !== 'GAU' && region !== 'CPT') return NextResponse.json({ error: 'Choose the Takealot DC (GAU or CPT)' }, { status: 400 });
+
   const instructions: TalInstruction[] = [];
   for (const raw of Array.isArray(body.instructions) ? body.instructions : []) {
     const instructionNo = normCode(raw?.instructionNo);
@@ -72,6 +75,7 @@ export async function POST(req: NextRequest) {
     supplierName: String(body.supplierName ?? '').trim().slice(0, 120) || undefined,
     bookingDate: bookingDate || undefined,
     timeSlot: timeSlot || undefined,
+    region,
     instructions,
     units: [],
     history: [{ status: 'booking_received', at: now, byUserId: guard.userId, byName, note: 'Booking Confirmation loaded' }],

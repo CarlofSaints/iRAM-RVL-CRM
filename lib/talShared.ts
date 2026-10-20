@@ -16,7 +16,8 @@ export type TalUnitStatus =
   | 'receipted_bsc'
   | 'collected_bsc'
   | 'unrepairable'
-  | 'repaired_iram';
+  | 'repaired_iram'
+  | 'returned_tal';
 
 /** An IN slot nobody has scanned yet is still "Booking received". */
 export type TalStatus = 'booking_received' | 'missing_tal' | TalUnitStatus;
@@ -30,6 +31,7 @@ export const TAL_STATUS_LABELS: Record<TalStatus, string> = {
   collected_bsc: 'Repaired & collected',
   unrepairable: 'Unrepairable',
   repaired_iram: 'Repaired – iRam IS',
+  returned_tal: 'Returned to TAL',
 };
 
 export const TAL_STATUS_BADGE: Record<TalStatus, string> = {
@@ -41,15 +43,31 @@ export const TAL_STATUS_BADGE: Record<TalStatus, string> = {
   collected_bsc: 'bg-purple-100 text-purple-700',
   unrepairable: 'bg-red-100 text-red-700',
   repaired_iram: 'bg-emerald-100 text-emerald-700',
+  returned_tal: 'bg-teal-100 text-teal-700',
 };
 
 /** Statuses where the stock is physically in an iRam warehouse (day counter runs). */
 export const TAL_IN_WAREHOUSE: TalStatus[] = ['receipted_iram', 'repaired_iram'];
 
-// shortcut: one BSC (Johannesburg). Carl thinks there is a Cape Town branch too; make this a list when that is confirmed.
-export const BSC_LOCATION = { name: 'Bosch Service Centre (BSC)', address: '35 Roper St, New Centre, Johannesburg, 2001' };
+/** Takealot has a Gauteng and a Cape Town DC, each served by its own Bosch Service Centre. */
+export type TalRegion = 'GAU' | 'CPT';
+export const TAL_REGIONS: Record<TalRegion, { label: string; tal: string; bsc: string; bscAddress: string }> = {
+  GAU: { label: 'Gauteng', tal: 'TAL GAU', bsc: 'BSC GAU', bscAddress: '35 Roper St, New Centre, Johannesburg, 2001' },
+  // shortcut: Cape Town BSC address not given yet; fill in when Carl sends it.
+  CPT: { label: 'Cape Town', tal: 'TAL CPT', bsc: 'BSC CPT', bscAddress: '' },
+};
+/** Bookings loaded before regions existed were all Gauteng. */
+export const regionOf = (b: Pick<TalBooking, 'region'>): TalRegion => b.region ?? 'GAU';
 
-export type TalStageKey = 'collect_tal' | 'receipt_iram' | 'receipt_bsc' | 'collect_bsc' | 'receipt_repaired';
+/** Why BSC did not fix a unit. Damage and out-of-warranty are still billed to Takealot. */
+export type NotFixedReason = 'beyond_repair' | 'neglect' | 'out_of_warranty';
+export const NOT_FIXED_REASONS: Record<NotFixedReason, { label: string; billTal: boolean }> = {
+  beyond_repair: { label: 'Beyond repair (warranty)', billTal: false },
+  neglect: { label: 'Damage / neglect – bill TAL', billTal: true },
+  out_of_warranty: { label: 'Out of warranty – bill TAL', billTal: true },
+};
+
+export type TalStageKey = 'collect_tal' | 'receipt_iram' | 'receipt_bsc' | 'collect_bsc' | 'receipt_repaired' | 'return_tal';
 
 export interface TalStage {
   key: TalStageKey;
@@ -63,6 +81,8 @@ export interface TalStage {
   needsRepAndWarehouse?: boolean;
   /** Units left unscanned are expected (BSC keeps what it could not fix). */
   partialExpected?: boolean;
+  /** Takealot's Zendesk ticket must be on the booking first (their approval to return). */
+  needsTicket?: boolean;
 }
 
 export const TAL_STAGES: TalStage[] = [
@@ -71,6 +91,7 @@ export const TAL_STAGES: TalStage[] = [
   { key: 'receipt_bsc', label: 'Receipt at BSC', from: 'receipted_iram', to: 'receipted_bsc' },
   { key: 'collect_bsc', label: 'Collect repaired from BSC', from: 'receipted_bsc', to: 'collected_bsc', partialExpected: true },
   { key: 'receipt_repaired', label: 'Receipt repaired into iRam', from: 'collected_bsc', to: 'repaired_iram', needsRepAndWarehouse: true },
+  { key: 'return_tal', label: 'Return to TAL', from: 'repaired_iram', to: 'returned_tal', needsTicket: true },
 ];
 
 export const talStage = (key: string) => TAL_STAGES.find((s) => s.key === key);
@@ -93,6 +114,8 @@ export interface TalUnit {
   statusAt: string; // ISO — when the current status was set (drives the day counter)
   warehouseId?: string;
   warehouseName?: string;
+  /** Set when marked Unrepairable. */
+  notFixedReason?: NotFixedReason;
   history: TalEvent[];
 }
 
@@ -109,6 +132,9 @@ export interface TalBooking {
   bookingDate?: string; // YYYY-MM-DD
   timeSlot?: string; // HH:MM
   collectionAddress?: string;
+  region?: TalRegion;
+  /** Takealot's Zendesk ticket number approving the return of repaired units. */
+  returnTicket?: string;
   instructions: TalInstruction[];
   units: TalUnit[];
   history: TalEvent[];
@@ -139,11 +165,16 @@ export function expectedUnits(b: TalBooking, stage: TalStage): TalUnit[] {
 }
 
 /** Where a unit physically is, from its status. */
-export function unitLocation(u: TalUnit): string {
+export function unitLocation(u: TalUnit, b: Pick<TalBooking, 'region'>): string {
   if (TAL_IN_WAREHOUSE.includes(u.status)) return u.warehouseName || 'iRam';
-  if (u.status === 'receipted_bsc' || u.status === 'unrepairable') return 'BSC';
+  if (u.status === 'receipted_bsc' || u.status === 'unrepairable') return TAL_REGIONS[regionOf(b)].bsc;
+  if (u.status === 'returned_tal') return TAL_REGIONS[regionOf(b)].tal;
   return 'In transit';
 }
+
+/** Units BSC did not fix whose cost still goes to Takealot. */
+export const unitsToBillTal = (b: TalBooking) =>
+  b.units.filter((u) => u.notFixedReason && NOT_FIXED_REASONS[u.notFixedReason].billTal);
 
 /** Whole days since an ISO time, never negative. */
 export function daysSince(iso: string, now = Date.now()): number {
@@ -183,6 +214,9 @@ export function applyScan(
   actor: { byUserId?: string; byName?: string; repName?: string; warehouseId?: string; warehouseName?: string },
   now = new Date().toISOString(),
 ): ApplyScanResult {
+  if (stage.needsTicket && !b.returnTicket) {
+    return { ok: false, errors: [`Booking ${b.brn} has no Zendesk ticket number yet. Add it on the booking page once Takealot approves the return.`], missing: [] };
+  }
   const errors: string[] = [];
   const seen = new Set<string>();
   const units = b.units.map((u) => ({ ...u, history: [...u.history] }));
@@ -270,6 +304,7 @@ export interface ParsedBooking {
   timeSlot: string;
   supplierName: string;
   instructions: TalInstruction[];
+  region: TalRegion;
   /** "Total units to collect" printed on the sheet, to cross-check the qtys. 0 = not found. */
   totalUnits?: number;
 }
@@ -304,5 +339,7 @@ export function parseBookingText(text: string): ParsedBooking {
     instructions.push({ instructionNo: m[1], qty: Number(m[2].match(/\b(\d{1,3})\b/)?.[1] ?? 0) });
   }
   const totalUnits = Number(text.match(/Total\s+units\s+to\s+collect:?\s*(\d+)/i)?.[1] ?? 0);
-  return { brn, bookingDate, timeSlot, supplierName, instructions, totalUnits };
+  // The collection address names the DC city; anything not Cape Town is Gauteng.
+  const region: TalRegion = /Cape\s*Town/i.test(text.split(/Collection\s+Details/i)[0]) ? 'CPT' : 'GAU';
+  return { brn, bookingDate, timeSlot, supplierName, instructions, region, totalUnits };
 }

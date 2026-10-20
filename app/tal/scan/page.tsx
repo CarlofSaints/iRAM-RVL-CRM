@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useAuth, authFetch } from '@/lib/useAuth';
 import {
-  TAL_STAGES, TAL_STATUS_LABELS, BSC_LOCATION, talStage, openSlots, expectedUnits, normCode,
+  TAL_STAGES, TAL_STATUS_LABELS, TAL_REGIONS, regionOf, talStage, openSlots, expectedUnits, normCode,
   type TalBooking, type TalScan,
 } from '@/lib/talShared';
 
@@ -84,6 +84,9 @@ function TalScanInner() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return deny('Not found', data.error || `Nothing found for ${code}`);
     const b: TalBooking = data.booking;
+    if (stage.needsTicket && !b.returnTicket) {
+      return deny('No Zendesk ticket yet', `Booking ${b.brn} has no Zendesk ticket number. Add it on the booking page once Takealot approves the return.`);
+    }
     setBooking(b);
     // A half-scanned unit (RRN waiting for its serial) belongs to the old booking.
     setPendingRrn(''); setSerialInput('');
@@ -201,7 +204,6 @@ function TalScanInner() {
         <h1 className="text-2xl font-bold text-gray-900">Takealot: {stage.label}</h1>
         <p className="text-sm text-gray-500">
           Scanned units move from “{stage.from ? TAL_STATUS_LABELS[stage.from] : TAL_STATUS_LABELS.booking_received}” to “{TAL_STATUS_LABELS[stage.to]}”.
-          {stage.to === 'receipted_bsc' && ` Location: ${BSC_LOCATION.name}.`}
         </p>
       </div>
 
@@ -223,6 +225,8 @@ function TalScanInner() {
             Booking <Link href={`/tal/${booking.id}`} className="font-mono text-[var(--color-primary)] hover:underline">{booking.brn}</Link>
             {booking.bookingDate && <> · {booking.bookingDate.split('-').reverse().join('/')}</>}
             {booking.timeSlot && <> {booking.timeSlot}</>}
+            {' · '}{stage.key === 'receipt_bsc' || stage.key === 'collect_bsc' ? TAL_REGIONS[regionOf(booking)].bsc : TAL_REGIONS[regionOf(booking)].tal}
+            {booking.returnTicket && <> · Zendesk ticket <span className="font-mono">{booking.returnTicket}</span></>}
             {scans.length > 0 && <button onClick={() => setScans([])} className="ml-4 text-red-600 hover:underline">Clear {scans.length} unsaved scan(s)</button>}
           </div>
         )}

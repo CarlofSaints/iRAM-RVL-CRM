@@ -3,10 +3,10 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth, authFetch } from '@/lib/useAuth';
-import type { ParsedBooking } from '@/lib/talShared';
+import { TAL_REGIONS, type ParsedBooking, type TalRegion } from '@/lib/talShared';
 
 const input = 'px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-primary)] outline-none';
-const empty: ParsedBooking = { brn: '', bookingDate: '', timeSlot: '', supplierName: '', instructions: [] };
+const empty: ParsedBooking = { brn: '', bookingDate: '', timeSlot: '', supplierName: '', instructions: [], region: 'GAU' };
 
 export default function TalImportPage() {
   useAuth('import_excel');
@@ -86,7 +86,13 @@ export default function TalImportPage() {
               <span className="font-medium text-gray-700">Time Slot</span>
               <input type="time" className={input} value={form.timeSlot} onChange={(e) => setForm({ ...form, timeSlot: e.target.value })} />
             </label>
-            <label className="flex flex-col gap-1 text-sm col-span-2">
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-medium text-gray-700">Takealot DC</span>
+              <select className={input} value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value as TalRegion })}>
+                {(Object.keys(TAL_REGIONS) as TalRegion[]).map((r) => <option key={r} value={r}>{TAL_REGIONS[r].tal} ({TAL_REGIONS[r].label})</option>)}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium text-gray-700">Supplier</span>
               <input className={input} value={form.supplierName} onChange={(e) => setForm({ ...form, supplierName: e.target.value })} />
             </label>
