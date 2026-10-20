@@ -27,18 +27,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const guard = await requirePermission(req, 'manage_pick_slips');
   if (guard instanceof NextResponse) return guard;
   const { id } = await params;
-  const body = await req.json().catch(() => ({}));
+  const raw = await req.json().catch(() => null);
+  const body: Record<string, unknown> = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const me = (await loadUsers()).find((u) => u.id === guard.userId);
   const byName = me ? `${me.name} ${me.surname}` : 'Unknown';
 
   if ('returnTicket' in body) {
-    const ticket = String(body.returnTicket ?? '').trim().replace(/^#/, '');
+    const ticket = normCode(body.returnTicket).replace(/^#/, '');
     if (!/^[A-Za-z0-9-]{1,30}$/.test(ticket)) return NextResponse.json({ error: 'Enter the Zendesk ticket number (letters and digits only)' }, { status: 400 });
+    const access = await resolveWarehouseAccess(guard.userId);
     return mutateTalBookings<NextResponse>((all) => {
       const b = all.find((x) => x.id === id);
       if (!b) return { result: NextResponse.json({ error: 'Booking not found' }, { status: 404 }) };
+      // The ticket unlocks Return to TAL, so it needs access to every warehouse holding the units.
+      const denied = denyIfOutOfScope(access, b.units.map((u) => u.warehouseName), 'Recording the Zendesk ticket');
+      if (denied) return { result: denied };
       const now = new Date().toISOString();
-      b.history.push({ status: 'repaired_iram', at: now, byUserId: guard.userId, byName, note: `Zendesk ticket ${ticket} recorded${b.returnTicket ? ` (was ${b.returnTicket})` : ''}` });
+      b.history.push({ at: now, byUserId: guard.userId, byName, note: `Zendesk ticket ${ticket} recorded${b.returnTicket ? ` (was ${b.returnTicket})` : ''}` });
       b.returnTicket = ticket;
       b.updatedAt = now;
       return { save: all, result: NextResponse.json({ booking: b }) };
