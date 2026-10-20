@@ -46,9 +46,8 @@ export const TAL_STATUS_BADGE: Record<TalStatus, string> = {
 /** Statuses where the stock is physically in an iRam warehouse (day counter runs). */
 export const TAL_IN_WAREHOUSE: TalStatus[] = ['receipted_iram', 'repaired_iram'];
 
-// shortcut: BSC is a single fixed location with no address yet; move it to a
-// control record when Carl sends the address or a second service centre appears.
-export const BSC_LOCATION = { name: 'Bosch Service Centre (BSC)', address: '' };
+// shortcut: one BSC (Johannesburg). Carl thinks there is a Cape Town branch too; make this a list when that is confirmed.
+export const BSC_LOCATION = { name: 'Bosch Service Centre (BSC)', address: '35 Roper St, New Centre, Johannesburg, 2001' };
 
 export type TalStageKey = 'collect_tal' | 'receipt_iram' | 'receipt_bsc' | 'collect_bsc' | 'receipt_repaired';
 
@@ -271,6 +270,8 @@ export interface ParsedBooking {
   timeSlot: string;
   supplierName: string;
   instructions: TalInstruction[];
+  /** "Total units to collect" printed on the sheet, to cross-check the qtys. 0 = not found. */
+  totalUnits?: number;
 }
 
 /**
@@ -296,11 +297,12 @@ export function parseBookingText(text: string): ParsedBooking {
   // qty is the first small number after the IN. No qty found = 0, which the import
   // screen flags and the save refuses, so it is typed in rather than guessed.
   const instructions: TalInstruction[] = [];
-  const details = text.split(/Collection\s+Details:?/i)[1] ?? '';
+  const details = (text.split(/Collection\s+Details:?/i)[1] ?? '').split(/Total\s+units/i)[0];
   for (const row of details.split(/\bTakealot\b/i).slice(1)) {
     const m = row.match(/\b(\d{6,})\b([\s\S]*)/);
     if (!m) continue;
     instructions.push({ instructionNo: m[1], qty: Number(m[2].match(/\b(\d{1,3})\b/)?.[1] ?? 0) });
   }
-  return { brn, bookingDate, timeSlot, supplierName, instructions };
+  const totalUnits = Number(text.match(/Total\s+units\s+to\s+collect:?\s*(\d+)/i)?.[1] ?? 0);
+  return { brn, bookingDate, timeSlot, supplierName, instructions, totalUnits };
 }

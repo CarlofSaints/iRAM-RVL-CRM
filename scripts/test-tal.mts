@@ -31,6 +31,25 @@ Takealot
 Printed by system`);
 assert.deepEqual(q.instructions.map((i) => [i.instructionNo, i.qty]), [['139751845', 1], ['140431168', 2], ['150000001', 0]]);
 
+// Real sheet (19 Oct 2026, read off the scan): totals line must not bleed into the last row's qty.
+const real = parseBookingText(`Booking Reference Number: TALBKIYGI5477271
+Collection Details:
+Takealot 188807224 3
+Takealot 188855606 1
+Takealot 189037256 1
+Takealot 189424609 2
+Takealot 189549652 1
+Takealot 189779260 2
+Takealot 189909235 2
+Takealot 190456497 3
+Takealot 190569855 2
+Takealot 190681535
+Total units on delivery: 0
+Total units to collect: 19`);
+assert.equal(real.instructions.length, 10);
+assert.equal(real.instructions[9].qty, 0, 'missing qty stays 0, not the totals line');
+assert.equal(real.totalUnits, 19);
+
 const now = '2026-10-20T08:00:00.000Z';
 let b: TalBooking = {
   id: 'b1', brn: p.brn, instructions: p.instructions, units: [], history: [], createdAt: now, updatedAt: now,
