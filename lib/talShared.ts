@@ -6,7 +6,7 @@
  * A TAL booking is a Bosch "Booking Confirmation": one Booking Reference Number
  * (BRN) and several Instruction Numbers (INs), each with a quantity. We only
  * learn WHICH units are in an IN when they are scanned at Takealot — each unit
- * has its own RRN label and a serial number. From then on status is held per
+ * has its own RRN label (the RRN is the unit's serial). From then on status is held per
  * unit (RRN), so units on one IN can split (one repaired, one left at BSC).
  */
 
@@ -75,8 +75,6 @@ export interface TalStage {
   /** Units must be in this status to be scanned. null = new units against open IN slots. */
   from: TalUnitStatus | null;
   to: TalUnitStatus;
-  /** 'capture' = type/scan the serial; 'match' = must equal the serial captured at TAL. */
-  serial?: 'capture' | 'match';
   /** Collecting rep + receiving warehouse are recorded on warehouse receipts. */
   needsRepAndWarehouse?: boolean;
   /** Units left unscanned are expected (BSC keeps what it could not fix). */
@@ -86,8 +84,8 @@ export interface TalStage {
 }
 
 export const TAL_STAGES: TalStage[] = [
-  { key: 'collect_tal', label: 'Collect at TAL', from: null, to: 'collected_tal', serial: 'capture' },
-  { key: 'receipt_iram', label: 'Receipt into iRam', from: 'collected_tal', to: 'receipted_iram', serial: 'match', needsRepAndWarehouse: true },
+  { key: 'collect_tal', label: 'Collect at TAL', from: null, to: 'collected_tal' },
+  { key: 'receipt_iram', label: 'Receipt into iRam', from: 'collected_tal', to: 'receipted_iram', needsRepAndWarehouse: true },
   { key: 'receipt_bsc', label: 'Receipt at BSC', from: 'receipted_iram', to: 'receipted_bsc' },
   { key: 'collect_bsc', label: 'Collect repaired from BSC', from: 'receipted_bsc', to: 'collected_bsc', partialExpected: true },
   { key: 'receipt_repaired', label: 'Receipt repaired into iRam', from: 'collected_bsc', to: 'repaired_iram', needsRepAndWarehouse: true },
@@ -111,7 +109,6 @@ export interface TalEvent {
 export interface TalUnit {
   rrn: string;
   instructionNo: string;
-  serial: string;
   status: TalUnitStatus;
   statusAt: string; // ISO — when the current status was set (drives the day counter)
   warehouseId?: string;
@@ -149,7 +146,6 @@ export interface TalBooking {
 export interface TalScan {
   instructionNo: string;
   rrn: string;
-  serial?: string;
 }
 
 export const normCode = (s: unknown) => String(s ?? '').trim().toUpperCase();
@@ -196,7 +192,7 @@ export function statusCounts(b: TalBooking): Partial<Record<TalStatus, number>> 
 
 export interface ApplyScanResult {
   ok: boolean;
-  /** Per-scan problems that block the save (wrong booking, duplicate, serial mismatch...). */
+  /** Per-scan problems that block the save (wrong booking, duplicate, wrong status...). */
   errors: string[];
   /** Expected units not scanned — they keep their current status. */
   missing: { instructionNo: string; rrn?: string; count: number }[];
@@ -228,7 +224,6 @@ export function applyScan(
   for (const raw of scans) {
     const rrn = normCode(raw.rrn);
     const ins = normCode(raw.instructionNo);
-    const serial = normCode(raw.serial);
     if (!rrn) { errors.push('A scan has no RRN.'); continue; }
     if (seen.has(rrn)) { errors.push(`${rrn} was scanned twice.`); continue; }
     seen.add(rrn);
@@ -236,7 +231,6 @@ export function applyScan(
       errors.push(`${rrn}: instruction ${ins || '(blank)'} is not on booking ${b.brn}.`);
       continue;
     }
-    if (stage.serial && !serial) { errors.push(`${rrn}: serial number is required.`); continue; }
 
     if (stage.from === null) {
       if (rrnsElsewhere.has(rrn) || units.some((u) => u.rrn === rrn)) {
@@ -250,7 +244,7 @@ export function applyScan(
       }
       slotsUsed.set(ins, used);
       newUnits.push({
-        rrn, instructionNo: ins, serial, status: stage.to, statusAt: now,
+        rrn, instructionNo: ins, status: stage.to, statusAt: now,
         history: [{ status: stage.to, at: now, byUserId: actor.byUserId, byName: actor.byName }],
       });
       continue;
@@ -263,11 +257,6 @@ export function applyScan(
       errors.push(`${rrn} is "${TAL_STATUS_LABELS[unit.status]}", expected "${TAL_STATUS_LABELS[stage.from]}".`);
       continue;
     }
-    if (stage.serial === 'match' && unit.serial && unit.serial !== serial) {
-      errors.push(`${rrn}: serial ${serial} does not match ${unit.serial} captured at Takealot.`);
-      continue;
-    }
-    if (stage.serial === 'match' && !unit.serial) unit.serial = serial;
     unit.status = stage.to;
     unit.statusAt = now;
     if (stage.needsRepAndWarehouse) { unit.warehouseId = actor.warehouseId; unit.warehouseName = actor.warehouseName; }

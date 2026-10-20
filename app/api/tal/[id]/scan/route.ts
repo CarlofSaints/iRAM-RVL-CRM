@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 interface Person { id: string; name?: string; surname?: string; releaseCode?: string }
 
 /**
- * POST /api/tal/[id]/scan { stage, scans: [{instructionNo, rrn, serial}], repId?, securityCode?, warehouseId?, dryRun? }
+ * POST /api/tal/[id]/scan { stage, scans: [{instructionNo, rrn}], repId?, securityCode?, warehouseId?, dryRun? }
  * Moves the scanned units to the stage's next status. Every check runs here,
  * not only on the scan screen. dryRun returns problems + what is missing without saving.
  */

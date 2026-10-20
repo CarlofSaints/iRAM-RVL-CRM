@@ -28,8 +28,6 @@ function TalScanInner() {
   const [currentIn, setCurrentIn] = useState('');
   const [inInput, setInInput] = useState('');
   const [rrnInput, setRrnInput] = useState('');
-  const [pendingRrn, setPendingRrn] = useState('');
-  const [serialInput, setSerialInput] = useState('');
   const [scans, setScans] = useState<TalScan[]>([]);
   const [popup, setPopup] = useState<Popup | null>(null);
   const [busy, setBusy] = useState(false);
@@ -42,7 +40,6 @@ function TalScanInner() {
 
   const inRef = useRef<HTMLInputElement>(null);
   const rrnRef = useRef<HTMLInputElement>(null);
-  const serialRef = useRef<HTMLInputElement>(null);
   const okRef = useRef<HTMLButtonElement>(null);
 
   // The scanner's trailing Enter must not land on the pop-up button and close it
@@ -55,7 +52,7 @@ function TalScanInner() {
   }, [popup]);
 
   // A new stage is a new scan session.
-  useEffect(() => { setBooking(null); setScans([]); setCurrentIn(''); setPendingRrn(''); setLookup(''); }, [stage.key]);
+  useEffect(() => { setBooking(null); setScans([]); setCurrentIn(''); setLookup(''); }, [stage.key]);
 
   useEffect(() => {
     if (!session || !stage.needsRepAndWarehouse) return;
@@ -88,8 +85,6 @@ function TalScanInner() {
       return deny('No Zendesk ticket yet', `Booking ${b.brn} has no Zendesk ticket number. Add it on the booking page once Takealot approves the return.`);
     }
     setBooking(b);
-    // A half-scanned unit (RRN waiting for its serial) belongs to the old booking.
-    setPendingRrn(''); setSerialInput('');
     const fromUnit = b.units.find((u) => u.rrn === code)?.instructionNo;
     const ins = fromUnit ?? (b.instructions.some((i) => i.instructionNo === code) ? code : '');
     setCurrentIn(ins);
@@ -109,7 +104,6 @@ function TalScanInner() {
 
   const add = (scan: TalScan) => {
     setScans((s) => [...s, scan]);
-    setPendingRrn(''); setSerialInput('');
     setTimeout(() => rrnRef.current?.focus(), 0);
   };
 
@@ -132,23 +126,7 @@ function TalScanInner() {
         return deny('Wrong status', `${rrn} is "${TAL_STATUS_LABELS[unit.status]}". This step needs "${TAL_STATUS_LABELS[stage.from]}".`);
       }
     }
-    if (stage.serial) {
-      setPendingRrn(rrn);
-      setTimeout(() => serialRef.current?.focus(), 0);
-      return;
-    }
     add({ instructionNo: currentIn, rrn });
-  };
-
-  const scanSerial = () => {
-    const serial = normCode(serialInput);
-    if (!booking || !pendingRrn || !serial) return;
-    const captured = booking.units.find((u) => u.rrn === pendingRrn)?.serial;
-    if (stage.serial === 'match' && captured && captured !== serial) {
-      setSerialInput('');
-      return deny('Serial does not match', `${pendingRrn} was collected with serial ${captured}.`, `Scanned: ${serial}`);
-    }
-    add({ instructionNo: currentIn, rrn: pendingRrn, serial });
   };
 
   const post = (dryRun: boolean) =>
@@ -265,7 +243,7 @@ function TalScanInner() {
             </table>
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-200 p-5 grid grid-cols-3 gap-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-5 grid grid-cols-2 gap-4">
             <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium text-gray-700">2. Scan Instruction Nr. on the product</span>
               <input ref={inRef} value={inInput} onChange={(e) => setInInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && pickIn()}
@@ -273,31 +251,22 @@ function TalScanInner() {
             </label>
             <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium text-gray-700">3. Scan RRN</span>
-              <input ref={rrnRef} value={pendingRrn || rrnInput} disabled={!!pendingRrn} onChange={(e) => setRrnInput(e.target.value)}
+              <input ref={rrnRef} value={rrnInput} onChange={(e) => setRrnInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && scanRrn()} placeholder="RRN-…" className={`${input} font-mono`} />
             </label>
-            {stage.serial && (
-              <label className="flex flex-col gap-1 text-sm">
-                <span className="font-medium text-gray-700">4. Scan serial number</span>
-                <input ref={serialRef} value={serialInput} disabled={!pendingRrn} onChange={(e) => setSerialInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') scanSerial(); if (e.key === 'Escape') { setPendingRrn(''); setSerialInput(''); } }}
-                  placeholder={pendingRrn ? 'Serial' : 'Scan an RRN first'} className={`${input} font-mono`} />
-              </label>
-            )}
           </div>
 
           {scans.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 text-left text-gray-600">
-                  <tr><th className="px-4 py-2">Instruction</th><th className="px-4 py-2">RRN</th>{stage.serial && <th className="px-4 py-2">Serial</th>}<th /></tr>
+                  <tr><th className="px-4 py-2">Instruction</th><th className="px-4 py-2">RRN</th><th /></tr>
                 </thead>
                 <tbody>
                   {scans.map((s) => (
                     <tr key={s.rrn} className="border-t border-gray-100">
                       <td className="px-4 py-2 font-mono">{s.instructionNo}</td>
                       <td className="px-4 py-2 font-mono">{s.rrn}</td>
-                      {stage.serial && <td className="px-4 py-2 font-mono">{s.serial}</td>}
                       <td className="px-4 py-2 text-right">
                         <button onClick={() => setScans((x) => x.filter((y) => y.rrn !== s.rrn))} className="text-red-600 hover:underline">Remove</button>
                       </td>
@@ -360,7 +329,7 @@ function TalScanInner() {
                   Save anyway
                 </button>
               )}
-              <button ref={okRef} onClick={() => { setPopup(null); setTimeout(() => (pendingRrn ? serialRef : rrnRef).current?.focus(), 0); }}
+              <button ref={okRef} onClick={() => { setPopup(null); setTimeout(() => rrnRef.current?.focus(), 0); }}
                 className="px-4 py-2 rounded-lg text-sm font-medium bg-white text-gray-900 hover:bg-gray-100">
                 {popup.kind === 'missing' ? 'Keep scanning' : 'OK'}
               </button>
