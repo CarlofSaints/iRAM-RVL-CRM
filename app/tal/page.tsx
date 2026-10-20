@@ -6,7 +6,7 @@ import { useAuth, authFetch } from '@/lib/useAuth';
 import { useTableSort } from '@/lib/useTableSort';
 import SortableTh from '@/components/SortableTh';
 import {
-  TAL_STATUS_LABELS, TAL_STATUS_BADGE, TAL_IN_WAREHOUSE, statusCounts, daysSince,
+  TAL_STATUS_LABELS, TAL_STATUS_BADGE, TAL_IN_WAREHOUSE, TAL_REGIONS, statusCounts, daysSince, regionOf, unitsToBillTal,
   type TalBooking, type TalStatus,
 } from '@/lib/talShared';
 
@@ -35,7 +35,7 @@ export default function TalBookingsPage() {
     if (statusFilter && !statusCounts(b)[statusFilter as TalStatus]) return false;
     if (search) {
       const q = search.trim().toUpperCase();
-      const hay = [b.brn, ...b.instructions.map((i) => i.instructionNo), ...b.units.flatMap((u) => [u.rrn, u.serial])].join(' ');
+      const hay = [b.brn, b.returnTicket ?? '', ...b.instructions.map((i) => i.instructionNo), ...b.units.flatMap((u) => [u.rrn, u.serial])].join(' ');
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -44,6 +44,7 @@ export default function TalBookingsPage() {
   const { sorted, sortCol, sortDir, toggleSort } = useTableSort(filtered, {
     brn: (b) => b.brn,
     date: (b) => b.bookingDate || b.createdAt,
+    dc: (b) => regionOf(b),
     ins: (b) => b.instructions.length,
     qty: (b) => totalQty(b),
     days: (b) => maxDaysInWh(b),
@@ -86,6 +87,7 @@ export default function TalBookingsPage() {
             <tr>
               <SortableTh col="brn" label="Booking Ref" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3" />
               <SortableTh col="date" label="Booking Date" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3" />
+              <SortableTh col="dc" label="DC" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3" />
               <SortableTh col="ins" label="Instructions" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 text-right" />
               <SortableTh col="qty" label="Units" sortCol={sortCol} sortDir={sortDir} onSort={toggleSort} className="px-4 py-3 text-right" />
               <th className="px-4 py-3">Status</th>
@@ -94,7 +96,7 @@ export default function TalBookingsPage() {
           </thead>
           <tbody>
             {sorted.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">No bookings yet. Load a Booking Confirmation PDF to start.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">No bookings yet. Load a Booking Confirmation PDF to start.</td></tr>
             )}
             {sorted.map((b) => {
               const counts = statusCounts(b);
@@ -105,6 +107,7 @@ export default function TalBookingsPage() {
                     <Link href={`/tal/${b.id}`} className="text-[var(--color-primary)] hover:underline">{b.brn}</Link>
                   </td>
                   <td className="px-4 py-3">{fmtDate(b.bookingDate)}{b.timeSlot ? ` ${b.timeSlot}` : ''}</td>
+                  <td className="px-4 py-3">{TAL_REGIONS[regionOf(b)].tal}</td>
                   <td className="px-4 py-3 text-right">{b.instructions.length}</td>
                   <td className="px-4 py-3 text-right">{totalQty(b)}</td>
                   <td className="px-4 py-3">
@@ -114,6 +117,9 @@ export default function TalBookingsPage() {
                           {counts[s]} {TAL_STATUS_LABELS[s]}
                         </span>
                       ))}
+                      {unitsToBillTal(b).length > 0 && (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">{unitsToBillTal(b).length} to bill TAL</span>
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-3 text-right">{days >= 0 ? days : '—'}</td>

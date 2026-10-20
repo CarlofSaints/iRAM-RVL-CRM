@@ -1,6 +1,6 @@
 // Self-check for the Takealot scan rules + PDF text reader. Run: node scripts/test-tal.mts
 import assert from 'node:assert/strict';
-import { applyScan, parseBookingText, statusCounts, talStage, type TalBooking } from '../lib/talShared.ts';
+import { applyScan, parseBookingText, statusCounts, talStage, unitLocation, unitsToBillTal, type TalBooking } from '../lib/talShared.ts';
 
 // Text in the shape of the Booking Confirmation sample (16 May 2025).
 const p = parseBookingText(`Booking Confirmation Robert Bosch Pty Ltd
@@ -49,6 +49,8 @@ Total units to collect: 19`);
 assert.equal(real.instructions.length, 10);
 assert.equal(real.instructions[9].qty, 0, 'missing qty stays 0, not the totals line');
 assert.equal(real.totalUnits, 19);
+assert.equal(p.region, 'GAU');
+assert.equal(parseBookingText('Collection Address: Takealot DC Cape Town DC 1\nCollection Details:').region, 'CPT');
 
 const now = '2026-10-20T08:00:00.000Z';
 let b: TalBooking = {
@@ -82,5 +84,21 @@ assert.equal(r.booking!.units.find((u) => u.rrn === 'RRN-A')!.warehouseName, 'Ga
 // Skipping a step is refused: RRN-B has not been receipted into iRam.
 assert.ok(!applyScan(r.booking!, st('receipt_bsc'), [{ instructionNo: '139751845', rrn: 'RRN-B' }], new Set(), actor).ok);
 assert.ok(!applyScan(b, st('receipt_iram'), [], new Set(), actor).ok, 'empty scan');
+
+// Return to TAL needs the Zendesk ticket first, then moves repaired units to TAL.
+const done: TalBooking = {
+  ...b, region: 'CPT',
+  units: [{ rrn: 'R1', instructionNo: '139751845', serial: 'S', status: 'repaired_iram', statusAt: now, warehouseName: 'WC', history: [] },
+    { rrn: 'R2', instructionNo: '139751845', serial: 'S2', status: 'unrepairable', notFixedReason: 'neglect', statusAt: now, history: [] },
+    { rrn: 'R3', instructionNo: '139751845', serial: 'S3', status: 'unrepairable', notFixedReason: 'beyond_repair', statusAt: now, history: [] }],
+};
+assert.ok(!applyScan(done, st('return_tal'), [{ instructionNo: '139751845', rrn: 'R1' }], new Set(), actor).ok, 'no ticket');
+r = applyScan({ ...done, returnTicket: '12345' }, st('return_tal'), [{ instructionNo: '139751845', rrn: 'R1' }], new Set(), actor, now);
+assert.ok(r.ok);
+const back = r.booking!.units[0];
+assert.equal(back.status, 'returned_tal');
+assert.equal(unitLocation(back, done), 'TAL CPT');
+assert.equal(unitLocation(done.units[1], done), 'BSC CPT');
+assert.deepEqual(unitsToBillTal(done).map((u) => u.rrn), ['R2']);
 
 console.log('test-tal: all checks passed');
