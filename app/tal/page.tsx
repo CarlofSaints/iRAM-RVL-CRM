@@ -100,6 +100,7 @@ export default function TalBookingsPage() {
             )}
             {sorted.map((b) => {
               const counts = statusCounts(b);
+              const toBill = unitsToBillTal(b).length;
               const days = maxDaysInWh(b);
               return (
                 <tr key={b.id} className="border-t border-gray-100 hover:bg-gray-50">
@@ -117,8 +118,8 @@ export default function TalBookingsPage() {
                           {counts[s]} {TAL_STATUS_LABELS[s]}
                         </span>
                       ))}
-                      {unitsToBillTal(b).length > 0 && (
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">{unitsToBillTal(b).length} to bill TAL</span>
+                      {toBill > 0 && (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">{toBill} to bill TAL</span>
                       )}
                     </div>
                   </td>

@@ -91,13 +91,15 @@ export const TAL_STAGES: TalStage[] = [
   { key: 'receipt_bsc', label: 'Receipt at BSC', from: 'receipted_iram', to: 'receipted_bsc' },
   { key: 'collect_bsc', label: 'Collect repaired from BSC', from: 'receipted_bsc', to: 'collected_bsc', partialExpected: true },
   { key: 'receipt_repaired', label: 'Receipt repaired into iRam', from: 'collected_bsc', to: 'repaired_iram', needsRepAndWarehouse: true },
-  { key: 'return_tal', label: 'Return to TAL', from: 'repaired_iram', to: 'returned_tal', needsTicket: true },
+  // partialExpected: each warehouse returns its own units, so others still at iRam are normal.
+  { key: 'return_tal', label: 'Return to TAL', from: 'repaired_iram', to: 'returned_tal', needsTicket: true, partialExpected: true },
 ];
 
 export const talStage = (key: string) => TAL_STAGES.find((s) => s.key === key);
 
 export interface TalEvent {
-  status: TalStatus;
+  /** Absent on note-only events (e.g. Zendesk ticket recorded), which move no stock. */
+  status?: TalStatus;
   at: string; // ISO
   byUserId?: string;
   byName?: string;
@@ -304,7 +306,8 @@ export interface ParsedBooking {
   timeSlot: string;
   supplierName: string;
   instructions: TalInstruction[];
-  region: TalRegion;
+  /** '' = the PDF named neither city, so the user must pick; never guessed. */
+  region: TalRegion | '';
   /** "Total units to collect" printed on the sheet, to cross-check the qtys. 0 = not found. */
   totalUnits?: number;
 }
@@ -339,7 +342,10 @@ export function parseBookingText(text: string): ParsedBooking {
     instructions.push({ instructionNo: m[1], qty: Number(m[2].match(/\b(\d{1,3})\b/)?.[1] ?? 0) });
   }
   const totalUnits = Number(text.match(/Total\s+units\s+to\s+collect:?\s*(\d+)/i)?.[1] ?? 0);
-  // The collection address names the DC city; anything not Cape Town is Gauteng.
-  const region: TalRegion = /Cape\s*Town/i.test(text.split(/Collection\s+Details/i)[0]) ? 'CPT' : 'GAU';
+  // The collection address names the DC city ("Johannesburg DC 3"). Only a clear,
+  // single match counts; anything else is left blank for the user to choose.
+  const head = text.split(/Collection\s+Details/i)[0];
+  const cpt = /Cape\s*Town/i.test(head), gau = /Johannesburg|Gauteng|Midrand|Witfontein/i.test(head);
+  const region: TalRegion | '' = cpt === gau ? '' : cpt ? 'CPT' : 'GAU';
   return { brn, bookingDate, timeSlot, supplierName, instructions, region, totalUnits };
 }

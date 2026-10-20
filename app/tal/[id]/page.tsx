@@ -189,7 +189,7 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
         <ul className="text-sm text-gray-600 flex flex-col gap-1">
           {[...b.history].reverse().map((h, i) => (
             <li key={i}>
-              <span className="text-gray-400">{fmtDateTime(h.at)}</span> · {h.byName ?? '—'} · {h.note ?? TAL_STATUS_LABELS[h.status]}
+              <span className="text-gray-400">{fmtDateTime(h.at)}</span> · {h.byName ?? '—'} · {h.note ?? (h.status && TAL_STATUS_LABELS[h.status])}
               {h.repName && <> · Rep {h.repName}</>}{h.warehouseName && <> · {h.warehouseName}</>}
             </li>
           ))}

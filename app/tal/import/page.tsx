@@ -6,7 +6,7 @@ import { useAuth, authFetch } from '@/lib/useAuth';
 import { TAL_REGIONS, type ParsedBooking, type TalRegion } from '@/lib/talShared';
 
 const input = 'px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-primary)] outline-none';
-const empty: ParsedBooking = { brn: '', bookingDate: '', timeSlot: '', supplierName: '', instructions: [], region: 'GAU' };
+const empty: ParsedBooking = { brn: '', bookingDate: '', timeSlot: '', supplierName: '', instructions: [], region: '' };
 
 export default function TalImportPage() {
   useAuth('import_excel');
@@ -28,6 +28,7 @@ export default function TalImportPage() {
     const p: ParsedBooking = data.parsed;
     setForm(p);
     if (!data.textFound) setNote('This PDF has no readable text (probably a scan). Type the details in below.');
+    else if (!p.region) setNote('Could not tell from the PDF which Takealot DC this is. Choose GAU or CPT below, then check the rest.');
     else if (!p.brn || !p.instructions.length || p.instructions.some((i) => !i.qty)) setNote('Some details could not be read. Fill in the blanks below before saving.');
     else if (p.totalUnits && p.totalUnits !== p.instructions.reduce((t, i) => t + i.qty, 0)) setNote(`The PDF says ${p.totalUnits} unit(s) to collect but the quantities below add up to ${p.instructions.reduce((t, i) => t + i.qty, 0)}. Check them against the PDF before saving.`);
     else setNote(`Read ${p.instructions.length} instruction(s). Check them against the PDF, then save.`);
@@ -89,6 +90,7 @@ export default function TalImportPage() {
             <label className="flex flex-col gap-1 text-sm">
               <span className="font-medium text-gray-700">Takealot DC</span>
               <select className={input} value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value as TalRegion })}>
+                <option value="">Choose…</option>
                 {(Object.keys(TAL_REGIONS) as TalRegion[]).map((r) => <option key={r} value={r}>{TAL_REGIONS[r].tal} ({TAL_REGIONS[r].label})</option>)}
               </select>
             </label>

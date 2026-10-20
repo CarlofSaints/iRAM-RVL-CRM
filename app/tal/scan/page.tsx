@@ -225,7 +225,9 @@ function TalScanInner() {
             Booking <Link href={`/tal/${booking.id}`} className="font-mono text-[var(--color-primary)] hover:underline">{booking.brn}</Link>
             {booking.bookingDate && <> · {booking.bookingDate.split('-').reverse().join('/')}</>}
             {booking.timeSlot && <> {booking.timeSlot}</>}
-            {' · '}{stage.key === 'receipt_bsc' || stage.key === 'collect_bsc' ? TAL_REGIONS[regionOf(booking)].bsc : TAL_REGIONS[regionOf(booking)].tal}
+            {' · '}{stage.key === 'receipt_bsc' || stage.key === 'collect_bsc'
+              ? [TAL_REGIONS[regionOf(booking)].bsc, TAL_REGIONS[regionOf(booking)].bscAddress].filter(Boolean).join(', ')
+              : TAL_REGIONS[regionOf(booking)].tal}
             {booking.returnTicket && <> · Zendesk ticket <span className="font-mono">{booking.returnTicket}</span></>}
             {scans.length > 0 && <button onClick={() => setScans([])} className="ml-4 text-red-600 hover:underline">Clear {scans.length} unsaved scan(s)</button>}
           </div>

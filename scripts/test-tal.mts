@@ -49,7 +49,8 @@ Total units to collect: 19`);
 assert.equal(real.instructions.length, 10);
 assert.equal(real.instructions[9].qty, 0, 'missing qty stays 0, not the totals line');
 assert.equal(real.totalUnits, 19);
-assert.equal(p.region, 'GAU');
+assert.equal(p.region, '', 'no city named: left for the user, never guessed');
+assert.equal(parseBookingText('Collection Address: Takealot DC\nJohannesburg DC 3\nCollection Details:').region, 'GAU');
 assert.equal(parseBookingText('Collection Address: Takealot DC Cape Town DC 1\nCollection Details:').region, 'CPT');
 
 const now = '2026-10-20T08:00:00.000Z';
