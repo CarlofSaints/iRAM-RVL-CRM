@@ -86,6 +86,19 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
   const visibleSwapOutLinks = swapOutLinks.filter(l => has(l.perm));
   const showSwapOutSection = visibleSwapOutLinks.length > 0;
 
+  // Takealot — Bosch collections from TAL, tracked per unit (RRN). Ordered by workflow.
+  const talLinks: Array<{ href: string; label: string; perm: string }> = [
+    { href: '/tal', label: 'Bookings', perm: 'view_aged_stock' },
+    { href: '/tal/import', label: '1.) Load Booking PDF', perm: 'import_excel' },
+    { href: '/tal/scan?stage=collect_tal', label: '2.) Collect at TAL', perm: 'scan_stock' },
+    { href: '/tal/scan?stage=receipt_iram', label: '3.) Receipt into iRam', perm: 'scan_stock' },
+    { href: '/tal/scan?stage=receipt_bsc', label: '4.) Receipt at BSC', perm: 'scan_stock' },
+    { href: '/tal/scan?stage=collect_bsc', label: '5.) Collect from BSC', perm: 'scan_stock' },
+    { href: '/tal/scan?stage=receipt_repaired', label: '6.) Receipt repaired', perm: 'scan_stock' },
+  ];
+  const visibleTalLinks = talLinks.filter(l => has(l.perm));
+  const showTalSection = visibleTalLinks.length > 0;
+
   // Promotional Material — separate module, own permission family
   const promoLinks: Array<{ href: string; label: string; perm: string }> = [
     { href: '/promo', label: 'Promo Kits', perm: 'view_promo_kits' },
@@ -99,6 +112,7 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
   const [agedStockOpen, setAgedStockOpen] = useState(pathname.startsWith('/aged-stock'));
   const [swapOutOpen, setSwapOutOpen] = useState(pathname.startsWith('/swap-outs'));
   const [promoOpen, setPromoOpen] = useState(pathname.startsWith('/promo'));
+  const [talOpen, setTalOpen] = useState(pathname.startsWith('/tal'));
   const [collapsed, setCollapsed] = useState(false);
 
   // Hydrate collapsed state from localStorage on mount
@@ -267,6 +281,35 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
                 {visibleSwapOutLinks.map(l => (
                   <SubNavLink key={l.href} href={l.href} label={l.label} active={pathname === l.href} />
                 ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Takealot — separate module */}
+        {showTalSection && (
+          <>
+            <button
+              onClick={() => setTalOpen(v => !v)}
+              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                pathname.startsWith('/tal')
+                  ? 'bg-[var(--color-primary)] text-white'
+                  : 'text-gray-300 hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              Takealot
+              <svg className={`w-4 h-4 transition-transform ${talOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {talOpen && (
+              <div className="flex flex-col gap-0.5 mt-0.5">
+                {visibleTalLinks.map(l => {
+                  const [linkPath, linkQuery] = l.href.split('?');
+                  const stage = linkQuery ? new URLSearchParams(linkQuery).get('stage') : null;
+                  const active = pathname === linkPath && (!stage || searchParams.get('stage') === stage);
+                  return <SubNavLink key={l.href} href={l.href} label={l.label} active={active} />;
+                })}
               </div>
             )}
           </>
