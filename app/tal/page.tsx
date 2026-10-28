@@ -35,7 +35,10 @@ export default function TalBookingsPage() {
     if (statusFilter && !statusCounts(b)[statusFilter as TalStatus]) return false;
     if (search) {
       const q = search.trim().toUpperCase();
-      const hay = [b.brn, b.returnTicket ?? '', ...b.instructions.map((i) => i.instructionNo), ...b.units.map((u) => u.rrn)].join(' ');
+      const hay = [
+        b.brn, ...b.instructions.map((i) => i.instructionNo),
+        ...b.units.flatMap((u) => [u.rrn, u.returnTicket ?? '', u.description ?? '']),
+      ].join(' ').toUpperCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -49,6 +52,11 @@ export default function TalBookingsPage() {
     qty: (b) => totalQty(b),
     days: (b) => maxDaysInWh(b),
   }, 'date', 'desc');
+
+  // Back from BSC and sitting at iRam: the stock still to go back to Takealot.
+  const waiting = rows
+    .flatMap((b) => b.units.filter((u) => u.status === 'repaired_iram').map((u) => ({ b, u })))
+    .sort((x, y) => (x.u.statusAt < y.u.statusAt ? -1 : 1));
 
   if (loading) return <div className="text-gray-500">Loading…</div>;
 
@@ -74,12 +82,46 @@ export default function TalBookingsPage() {
         />
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm">
           <option value="">All statuses</option>
-          {Object.entries(TAL_STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          {Object.entries(TAL_STATUS_LABELS).filter(([k]) => k !== 'collected_tal' && k !== 'collected_bsc').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
         <span className="text-sm text-gray-400">{filtered.length} of {rows.length}</span>
       </div>
 
       {error && <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{error}</div>}
+
+      <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+        <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
+          <span className="text-sm font-semibold text-gray-700">Waiting to return to TAL</span>
+          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">{waiting.length}</span>
+          <span className="text-xs text-gray-500">
+            {waiting.filter((w) => !w.u.returnTicket).length} without Takealot approval yet
+          </span>
+          <div className="flex-1" />
+          <Link href="/tal/scan?stage=return_tal" className="text-sm text-[var(--color-primary)] hover:underline">Return to TAL →</Link>
+        </div>
+        {waiting.length > 0 && (
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-left text-gray-600">
+              <tr>
+                <th className="px-4 py-2">RRN</th><th className="px-4 py-2">Description</th><th className="px-4 py-2">Booking</th>
+                <th className="px-4 py-2">Warehouse</th><th className="px-4 py-2">Zendesk ticket</th><th className="px-4 py-2 text-right">Days at iRam</th>
+              </tr>
+            </thead>
+            <tbody>
+              {waiting.map(({ b, u }) => (
+                <tr key={`${b.id}|${u.rrn}`} className="border-t border-gray-100">
+                  <td className="px-4 py-2 font-mono">{u.noRrn ? <span className="text-amber-700">No RRN</span> : u.rrn}</td>
+                  <td className="px-4 py-2">{u.description || '—'}</td>
+                  <td className="px-4 py-2 font-mono"><Link href={`/tal/${b.id}`} className="text-[var(--color-primary)] hover:underline">{b.brn}</Link></td>
+                  <td className="px-4 py-2">{u.warehouseName || '—'}</td>
+                  <td className="px-4 py-2 font-mono">{u.returnTicket ? `#${u.returnTicket}` : <span className="text-amber-700 font-sans">No approval yet</span>}</td>
+                  <td className="px-4 py-2 text-right">{daysSince(u.statusAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
 
       <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
         <table className="w-full text-sm">

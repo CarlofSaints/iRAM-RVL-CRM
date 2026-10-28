@@ -18,7 +18,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 /**
  * PATCH /api/tal/[id]
- *  { returnTicket } — Takealot's Zendesk ticket approving the return (unlocks Return to TAL).
  *  { unrepairable: string[], reason, note } — mark units BSC kept as Unrepairable.
  *    Units left behind stay "Receipted by BSC" until someone does this, because
  *    BSC may still release them on a later collection.
@@ -31,24 +30,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body: Record<string, unknown> = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const me = (await loadUsers()).find((u) => u.id === guard.userId);
   const byName = me ? `${me.name} ${me.surname}` : 'Unknown';
-
-  if ('returnTicket' in body) {
-    const ticket = normCode(body.returnTicket).replace(/^#/, '');
-    if (!/^[A-Za-z0-9-]{1,30}$/.test(ticket)) return NextResponse.json({ error: 'Enter the Zendesk ticket number (letters and digits only)' }, { status: 400 });
-    const access = await resolveWarehouseAccess(guard.userId);
-    return mutateTalBookings<NextResponse>((all) => {
-      const b = all.find((x) => x.id === id);
-      if (!b) return { result: NextResponse.json({ error: 'Booking not found' }, { status: 404 }) };
-      // The ticket unlocks Return to TAL, so it needs access to every warehouse holding the units.
-      const denied = denyIfOutOfScope(access, b.units.map((u) => u.warehouseName), 'Recording the Zendesk ticket');
-      if (denied) return { result: denied };
-      const now = new Date().toISOString();
-      b.history.push({ at: now, byUserId: guard.userId, byName, note: `Zendesk ticket ${ticket} recorded${b.returnTicket ? ` (was ${b.returnTicket})` : ''}` });
-      b.returnTicket = ticket;
-      b.updatedAt = now;
-      return { save: all, result: NextResponse.json({ booking: b }) };
-    });
-  }
 
   const reason = String(body.reason ?? '') as NotFixedReason;
   if (!Object.hasOwn(NOT_FIXED_REASONS, reason)) return NextResponse.json({ error: 'Choose why BSC did not fix the unit(s)' }, { status: 400 });

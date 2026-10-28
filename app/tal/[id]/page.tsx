@@ -20,7 +20,6 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [note, setNote] = useState('');
   const [reason, setReason] = useState<NotFixedReason | ''>('');
-  const [ticket, setTicket] = useState('');
   const [busy, setBusy] = useState(false);
   const canManage = (session?.permissions ?? []).includes('manage_pick_slips');
 
@@ -46,17 +45,16 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
     setB(data.booking); setPicked(new Set()); setNote(''); setReason('');
   };
 
-  const saveTicket = async () => {
-    setBusy(true); setError('');
-    const res = await authFetch(`/api/tal/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ returnTicket: ticket }),
-    });
-    const data = await res.json().catch(() => ({}));
-    setBusy(false);
-    if (!res.ok) return setError(data.error || 'Update failed');
-    setB(data.booking); setTicket('');
+  /** Opened as a blob: the API needs the auth header, which a plain link cannot send. */
+  const openDeliveryNote = async (at: string) => {
+    const res = await authFetch(`/api/tal/${id}/delivery-note?at=${encodeURIComponent(at)}`);
+    if (!res.ok) return setError((await res.json().catch(() => ({}))).error || 'Could not make the delivery note');
+    const url = URL.createObjectURL(await res.blob());
+    if (!window.open(url, '_blank')) {
+      const a = document.createElement('a');
+      a.href = url; a.download = `${b?.brn ?? 'booking'} - BSC drop-off.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+    }
   };
 
   const remove = async () => {
@@ -69,6 +67,7 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
   if (!b) return <div className="text-gray-500">Loading…</div>;
   const counts = statusCounts(b);
   const toBill = unitsToBillTal(b);
+  const drops = b.history.filter((h) => h.status === 'receipted_bsc');
 
   return (
     <div className="flex flex-col gap-5 max-w-6xl">
@@ -96,20 +95,14 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
 
       {error && <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{error}</div>}
 
-      {(b.returnTicket || canManage) && (
+      {drops.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
-          <span className="font-medium text-gray-700">Takealot Zendesk ticket (return approval)</span>
-          <span className="font-mono">{b.returnTicket || <span className="text-gray-400">not received yet</span>}</span>
-          {canManage && (
-            <>
-              <div className="flex-1" />
-              <input value={ticket} onChange={(e) => setTicket(e.target.value)} placeholder={b.returnTicket ? 'Change ticket number' : 'Ticket number'}
-                aria-label="Zendesk ticket number" className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-48" />
-              <button onClick={saveTicket} disabled={busy || !ticket.trim()} className="px-4 py-2 rounded-lg text-sm font-medium bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-50">
-                Save ticket
-              </button>
-            </>
-          )}
+          <span className="font-medium text-gray-700">BSC Drop-off delivery notes</span>
+          {drops.map((h) => (
+            <button key={h.at} onClick={() => openDeliveryNote(h.at)} className="px-3 py-1.5 rounded-lg text-sm border border-gray-300 hover:bg-gray-50">
+              {fmtDateTime(h.at)}
+            </button>
+          ))}
         </div>
       )}
 
@@ -133,7 +126,9 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
                   <tr>
                     {canManage && <th className="px-4 py-2 w-8" />}
                     <th className="px-4 py-2">RRN</th>
+                    <th className="px-4 py-2">Description</th>
                     <th className="px-4 py-2">Status</th>
+                    <th className="px-4 py-2">Zendesk ticket</th>
                     <th className="px-4 py-2">Since</th>
                     <th className="px-4 py-2">Location</th>
                     <th className="px-4 py-2 text-right">Days in WH</th>
@@ -150,10 +145,12 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
                           )}
                         </td>
                       )}
-                      <td className="px-4 py-2 font-mono">{u.rrn}</td>
+                      <td className="px-4 py-2 font-mono">{u.noRrn ? <span className="text-amber-700">No RRN on Product</span> : u.rrn}</td>
+                      <td className="px-4 py-2">{u.description || '—'}</td>
                       <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${TAL_STATUS_BADGE[u.status]}`}>{TAL_STATUS_LABELS[u.status]}</span>
                         {u.notFixedReason && <div className="text-xs text-gray-500 mt-0.5">{NOT_FIXED_REASONS[u.notFixedReason].label}</div>}
                       </td>
+                      <td className="px-4 py-2 font-mono">{u.returnTicket ? `#${u.returnTicket}` : '—'}</td>
                       <td className="px-4 py-2">{fmtDateTime(u.statusAt)}</td>
                       <td className="px-4 py-2">{unitLocation(u, b)}</td>
                       <td className="px-4 py-2 text-right">{TAL_IN_WAREHOUSE.includes(u.status) ? daysSince(u.statusAt) : '—'}</td>
