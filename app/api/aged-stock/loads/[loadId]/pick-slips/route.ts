@@ -14,6 +14,7 @@ import {
   type PickSlipRecord,
   type PickSlipRunIndex,
 } from '@/lib/pickSlipData';
+import { findStoreByCode } from '@/lib/storeMatch';
 
 export const dynamic = 'force-dynamic';
 
@@ -132,7 +133,6 @@ export async function POST(
 
   // Load store control data → siteCode → store record (for warehouse)
   const stores = await loadControl<StoreRecord>('stores');
-  const storeByCode = new Map(stores.map(s => [s.siteCode.trim().toLowerCase(), s]));
 
   // Warehouse name/code resolver for canonical warehouseCode on slip
   const whList = await loadControl<{ code: string; name: string }>('warehouses');
@@ -237,7 +237,7 @@ export async function POST(
     }
 
     // Look up warehouse from store control
-    const storeRec = storeByCode.get(siteCode.trim().toLowerCase());
+    const storeRec = findStoreByCode(stores, siteCode, { siteName: siteRows[0].siteName });
     const warehouse = storeRec?.linkedWarehouse || 'N/A';
     const siteName = siteRows[0].siteName;
 

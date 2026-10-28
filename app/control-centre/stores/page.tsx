@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { Toast, ToastData } from '@/components/Toast';
 import { useAuth, authFetch } from '@/lib/useAuth';
 import * as XLSX from 'xlsx';
+import { findStoreByCode, storeKey } from '@/lib/storeMatch';
 
 interface Store {
   id: string;
@@ -273,6 +274,14 @@ export default function StoresPage() {
     } else notify('Failed to delete', 'error');
   }
 
+  /** The existing store an upload row updates: same channel + code. A row with no channel matches on code alone. */
+  function existingFor(r: { siteCode: string; channel: string }): Store | undefined {
+    if (!r.siteCode) return undefined;
+    if (!r.channel) return findStoreByCode(items, r.siteCode);
+    const key = storeKey(r);
+    return items.find(s => storeKey(s) === key);
+  }
+
   /** Auto-add any channel names from an upload that don't already exist. */
   async function ensureChannelsExist(names: string[]) {
     const existing = new Set(channels.map(c => c.name.toLowerCase()));
@@ -301,12 +310,11 @@ export default function StoresPage() {
       const records = rows.map(rowToStore).filter(r => r.name);
       if (!records.length) { notify('No valid rows found', 'error'); return; }
 
-      // Diff against current items by siteCode (case-insensitive)
-      const existingCodes = new Set(items.map(s => s.siteCode.toLowerCase()).filter(Boolean));
+      // Diff against current items by channel + siteCode (codes repeat across retailers)
       let newCount = 0;
       let existingCount = 0;
       for (const r of records) {
-        if (r.siteCode && existingCodes.has(r.siteCode.toLowerCase())) existingCount++;
+        if (existingFor(r)) existingCount++;
         else newCount++;
       }
 
@@ -332,10 +340,9 @@ export default function StoresPage() {
 
       if (mode === 'append') {
         // POST only records whose siteCode doesn't exist yet
-        const existingCodes = new Set(items.map(s => s.siteCode.toLowerCase()).filter(Boolean));
-        const toAdd = records.filter(r => !r.siteCode || !existingCodes.has(r.siteCode.toLowerCase()));
+        const toAdd = records.filter(r => !existingFor(r));
         if (toAdd.length === 0) {
-          notify('No new stores to add — all site codes already exist');
+          notify('No new stores to add — every channel + site code already exists');
           setImportModalOpen(false);
           return;
         }
@@ -351,17 +358,12 @@ export default function StoresPage() {
           notify('Import failed', 'error');
         }
       } else if (mode === 'update') {
-        // Merge: for matched siteCode, spread file data over existing (keep id + createdAt); add unmatched as new
-        const codeMap = new Map<string, Store>();
-        for (const s of items) {
-          if (s.siteCode) codeMap.set(s.siteCode.toLowerCase(), s);
-        }
+        // Merge: for matched channel + siteCode, spread file data over existing (keep id + createdAt); add unmatched as new
         const merged: (Store | Record<string, unknown>)[] = [...items]; // start with all existing
         const updatedIds = new Set<string>();
         let addedCount = 0;
         for (const r of records) {
-          const key = r.siteCode?.toLowerCase();
-          const existing = key ? codeMap.get(key) : undefined;
+          const existing = existingFor(r);
           if (existing) {
             // Update in place
             const idx = merged.findIndex((m) => (m as Store).id === existing.id);
@@ -845,7 +847,7 @@ export default function StoresPage() {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
             <h2 className="text-base font-bold text-gray-900 mb-1">Import Stores</h2>
             <p className="text-sm text-gray-500 mb-5">
-              {importStats.totalFile} rows parsed from file — {importStats.existingCount} match existing site codes, {importStats.newCount} are new.
+              {importStats.totalFile} rows parsed from file — {importStats.existingCount} match an existing store (same channel + site code), {importStats.newCount} are new.
             </p>
 
             <div className="flex flex-col gap-3">

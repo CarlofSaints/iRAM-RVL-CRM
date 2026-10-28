@@ -8,6 +8,7 @@ import { logAudit } from '@/lib/auditLog';
 import { sendUnreturnedSkipEmail, sendUnreturnedStockEmail } from '@/lib/email';
 import { generateUnreturnedStockExcel } from '@/lib/unreturnedStockExcel';
 import { readStoreRefs, formatStoreRef, formatStoreRefs } from '@/lib/storeRefs';
+import { findStoreByCode } from '@/lib/storeMatch';
 
 export const dynamic = 'force-dynamic';
 
@@ -162,7 +163,7 @@ export async function POST(req: NextRequest) {
         [key: string]: unknown;
       }
       const stores = await loadControl<StoreRecord>('stores');
-      const store = stores.find(s => s.siteCode === slip.siteCode);
+      const store = findStoreByCode(stores, slip.siteCode, slip);
 
       // Find the collecting rep's email
       const bookedRep = users.find(u => u.id === slip.bookedRepId);
