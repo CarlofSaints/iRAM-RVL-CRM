@@ -11,6 +11,7 @@ interface ApprovalRow {
   brn?: string;
   status?: TalUnitStatus;
   previousTicket?: string;
+  alreadyApproved?: boolean;
   problem: string;
 }
 
@@ -35,14 +36,16 @@ export default function TalApproval() {
     const data = await res.json().catch(() => ({}));
     setBusy(false);
     if (!res.ok) return setMsg({ ok: false, text: data.error || 'Could not read the approval' });
-    setRows(data.rows ?? []);
+    const got: ApprovalRow[] = data.rows ?? [];
+    // After saving, the saved rows read as approved so the Save button goes away.
+    setRows(dryRun ? got : got.map((r) => (r.problem ? r : { ...r, alreadyApproved: true })));
     if (!dryRun) {
       setMsg({ ok: true, text: `${data.saved ?? 0} unit(s) approved for return. They can now be scanned below.` });
       setText('');
     }
   };
 
-  const usable = rows?.filter((r) => !r.problem).length ?? 0;
+  const usable = rows?.filter((r) => !r.problem && !r.alreadyApproved).length ?? 0;
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 flex flex-col gap-3">
@@ -83,7 +86,7 @@ export default function TalApproval() {
                     <td className="px-3 py-2 font-mono">{r.rrn}</td>
                     <td className="px-3 py-2">{r.description || '—'}</td>
                     <td className="px-3 py-2 font-mono">{r.brn ?? '—'}</td>
-                    <td className="px-3 py-2">{r.problem || (r.status ? TAL_STATUS_LABELS[r.status] : '')}</td>
+                    <td className="px-3 py-2">{r.problem || (r.alreadyApproved ? 'Approved' : r.status ? TAL_STATUS_LABELS[r.status] : '')}</td>
                   </tr>
                 ))}
               </tbody>

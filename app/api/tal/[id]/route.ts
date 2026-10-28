@@ -3,7 +3,7 @@ import { requirePermission } from '@/lib/rolesData';
 import { loadUsers } from '@/lib/userData';
 import { listTalBookings, mutateTalBookings } from '@/lib/talData';
 import { resolveWarehouseAccess, denyIfOutOfScope } from '@/lib/warehouseScopeServer';
-import { normCode, NOT_FIXED_REASONS, type NotFixedReason } from '@/lib/talShared';
+import { normCode, unitLabel, NOT_FIXED_REASONS, TAL_STATUS_LABELS, type NotFixedReason } from '@/lib/talShared';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +18,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 /**
  * PATCH /api/tal/[id]
+ *  { unitTicket: { rrn, ticket } } — set one unit's Zendesk ticket by hand.
  *  { unrepairable: string[], reason, note } — mark units BSC kept as Unrepairable.
  *    Units left behind stay "Receipted by BSC" until someone does this, because
  *    BSC may still release them on a later collection.
@@ -30,6 +31,32 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body: Record<string, unknown> = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const me = (await loadUsers()).find((u) => u.id === guard.userId);
   const byName = me ? `${me.name} ${me.surname}` : 'Unknown';
+
+  // A no-RRN unit (or one an approval email failed to name) gets its ticket by hand.
+  if ('unitTicket' in body) {
+    const ut = (body.unitTicket ?? {}) as { rrn?: unknown; ticket?: unknown };
+    const rrn = normCode(ut.rrn);
+    const ticket = normCode(ut.ticket).replace(/^#/, '');
+    if (!/^\d{4,20}$/.test(ticket)) return NextResponse.json({ error: 'Enter the Zendesk ticket number (digits only)' }, { status: 400 });
+    const access = await resolveWarehouseAccess(guard.userId);
+    return mutateTalBookings<NextResponse>((all) => {
+      const b = all.find((x) => x.id === id);
+      const u = b?.units.find((x) => x.rrn === rrn);
+      if (!b || !u) return { result: NextResponse.json({ error: 'Unit not found on this booking' }, { status: 404 }) };
+      if (u.status === 'returned_tal' || u.status === 'rejected_new') {
+        return { result: NextResponse.json({ error: `This unit is "${TAL_STATUS_LABELS[u.status]}"` }, { status: 400 }) };
+      }
+      const denied = denyIfOutOfScope(access, [u.warehouseName], 'Recording the Zendesk ticket');
+      if (denied) return { result: denied };
+      const now = new Date().toISOString();
+      const note = `Zendesk ticket ${ticket} set by hand${u.returnTicket ? ` (was ${u.returnTicket})` : ''}`;
+      u.history.push({ at: now, byUserId: guard.userId, byName, note });
+      b.history.push({ at: now, byUserId: guard.userId, byName, note: `${unitLabel(u)}: ${note}` });
+      u.returnTicket = ticket;
+      b.updatedAt = now;
+      return { save: all, result: NextResponse.json({ booking: b }) };
+    });
+  }
 
   const reason = String(body.reason ?? '') as NotFixedReason;
   if (!Object.hasOwn(NOT_FIXED_REASONS, reason)) return NextResponse.json({ error: 'Choose why BSC did not fix the unit(s)' }, { status: 400 });

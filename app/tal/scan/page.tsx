@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { openAuthedPdf } from '@/lib/openAuthedPdf';
 import {
   TAL_STAGES, TAL_STATUS_LABELS, TAL_REGIONS, regionOf, talStage, openSlots, expectedUnits, normCode, returnFormAnswers,
   type TalBooking, type TalScan, type TalUnit, type TalRegion,
@@ -242,23 +243,14 @@ function TalScanInner() {
     setRows([]); setSecurityCode('');
   };
 
-  /** Opened as a blob: the API needs the auth header, which a plain link cannot send. */
   const openDeliveryNote = async (at: string) => {
     if (!booking) return;
-    const res = await authFetch(`/api/tal/${booking.id}/delivery-note?at=${encodeURIComponent(at)}`);
-    if (!res.ok) return deny('No delivery note', (await res.json().catch(() => ({}))).error || 'Could not make the delivery note');
-    const url = URL.createObjectURL(await res.blob());
-    if (!window.open(url, '_blank')) {
-      const a = document.createElement('a');
-      a.href = url; a.download = `${booking.brn} - BSC drop-off.pdf`;
-      document.body.appendChild(a); a.click(); a.remove();
-    }
+    const err = await openAuthedPdf(`/api/tal/${booking.id}/delivery-note?at=${encodeURIComponent(at)}`, `${booking.brn} - BSC drop-off.pdf`);
+    if (err) deny('No delivery note', err);
   };
 
   const forms = returned.length
-    ? returnFormAnswers(returned.map((m) => m.unit), {
-      deliveryDate, vehicleReg, region: returned[0].region ?? 'GAU', supplierName: returned[0].supplierName?.replace(/\s*\(?pty\)?\s*ltd\.?/i, ''),
-    })
+    ? returnFormAnswers(returned.map((m) => ({ ...m.unit, region: m.region, supplierName: m.supplierName })), { deliveryDate, vehicleReg })
     : [];
 
   const scanBox = (

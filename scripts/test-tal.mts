@@ -150,16 +150,32 @@ assert.deepEqual(approval.map((a) => [a.ticket, a.rrn, a.description]), [
 
 const form = returnFormAnswers(
   [
-    { rrn: 'RRN-A', returnTicket: '1', description: 'Jigsaw' },
-    { rrn: 'NO-RRN-1-1', noRrn: true, returnTicket: '1', description: 'Drill' },
-    { rrn: 'RRN-C', returnTicket: '2' },
+    { rrn: 'RRN-A', returnTicket: '1', description: 'Jigsaw', region: 'GAU', supplierName: 'Robert Bosch Pty Ltd' },
+    { rrn: 'NO-RRN-1-1', noRrn: true, returnTicket: '1', description: 'Drill', region: 'GAU' },
+    { rrn: 'RRN-C', returnTicket: '2', region: 'CPT' },
   ],
-  { deliveryDate: '2026-10-05', region: 'GAU', vehicleReg: 'MH89NXGP' },
+  { deliveryDate: '2026-10-05', vehicleReg: 'MH89NXGP' },
 );
 assert.equal(form.length, 2);
 assert.match(form[0].text, /Delivery Date: 05\.10\.2026/);
 assert.match(form[0].text, /RRN Reference: RRN-A \/ NO RRN/);
 assert.match(form[0].text, /Item Description: Jigsaw \/ Drill/);
+assert.match(form[0].text, /Supplier Name: ROBERT BOSCH\n/);
 assert.match(form[1].text, /Ticket Reference: #2/);
+assert.match(form[1].text, /Warehouse: Cape Town/, 'each ticket uses its own booking DC');
+assert.match(returnFormAnswers([{ rrn: 'R', returnTicket: '1' }], { deliveryDate: '' })[0].text, /Delivery Date: \n/, 'blank date stays blank');
+
+// A no-RRN scan never steals a unit scanned by RRN in the same session, and says which RRN it took.
+const lost: TalBooking = {
+  id: 'b3', brn: 'TALLOST', instructions: [{ instructionNo: '555555555', qty: 2 }], createdAt: now, updatedAt: now, history: [],
+  units: ['RRN-L1', 'RRN-L2'].map((rrn) => ({ rrn, instructionNo: '555555555', status: 'receipted_bsc' as const, statusAt: now, history: [] })),
+};
+u = applyUnitScans([lost], st('collect_bsc'), [
+  { instructionNo: '555555555', rrn: '', noRrn: true, description: 'label gone' }, { instructionNo: '', rrn: 'RRN-L1' },
+], actor, now);
+assert.ok(u.ok, u.errors.join('; '));
+assert.deepEqual(u.moved.map((m) => m.unit.rrn), ['RRN-L1', 'RRN-L2']);
+assert.match(u.moved[1].unit.history.at(-1)!.note!, /taken as RRN-L2/);
+assert.equal(talStage('receipt_repaired')!.key, 'collect_bsc', 'old bookmark opens the step that does the work');
 
 console.log('test-tal: all checks passed');

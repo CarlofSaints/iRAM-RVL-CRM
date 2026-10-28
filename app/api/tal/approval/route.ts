@@ -37,11 +37,13 @@ export async function POST(req: NextRequest) {
       else if (u.status === 'rejected_new') problem = TAL_STATUS_LABELS.rejected_new;
       return {
         ...it, brn: b?.brn, status: u?.status, warehouseName: u?.warehouseName,
-        previousTicket: u?.returnTicket && u.returnTicket !== it.ticket ? u.returnTicket : undefined, problem,
+        previousTicket: u?.returnTicket && u.returnTicket !== it.ticket ? u.returnTicket : undefined,
+        // Re-pasting a thread that holds an email already loaded must not log it again.
+        alreadyApproved: u?.returnTicket === it.ticket, problem,
       };
     });
-    const usable = rows.filter((r) => !r.problem);
-    if (body.dryRun || !usable.length) return { result: NextResponse.json({ rows }) };
+    const usable = rows.filter((r) => !r.problem && !r.alreadyApproved);
+    if (body.dryRun || !usable.length) return { result: NextResponse.json({ rows, saved: 0 }) };
 
     const denied = denyIfOutOfScope(access, usable.map((r) => r.warehouseName), 'Recording the Takealot approval');
     if (denied) return { result: denied };

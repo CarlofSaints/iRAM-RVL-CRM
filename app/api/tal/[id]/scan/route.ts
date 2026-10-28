@@ -3,7 +3,7 @@ import { requirePermission } from '@/lib/rolesData';
 import { denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 import { mutateTalBookings } from '@/lib/talData';
 import { resolveTalActor } from '@/lib/talActor';
-import { applyScan, talStage, normCode, type TalScan } from '@/lib/talShared';
+import { applyScan, talStage, normCode, TAL_IN_WAREHOUSE, type TalScan } from '@/lib/talShared';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!b) return { result: NextResponse.json({ error: 'Booking not found' }, { status: 404 }) };
     // Units already in a warehouse can only be moved by someone with access to it.
     const scanned = new Set(scans.map((s) => normCode(s.rrn)));
-    const held = b.units.filter((u) => scanned.has(u.rrn) && u.warehouseName).map((u) => u.warehouseName);
+    const held = b.units.filter((u) => scanned.has(u.rrn) && TAL_IN_WAREHOUSE.includes(u.status)).map((u) => u.warehouseName);
     const denied = denyIfOutOfScope(access, held, stage.label);
     if (denied) return { result: denied };
 

@@ -4,6 +4,7 @@ import { use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { openAuthedPdf } from '@/lib/openAuthedPdf';
 import {
   TAL_STATUS_LABELS, TAL_STATUS_BADGE, TAL_IN_WAREHOUSE, TAL_REGIONS, NOT_FIXED_REASONS, statusCounts, daysSince, openSlots,
   unitLocation, regionOf, unitsToBillTal, type TalBooking, type TalStatus, type NotFixedReason,
@@ -21,6 +22,7 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
   const [note, setNote] = useState('');
   const [reason, setReason] = useState<NotFixedReason | ''>('');
   const [busy, setBusy] = useState(false);
+  const [ticketDraft, setTicketDraft] = useState<Record<string, string>>({});
   const canManage = (session?.permissions ?? []).includes('manage_pick_slips');
 
   const load = useCallback(async () => {
@@ -45,16 +47,23 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
     setB(data.booking); setPicked(new Set()); setNote(''); setReason('');
   };
 
-  /** Opened as a blob: the API needs the auth header, which a plain link cannot send. */
+  /** For a no-RRN unit, which an approval email can never name. */
+  const setUnitTicket = async (rrn: string) => {
+    setBusy(true); setError('');
+    const res = await authFetch(`/api/tal/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ unitTicket: { rrn, ticket: ticketDraft[rrn] ?? '' } }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setBusy(false);
+    if (!res.ok) return setError(data.error || 'Update failed');
+    setB(data.booking); setTicketDraft((d) => ({ ...d, [rrn]: '' }));
+  };
+
   const openDeliveryNote = async (at: string) => {
-    const res = await authFetch(`/api/tal/${id}/delivery-note?at=${encodeURIComponent(at)}`);
-    if (!res.ok) return setError((await res.json().catch(() => ({}))).error || 'Could not make the delivery note');
-    const url = URL.createObjectURL(await res.blob());
-    if (!window.open(url, '_blank')) {
-      const a = document.createElement('a');
-      a.href = url; a.download = `${b?.brn ?? 'booking'} - BSC drop-off.pdf`;
-      document.body.appendChild(a); a.click(); a.remove();
-    }
+    const err = await openAuthedPdf(`/api/tal/${id}/delivery-note?at=${encodeURIComponent(at)}`, `${b?.brn ?? 'booking'} - BSC drop-off.pdf`);
+    if (err) setError(err);
   };
 
   const remove = async () => {
@@ -150,7 +159,17 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
                       <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${TAL_STATUS_BADGE[u.status]}`}>{TAL_STATUS_LABELS[u.status]}</span>
                         {u.notFixedReason && <div className="text-xs text-gray-500 mt-0.5">{NOT_FIXED_REASONS[u.notFixedReason].label}</div>}
                       </td>
-                      <td className="px-4 py-2 font-mono">{u.returnTicket ? `#${u.returnTicket}` : '—'}</td>
+                      <td className="px-4 py-2 font-mono">
+                        {u.returnTicket ? `#${u.returnTicket}` : canManage && u.noRrn && u.status !== 'returned_tal' && u.status !== 'rejected_new' ? (
+                          <span className="flex gap-1">
+                            <input value={ticketDraft[u.rrn] ?? ''} onChange={(e) => setTicketDraft((d) => ({ ...d, [u.rrn]: e.target.value }))}
+                              placeholder="Ticket #" aria-label={`Zendesk ticket for ${u.description ?? 'no-RRN product'}`}
+                              className="px-2 py-1 border border-gray-300 rounded text-xs w-28" />
+                            <button onClick={() => setUnitTicket(u.rrn)} disabled={busy || !(ticketDraft[u.rrn] ?? '').trim()}
+                              className="px-2 py-1 rounded text-xs font-sans font-medium bg-[var(--color-primary)] text-white disabled:opacity-50">Set</button>
+                          </span>
+                        ) : '—'}
+                      </td>
                       <td className="px-4 py-2">{fmtDateTime(u.statusAt)}</td>
                       <td className="px-4 py-2">{unitLocation(u, b)}</td>
                       <td className="px-4 py-2 text-right">{TAL_IN_WAREHOUSE.includes(u.status) ? daysSince(u.statusAt) : '—'}</td>

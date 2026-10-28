@@ -8,11 +8,9 @@ import { loadUsers } from './userData';
 import { loadControl } from './controlData';
 import { verifyReleaseCode, masterCodeAuditNote } from './releaseCodeAuth';
 import { resolveWarehouseAccess, denyIfOutOfScope } from './warehouseScopeServer';
-import type { TalStage } from './talShared';
+import type { TalStage, TalActor } from './talShared';
 
 interface Person { id: string; name?: string; surname?: string; releaseCode?: string }
-
-export interface TalActor { byUserId?: string; byName?: string; repName?: string; warehouseId?: string; warehouseName?: string }
 
 export async function resolveTalActor(
   guard: { userId: string; userRole: string },

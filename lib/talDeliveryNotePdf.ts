@@ -91,8 +91,10 @@ export async function generateTalDeliveryNotePdf(p: TalDeliveryNoteParams): Prom
     let x = margin;
     doc.text(String(i + 1), x + 4, y + 5, { width: colN - 8 }); x += colN;
     doc.text(u.instructionNo, x + 4, y + 5, { width: colIns - 8 }); x += colIns;
-    doc.text(u.noRrn ? 'NO RRN' : u.rrn, x + 4, y + 5, { width: colRrn - 8, ellipsis: true }); x += colRrn;
-    doc.text(u.description || (u.noRrn ? unitLabel(u) : '—'), x + 4, y + 5, { width: colDesc - 8, ellipsis: true });
+    // ellipsis only shortens text that has a height to fit in; without one it wraps over the next rows.
+    const cell = (w: number) => ({ width: w - 8, height: rowH - 6, ellipsis: true, lineBreak: false });
+    doc.text(u.noRrn ? 'NO RRN' : u.rrn, x + 4, y + 5, cell(colRrn)); x += colRrn;
+    doc.text(u.description || (u.noRrn ? unitLabel(u) : '—'), x + 4, y + 5, cell(colDesc));
     y += rowH;
   });
   doc.rect(margin, y, usableW, 24).stroke();

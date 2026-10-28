@@ -107,7 +107,9 @@ export const TAL_STAGES: TalStage[] = [
   { key: 'return_tal', label: 'Return to TAL', from: 'repaired_iram', to: 'returned_tal', needsTicket: true, partialExpected: true, anyBooking: true },
 ];
 
-export const talStage = (key: string) => TAL_STAGES.find((s) => s.key === key);
+/** Old step links (before 28 Oct 2026) open the step that now does that work. */
+const OLD_STAGE_KEYS: Record<string, TalStageKey> = { receipt_iram: 'collect_tal', receipt_repaired: 'collect_bsc' };
+export const talStage = (key: string) => TAL_STAGES.find((s) => s.key === (OLD_STAGE_KEYS[key] ?? key));
 
 export interface TalEvent {
   /** Absent on note-only events (e.g. Zendesk ticket recorded), which move no stock. */
@@ -172,7 +174,7 @@ export interface TalScan {
   rejected?: boolean;
 }
 
-type Actor = { byUserId?: string; byName?: string; repName?: string; warehouseId?: string; warehouseName?: string };
+export type TalActor = { byUserId?: string; byName?: string; repName?: string; warehouseId?: string; warehouseName?: string };
 
 export const normCode = (s: unknown) => String(s ?? '').trim().toUpperCase();
 const cleanText = (s: unknown, max = 200) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -242,7 +244,7 @@ export function applyScan(
   stage: TalStage,
   scans: TalScan[],
   rrnsElsewhere: Set<string>,
-  actor: Actor,
+  actor: TalActor,
   now = new Date().toISOString(),
 ): ApplyScanResult {
   if (stage.anyBooking) return { ok: false, errors: [`${stage.label} is scanned unit by unit, not per booking.`], missing: [] };
@@ -354,7 +356,7 @@ export function applyUnitScans(
   all: TalBooking[],
   stage: TalStage,
   scans: TalScan[],
-  actor: Actor,
+  actor: TalActor,
   now = new Date().toISOString(),
 ): ApplyUnitScansResult {
   if (!stage.anyBooking || !stage.from) return { ok: false, errors: [`${stage.label} is scanned per booking.`], moved: [] };
@@ -363,16 +365,22 @@ export function applyUnitScans(
   const moved: ApplyUnitScansResult['moved'] = [];
   const taken = new Set<TalUnit>();
 
-  for (const raw of scans) {
+  // RRN scans first, so a no-RRN scan can only fall back to a unit nobody scanned by RRN.
+  const ordered = [...scans.filter((s) => !s.noRrn), ...scans.filter((s) => s.noRrn)];
+  for (const raw of ordered) {
     let hit: { b: TalBooking; u: TalUnit } | undefined;
     const description = cleanText(raw.description);
+    let lostLabel = '';
     if (raw.noRrn) {
       const ins = normCode(raw.instructionNo);
       const b = next.find((x) => x.instructions.some((i) => i.instructionNo === ins));
       if (!b) { errors.push(`Instruction ${ins || '(blank)'} is not on any booking.`); continue; }
       const free = b.units.filter((u) => u.instructionNo === ins && u.status === stage.from && !taken.has(u));
+      // A unit booked in with an RRN can lose its label at BSC; it is then matched on its
+      // instruction and the history says which RRN it was taken to be.
       const u = free.find((x) => x.noRrn) ?? free[0];
       if (!u) { errors.push(`Instruction ${ins} has no unit "${TAL_STATUS_LABELS[stage.from]}" left.`); continue; }
+      if (!u.noRrn) lostLabel = ` (label missing, taken as ${u.rrn})`;
       hit = { b, u };
     } else {
       const rrn = normCode(raw.rrn);
@@ -389,7 +397,7 @@ export function applyUnitScans(
     }
     const { b, u } = hit;
     if (stage.needsTicket && !u.returnTicket) {
-      errors.push(`${unitLabel(u)} has no Takealot approval (Zendesk ticket) yet. Load the approval email first.`);
+      errors.push(`${unitLabel(u)} has no Takealot approval (Zendesk ticket) yet. Load the approval email, or for a no-RRN product set its ticket on the booking page.`);
       continue;
     }
     taken.add(u);
@@ -397,7 +405,7 @@ export function applyUnitScans(
     u.statusAt = now;
     if (stage.needsRepAndWarehouse) { u.warehouseId = actor.warehouseId; u.warehouseName = actor.warehouseName; }
     if (raw.noRrn && description && !u.description) u.description = description;
-    u.history.push({ status: stage.to, at: now, ...actor, ...(raw.noRrn ? { note: `No RRN on product${description ? `: ${description}` : ''}` } : {}) });
+    u.history.push({ status: stage.to, at: now, ...actor, ...(raw.noRrn ? { note: `No RRN on product${description ? `: ${description}` : ''}${lostLabel}` } : {}) });
     moved.push({ bookingId: b.id, brn: b.brn, unit: u });
   }
 
@@ -463,21 +471,23 @@ export function parseApprovalText(text: string): ParsedApproval[] {
  * ticket, for the units being returned. Barcodes are not known to Flow.
  */
 export function returnFormAnswers(
-  units: Pick<TalUnit, 'rrn' | 'noRrn' | 'description' | 'returnTicket'>[],
-  opts: { deliveryDate: string; region: TalRegion; vehicleReg?: string; supplierName?: string },
+  /** Each unit carries its own booking's DC and supplier: one return can span bookings. */
+  units: (Pick<TalUnit, 'rrn' | 'noRrn' | 'description' | 'returnTicket'> & { region?: TalRegion; supplierName?: string })[],
+  opts: { deliveryDate: string; vehicleReg?: string },
 ): { ticket: string; text: string }[] {
   const tickets = [...new Set(units.map((u) => u.returnTicket ?? ''))];
-  const [y, m, d] = opts.deliveryDate.split('-');
+  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(opts.deliveryDate);
   return tickets.map((ticket) => {
     const us = units.filter((u) => (u.returnTicket ?? '') === ticket);
+    const supplier = (us[0].supplierName || 'Robert Bosch').replace(/\s*\(?pty\)?\s*ltd\.?/i, '').toUpperCase();
     return {
       ticket,
       text: [
-        `Delivery Date: ${d}.${m}.${y}`,
-        `Warehouse: ${TAL_REGIONS[opts.region].talAddress}`,
+        `Delivery Date: ${date ? `${date[3]}.${date[2]}.${date[1]}` : ''}`,
+        `Warehouse: ${TAL_REGIONS[us[0].region ?? 'GAU'].talAddress}`,
         'Courier Name: IRAM',
         `Vehicle / Courier Registration: ${opts.vehicleReg?.trim() || ''}`,
-        `Seller / Supplier Name: ${(opts.supplierName || 'ROBERT BOSCH').toUpperCase()}`,
+        `Seller / Supplier Name: ${supplier}`,
         `Ticket Reference: #${ticket}`,
         `RRN Reference: ${us.map((u) => (u.noRrn ? 'NO RRN' : u.rrn)).join(' / ')}`,
         'Item Barcode: ',

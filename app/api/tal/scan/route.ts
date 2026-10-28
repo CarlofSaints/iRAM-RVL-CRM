@@ -3,7 +3,7 @@ import { requirePermission } from '@/lib/rolesData';
 import { denyIfOutOfScope } from '@/lib/warehouseScopeServer';
 import { listTalBookings, mutateTalBookings } from '@/lib/talData';
 import { resolveTalActor } from '@/lib/talActor';
-import { applyUnitScans, talStage, normCode, type TalScan } from '@/lib/talShared';
+import { applyUnitScans, talStage, normCode, TAL_IN_WAREHOUSE, type TalScan } from '@/lib/talShared';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,8 +28,11 @@ export async function POST(req: NextRequest) {
   return mutateTalBookings<NextResponse>((all) => {
     const r = applyUnitScans(all, stage, scans, actor);
     if (!r.ok) return { result: NextResponse.json({ errors: r.errors }, { status: 400 }) };
-    // Units in a warehouse can only be moved by someone with access to it.
-    const was = new Map(all.flatMap((b) => b.units.map((u) => [`${b.id}|${u.rrn}`, u.warehouseName] as const)));
+    // Units in a warehouse can only be moved by someone with access to it. A unit at BSC
+    // still carries the warehouse it left from, which must not block its collection.
+    const was = new Map(all.flatMap((b) => b.units
+      .filter((u) => TAL_IN_WAREHOUSE.includes(u.status))
+      .map((u) => [`${b.id}|${u.rrn}`, u.warehouseName] as const)));
     const denied = denyIfOutOfScope(access, r.moved.map((m) => was.get(`${m.bookingId}|${m.unit.rrn}`)), stage.label);
     if (denied) return { result: denied };
     const byId = new Map(r.all!.map((b) => [b.id, b]));
