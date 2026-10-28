@@ -78,6 +78,7 @@ export default function StoresPage() {
   const [items, setItems] = useState<Store[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<ToastData | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -255,6 +256,21 @@ export default function StoresPage() {
     const res = await authFetch(`/api/control/stores?id=${item.id}`, { method: 'DELETE' });
     if (res.ok) { notify('Store deleted'); fetchAll(); }
     else notify('Failed to delete', 'error');
+  }
+
+  async function handleDeleteSelected() {
+    if (!confirm(`Delete ${selected.size} selected store${selected.size === 1 ? '' : 's'}? This cannot be undone.`)) return;
+    const res = await authFetch('/api/control/stores', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [...selected] }),
+    });
+    if (res.ok) {
+      const result = await res.json();
+      notify(`Deleted ${result.deleted} store${result.deleted === 1 ? '' : 's'}`);
+      setSelected(new Set());
+      fetchAll();
+    } else notify('Failed to delete', 'error');
   }
 
   /** Auto-add any channel names from an upload that don't already exist. */
@@ -575,10 +591,16 @@ export default function StoresPage() {
 
       {/* Table */}
       <section className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-6 pb-0">
+        <div className="p-6 pb-0 flex items-center">
           <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search by name, code, or channel..."
             className="w-full max-w-sm border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]" />
+          {selected.size > 0 && (
+            <button onClick={handleDeleteSelected}
+              className="ml-3 px-4 py-2 text-sm bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg transition-colors">
+              Delete selected ({selected.size})
+            </button>
+          )}
         </div>
         <div className="overflow-x-auto overflow-y-auto mt-4 max-h-[600px]">
           {(() => {
@@ -597,6 +619,15 @@ export default function StoresPage() {
               <table className="w-full text-sm" style={Object.keys(colWidths).length > 0 ? { tableLayout: 'fixed', minWidth: (cols.length + 1) * 100 } : undefined}>
                 <thead className="sticky top-0 z-[1]">
                   <tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="pl-6 py-3 w-8">
+                      <input type="checkbox" aria-label="Select all shown stores"
+                        checked={filtered.length > 0 && filtered.every(i => selected.has(i.id))}
+                        onChange={e => setSelected(prev => {
+                          const next = new Set(prev);
+                          for (const i of filtered) { if (e.target.checked) next.add(i.id); else next.delete(i.id); }
+                          return next;
+                        })} />
+                    </th>
                     {cols.map((col, ci) => (
                       <th
                         key={col.key}
@@ -620,6 +651,14 @@ export default function StoresPage() {
                 <tbody>
                   {filtered.map(item => (
                     <tr key={item.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                      <td className="pl-6 py-3">
+                        <input type="checkbox" aria-label={`Select ${item.name}`} checked={selected.has(item.id)}
+                          onChange={() => setSelected(prev => {
+                            const next = new Set(prev);
+                            if (next.has(item.id)) next.delete(item.id); else next.add(item.id);
+                            return next;
+                          })} />
+                      </td>
                       <td className="px-6 py-3 text-gray-600">{item.channel}</td>
                       <td className="px-6 py-3 font-medium text-gray-900">{item.name}</td>
                       <td className="px-6 py-3 text-gray-600 font-mono text-xs">{item.siteCode}</td>
@@ -638,7 +677,7 @@ export default function StoresPage() {
                     </tr>
                   ))}
                   {filtered.length === 0 && (
-                    <tr><td colSpan={cols.length + 1} className="px-6 py-8 text-center text-gray-400 text-sm">No records found</td></tr>
+                    <tr><td colSpan={cols.length + 2} className="px-6 py-8 text-center text-gray-400 text-sm">No records found</td></tr>
                   )}
                 </tbody>
               </table>
