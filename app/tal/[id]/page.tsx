@@ -4,6 +4,7 @@ import { use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth, authFetch } from '@/lib/useAuth';
+import { openAuthedPdf } from '@/lib/openAuthedPdf';
 import {
   TAL_STATUS_LABELS, TAL_STATUS_BADGE, TAL_IN_WAREHOUSE, TAL_REGIONS, NOT_FIXED_REASONS, statusCounts, daysSince, openSlots,
   unitLocation, regionOf, unitsToBillTal, type TalBooking, type TalStatus, type NotFixedReason,
@@ -20,8 +21,8 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [note, setNote] = useState('');
   const [reason, setReason] = useState<NotFixedReason | ''>('');
-  const [ticket, setTicket] = useState('');
   const [busy, setBusy] = useState(false);
+  const [ticketDraft, setTicketDraft] = useState<Record<string, string>>({});
   const canManage = (session?.permissions ?? []).includes('manage_pick_slips');
 
   const load = useCallback(async () => {
@@ -46,17 +47,23 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
     setB(data.booking); setPicked(new Set()); setNote(''); setReason('');
   };
 
-  const saveTicket = async () => {
+  /** For a no-RRN unit, which an approval email can never name. */
+  const setUnitTicket = async (rrn: string) => {
     setBusy(true); setError('');
     const res = await authFetch(`/api/tal/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ returnTicket: ticket }),
+      body: JSON.stringify({ unitTicket: { rrn, ticket: ticketDraft[rrn] ?? '' } }),
     });
     const data = await res.json().catch(() => ({}));
     setBusy(false);
     if (!res.ok) return setError(data.error || 'Update failed');
-    setB(data.booking); setTicket('');
+    setB(data.booking); setTicketDraft((d) => ({ ...d, [rrn]: '' }));
+  };
+
+  const openDeliveryNote = async (at: string) => {
+    const err = await openAuthedPdf(`/api/tal/${id}/delivery-note?at=${encodeURIComponent(at)}`, `${b?.brn ?? 'booking'} - BSC drop-off.pdf`);
+    if (err) setError(err);
   };
 
   const remove = async () => {
@@ -69,6 +76,7 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
   if (!b) return <div className="text-gray-500">Loading…</div>;
   const counts = statusCounts(b);
   const toBill = unitsToBillTal(b);
+  const drops = b.history.filter((h) => h.status === 'receipted_bsc');
 
   return (
     <div className="flex flex-col gap-5 max-w-6xl">
@@ -96,20 +104,14 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
 
       {error && <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{error}</div>}
 
-      {(b.returnTicket || canManage) && (
+      {drops.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
-          <span className="font-medium text-gray-700">Takealot Zendesk ticket (return approval)</span>
-          <span className="font-mono">{b.returnTicket || <span className="text-gray-400">not received yet</span>}</span>
-          {canManage && (
-            <>
-              <div className="flex-1" />
-              <input value={ticket} onChange={(e) => setTicket(e.target.value)} placeholder={b.returnTicket ? 'Change ticket number' : 'Ticket number'}
-                aria-label="Zendesk ticket number" className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-48" />
-              <button onClick={saveTicket} disabled={busy || !ticket.trim()} className="px-4 py-2 rounded-lg text-sm font-medium bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-50">
-                Save ticket
-              </button>
-            </>
-          )}
+          <span className="font-medium text-gray-700">BSC Drop-off delivery notes</span>
+          {drops.map((h) => (
+            <button key={h.at} onClick={() => openDeliveryNote(h.at)} className="px-3 py-1.5 rounded-lg text-sm border border-gray-300 hover:bg-gray-50">
+              {fmtDateTime(h.at)}
+            </button>
+          ))}
         </div>
       )}
 
@@ -133,7 +135,9 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
                   <tr>
                     {canManage && <th className="px-4 py-2 w-8" />}
                     <th className="px-4 py-2">RRN</th>
+                    <th className="px-4 py-2">Description</th>
                     <th className="px-4 py-2">Status</th>
+                    <th className="px-4 py-2">Zendesk ticket</th>
                     <th className="px-4 py-2">Since</th>
                     <th className="px-4 py-2">Location</th>
                     <th className="px-4 py-2 text-right">Days in WH</th>
@@ -150,9 +154,21 @@ export default function TalBookingPage({ params }: { params: Promise<{ id: strin
                           )}
                         </td>
                       )}
-                      <td className="px-4 py-2 font-mono">{u.rrn}</td>
+                      <td className="px-4 py-2 font-mono">{u.noRrn ? <span className="text-amber-700">No RRN on Product</span> : u.rrn}</td>
+                      <td className="px-4 py-2">{u.description || '—'}</td>
                       <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-xs font-medium ${TAL_STATUS_BADGE[u.status]}`}>{TAL_STATUS_LABELS[u.status]}</span>
                         {u.notFixedReason && <div className="text-xs text-gray-500 mt-0.5">{NOT_FIXED_REASONS[u.notFixedReason].label}</div>}
+                      </td>
+                      <td className="px-4 py-2 font-mono">
+                        {u.returnTicket ? `#${u.returnTicket}` : canManage && u.noRrn && u.status !== 'returned_tal' && u.status !== 'rejected_new' ? (
+                          <span className="flex gap-1">
+                            <input value={ticketDraft[u.rrn] ?? ''} onChange={(e) => setTicketDraft((d) => ({ ...d, [u.rrn]: e.target.value }))}
+                              placeholder="Ticket #" aria-label={`Zendesk ticket for ${u.description ?? 'no-RRN product'}`}
+                              className="px-2 py-1 border border-gray-300 rounded text-xs w-28" />
+                            <button onClick={() => setUnitTicket(u.rrn)} disabled={busy || !(ticketDraft[u.rrn] ?? '').trim()}
+                              className="px-2 py-1 rounded text-xs font-sans font-medium bg-[var(--color-primary)] text-white disabled:opacity-50">Set</button>
+                          </span>
+                        ) : '—'}
                       </td>
                       <td className="px-4 py-2">{fmtDateTime(u.statusAt)}</td>
                       <td className="px-4 py-2">{unitLocation(u, b)}</td>

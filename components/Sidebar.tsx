@@ -90,12 +90,10 @@ export default function Sidebar({ session, onLogout }: SidebarProps) {
   const talLinks: Array<{ href: string; label: string; perm: string }> = [
     { href: '/tal', label: 'Bookings', perm: 'view_aged_stock' },
     { href: '/tal/import', label: '1.) Load Booking PDF', perm: 'import_excel' },
-    { href: '/tal/scan?stage=collect_tal', label: '2.) Collect at TAL', perm: 'scan_stock' },
-    { href: '/tal/scan?stage=receipt_iram', label: '3.) Receipt into iRam', perm: 'scan_stock' },
-    { href: '/tal/scan?stage=receipt_bsc', label: '4.) Receipt at BSC', perm: 'scan_stock' },
-    { href: '/tal/scan?stage=collect_bsc', label: '5.) Collect from BSC', perm: 'scan_stock' },
-    { href: '/tal/scan?stage=receipt_repaired', label: '6.) Receipt repaired', perm: 'scan_stock' },
-    { href: '/tal/scan?stage=return_tal', label: '7.) Return to TAL', perm: 'scan_stock' },
+    { href: '/tal/scan?stage=collect_tal', label: '2.) Collected from TAL', perm: 'scan_stock' },
+    { href: '/tal/scan?stage=receipt_bsc', label: '3.) BSC Drop-off', perm: 'scan_stock' },
+    { href: '/tal/scan?stage=collect_bsc', label: '4.) Collected from BSC', perm: 'scan_stock' },
+    { href: '/tal/scan?stage=return_tal', label: '5.) Return to TAL', perm: 'scan_stock' },
   ];
   const visibleTalLinks = talLinks.filter(l => has(l.perm));
   const showTalSection = visibleTalLinks.length > 0;
