@@ -177,15 +177,18 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ t
 
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');
-  if (!id) {
+  // Bulk delete: no ?id, body { ids: [...] }
+  const body = id ? null : await req.json().catch(() => null);
+  const ids = new Set<string>(id ? [id] : Array.isArray(body?.ids) ? body.ids.filter((x: unknown) => typeof x === 'string') : []);
+  if (!ids.size) {
     return NextResponse.json({ error: 'Missing id' }, { status: 400 });
   }
 
   const items = await loadControl<Record<string, unknown>>(type);
-  const filtered = items.filter(i => i.id !== id);
+  const filtered = items.filter(i => !ids.has(i.id as string));
   if (filtered.length === items.length) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
   await saveControl(type, filtered);
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, deleted: items.length - filtered.length });
 }
