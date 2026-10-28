@@ -14,6 +14,7 @@ import {
   isWarehouseAllowed,
   type WarehouseRecord,
 } from '@/lib/warehouseScope';
+import { findStoreByCode } from '@/lib/storeMatch';
 
 export const dynamic = 'force-dynamic';
 
@@ -115,11 +116,6 @@ export async function GET(req: NextRequest) {
   // until a pick slip is generated. Scope them via the store's linkedWarehouse
   // so a warehouse-restricted user's dashboard doesn't show the whole country's
   // aged stock. Keyed the same way pick-slip generation keys it.
-  const storeWarehouseByCode = new Map(
-    stores
-      .filter(s => !!s.siteCode)
-      .map(s => [String(s.siteCode).trim().toLowerCase(), s.linkedWarehouse ?? ''])
-  );
   // The masterfile count tile should reflect what this user can actually reach.
   controlCounts.warehouses = whScope.all
     ? warehouses.length
@@ -140,7 +136,7 @@ export async function GET(req: NextRequest) {
       const clientVendors = (client as ClientWithLinks).vendorNumbers ?? [];
       for (const r of full.rows) {
         if (!whScope.all) {
-          const storeWh = storeWarehouseByCode.get((r.siteCode ?? '').trim().toLowerCase());
+          const storeWh = findStoreByCode(stores, r.siteCode, r)?.linkedWarehouse ?? '';
           if (!isWarehouseAllowed(whScope, storeWh, resolveStrict)) continue;
         }
         rows.push({

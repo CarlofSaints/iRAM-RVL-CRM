@@ -8,6 +8,7 @@ import StatusBadge from '@/components/StatusBadge';
 import { validRevertTargets, clearedStageDescriptions } from '@/lib/pickSlipRevert';
 import { provinceName } from '@/lib/region';
 import { readStoreRefs, normaliseStoreRefs, matchesRefSearch, type StoreRef } from '@/lib/storeRefs';
+import { findStoreByCode } from '@/lib/storeMatch';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -415,49 +416,37 @@ export default function PickingSlipsPage() {
     return Array.from(set).sort();
   }, [slips]);
 
-  // siteCode → channel lookup from stores control data
-  const channelBySiteCode = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const s of stores) {
-      if (s.siteCode && s.channel) map.set(s.siteCode.trim().toLowerCase(), s.channel);
-    }
-    return map;
-  }, [stores]);
+  // slip → its store in control data (channel + name settle shared site codes)
+  const storeOf = useCallback(
+    (s: SlipDto) => findStoreByCode(stores, s.siteCode, s),
+    [stores]
+  );
 
   const channelOptions = useMemo(() => {
     const set = new Set<string>();
     for (const s of slips) {
-      const ch = channelBySiteCode.get(s.siteCode.trim().toLowerCase());
+      const ch = storeOf(s)?.channel;
       if (ch) set.add(ch);
     }
     return Array.from(set).sort();
-  }, [slips, channelBySiteCode]);
+  }, [slips, storeOf]);
 
   // siteCode → province lookup, same store control data as the channel one
   // above. A pick slip carries no region of its own, so a store missing from
   // control data reads blank here rather than guessing.
-  const regionBySiteCode = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const s of stores) {
-      const prov = provinceName(s.region);
-      if (s.siteCode && prov) map.set(s.siteCode.trim().toLowerCase(), prov);
-    }
-    return map;
-  }, [stores]);
-
   const regionOf = useCallback(
-    (s: SlipDto) => regionBySiteCode.get(s.siteCode.trim().toLowerCase()) ?? '',
-    [regionBySiteCode]
+    (s: SlipDto) => provinceName(storeOf(s)?.region ?? ''),
+    [storeOf]
   );
 
   const regionOptions = useMemo(() => {
     const set = new Set<string>();
     for (const s of slips) {
-      const r = regionBySiteCode.get(s.siteCode.trim().toLowerCase());
+      const r = regionOf(s);
       if (r) set.add(r);
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [slips, regionBySiteCode]);
+  }, [slips, regionOf]);
 
   // Everything except the status filter — shared by the grid and the
   // "hidden delivered" hint so both narrow the list the same way.
@@ -468,8 +457,7 @@ export default function PickingSlipsPage() {
     if (clientNameFilter && s.clientName !== clientNameFilter) return false;
     if (vendorFilter && s.vendorNumber !== vendorFilter) return false;
     if (channelFilter) {
-      const ch = channelBySiteCode.get(s.siteCode.trim().toLowerCase());
-      if (ch !== channelFilter) return false;
+      if (storeOf(s)?.channel !== channelFilter) return false;
     }
     if (regionFilter && regionOf(s) !== regionFilter) return false;
     if (sq) {
@@ -482,7 +470,7 @@ export default function PickingSlipsPage() {
     if (typeFilter === 'manual' && !s.manual) return false;
     if (typeFilter === 'loaded' && s.manual) return false;
     return true;
-  }, [clientFilter, clientNameFilter, vendorFilter, channelFilter, channelBySiteCode, regionFilter, regionOf, storeQuery, refQuery, typeFilter]);
+  }, [clientFilter, clientNameFilter, vendorFilter, channelFilter, storeOf, regionFilter, regionOf, storeQuery, refQuery, typeFilter]);
 
   // A store/ref text search means the user is hunting for a specific slip.
   const searching = storeQuery.trim() !== '' || refQuery.trim() !== '';

@@ -11,6 +11,7 @@ import {
   formatStoreRef,
   type StoreRef,
 } from '@/lib/storeRefs';
+import { findStoreByCode } from '@/lib/storeMatch';
 
 interface SlipDto {
   id: string;
@@ -330,8 +331,8 @@ export default function ReceiptCapturePage() {
         const res = await authFetch('/api/control/stores', { cache: 'no-store' });
         if (!res.ok || cancelled) return;
         const stores = await res.json();
-        const match = (stores as Array<{ siteCode: string; iramRepEmailSecondary?: string }>)
-          .find(s => s.siteCode === slip.siteCode);
+        const match = findStoreByCode(stores as Array<{ siteCode: string; name: string; channel: string; iramRepEmailSecondary?: string }>,
+          slip.siteCode, slip);
         if (match?.iramRepEmailSecondary && !cancelled) {
           setStoreRepEmailSecondary(match.iramRepEmailSecondary);
         }

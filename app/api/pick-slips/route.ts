@@ -20,6 +20,7 @@ import {
   isWarehouseAllowed,
   type WarehouseRecord,
 } from '@/lib/warehouseScope';
+import { findStoreByCode } from '@/lib/storeMatch';
 
 export const dynamic = 'force-dynamic';
 
@@ -98,13 +99,8 @@ export async function GET(req: NextRequest) {
   // Site code → canonical province, for the province filter. Stores are one
   // cheap control-file read; pick slips carry no region of their own.
   const stores = await loadControl<StoreRecord>('stores');
-  const provinceBySite = new Map<string, string>();
-  for (const s of stores) {
-    const code = (s.siteCode ?? '').trim().toUpperCase();
-    if (code) provinceBySite.set(code, provinceName(s.region ?? ''));
-  }
-  const provinceOf = (siteCode: string) =>
-    provinceBySite.get((siteCode ?? '').trim().toUpperCase()) ?? '';
+  const provinceOf = (slip: { siteCode: string; siteName?: string; channel?: string }) =>
+    provinceName(findStoreByCode(stores, slip.siteCode, slip)?.region ?? '');
 
   // ── facets ────────────────────────────────────────────────────────────────
   // Built entirely from control files and the per-client load INDEX. No run
@@ -149,7 +145,7 @@ export async function GET(req: NextRequest) {
           .map(c => ({ id: c.id, name: c.name, vendorNumbers: c.vendorNumbers ?? [] }))
           .sort((a, b) => a.name.localeCompare(b.name)),
         batches,
-        provinces: [...new Set([...provinceBySite.values()].filter(Boolean))].sort(),
+        provinces: [...new Set(stores.map(s => provinceName(s.region ?? '')).filter(Boolean))].sort(),
         // Stores come off the control file, so the picker offers every store
         // rather than only ones that happen to have a slip — the user is
         // choosing what to look for, not browsing what exists.
@@ -288,7 +284,7 @@ export async function GET(req: NextRequest) {
     // A pick slip carries no region of its own — it comes off the store control
     // record. Resolved here so every consumer gets the same canonical province
     // rather than each re-deriving it from a free-text region code.
-    const base: Record<string, unknown> = { ...rest, province: provinceOf(slip.siteCode) };
+    const base: Record<string, unknown> = { ...rest, province: provinceOf(slip) };
     if (withSignatures && deliverySignature) base.deliverySignature = deliverySignature;
     if (q.mode === 'summary') {
       base.productCount = new Set((rows ?? []).map(r => r.articleCode || r.barcode)).size;
@@ -309,7 +305,7 @@ export async function GET(req: NextRequest) {
 function matchesQuery(
   slip: PickSlipRecord,
   q: PickSlipQuery,
-  provinceOf: (siteCode: string) => string
+  provinceOf: (slip: PickSlipRecord) => string
 ): boolean {
   if (q.slipIds.length && !q.slipIds.includes(slip.id)) return false;
   if (q.vendorNumbers.length && !q.vendorNumbers.includes(slip.vendorNumber)) return false;
@@ -321,7 +317,7 @@ function matchesQuery(
     if (!q.warehouseCodes.some(c => c.toUpperCase() === wh)) return false;
   }
 
-  if (q.provinces.length && !q.provinces.includes(provinceOf(slip.siteCode))) return false;
+  if (q.provinces.length && !q.provinces.includes(provinceOf(slip))) return false;
 
   // Reference search: a substring of either number on any of the slip's
   // references. Case-insensitive and trimmed on both sides, because these are
