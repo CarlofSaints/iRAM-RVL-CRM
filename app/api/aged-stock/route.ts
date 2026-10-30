@@ -111,7 +111,8 @@ export async function GET(req: NextRequest) {
         const unitCost = ur.pickSlipQty > 0
           ? (slip.rows.find(r => r.articleCode === ur.articleCode)?.val ?? 0) / ur.pickSlipQty
           : 0;
-        const key = `${slip.clientId}|${slip.siteCode}|${ur.articleCode}`;
+        // Keyed by load too: a loss belongs to the load its slip was cut from, not to every later load of the same store+article.
+        const key = `${slip.clientId}|${run.loadId}|${slip.siteCode}|${ur.articleCode}`;
         if (!losses[key]) losses[key] = { lossQty: 0, lossVal: 0 };
         losses[key].lossQty += totalLoss;
         losses[key].lossVal += totalLoss * unitCost;

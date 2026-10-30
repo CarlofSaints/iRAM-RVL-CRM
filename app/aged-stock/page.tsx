@@ -170,7 +170,7 @@ export default function AgedStockDashboardPage() {
     for (const r of filtered) {
       qty += r.qty;
       val += r.val;
-      const key = `${r.clientId}|${r.siteCode}|${r.articleCode}`;
+      const key = `${r.clientId}|${r.loadId}|${r.siteCode}|${r.articleCode}`;
       if (!seenKeys.has(key)) {
         seenKeys.add(key);
         const loss = losses[key];
