@@ -177,6 +177,7 @@ export default function DeliveryConfirmationPage() {
   // No signal when the page first loaded the delivery details.
   const [loadFailedOffline, setLoadFailedOffline] = useState(false);
   const sendingRef = useRef(false);
+  const [sending, setSending] = useState(false);
   const justFailedRef = useRef(false);
 
   // ── Load slip data ──
@@ -371,10 +372,16 @@ export default function DeliveryConfirmationPage() {
   async function sendSignOff(payload: PendingSignOff['payload'], isRetry: boolean) {
     if (sendingRef.current) return;
     sendingRef.current = true;
+    setSending(true);
     let failure = '';
+    // A stalled request on weak signal must not block every later try (the
+    // sendingRef guard would make "Send now" silently do nothing).
+    const abort = new AbortController();
+    const timer = window.setTimeout(() => abort.abort(), 60000);
     try {
       const res = await fetch(`/api/delivery/${token}`, {
         method: 'POST',
+        signal: abort.signal,
         headers: { 'Content-Type': 'application/json' },
         // A queued sign-off is sent without its capture time on the first try
         // only; once saved, the time it was filled in is what matters.
@@ -413,16 +420,20 @@ export default function DeliveryConfirmationPage() {
     } catch {
       failure = typeof navigator !== 'undefined' && navigator.onLine === false
         ? 'No signal on this phone.'
-        : 'Could not reach the server.';
+        : abort.signal.aborted
+          ? 'Took too long (weak signal).'
+          : 'Could not reach the server.';
     } finally {
+      window.clearTimeout(timer);
       sendingRef.current = false;
+      setSending(false);
     }
 
     // Could not get through: keep it on the phone.
     const kept: PendingSignOff = {
       savedAt: pending?.savedAt ?? new Date().toISOString(),
       payload,
-      lastError: failure,
+      lastError: `${failure} (${fmtDateTime(new Date().toISOString())})`,
     };
     setPendingNotStored(!writePending(token, kept));
     justFailedRef.current = true; // don't fire a second attempt straight away
@@ -527,9 +538,10 @@ export default function DeliveryConfirmationPage() {
           <button
             type="button"
             onClick={() => sendSignOff(pending.payload, true)}
-            className="w-full py-3 bg-[#7CC042] text-white rounded-xl text-base font-bold hover:bg-[#5a9a2e]"
+            disabled={sending}
+            className="w-full py-3 bg-[#7CC042] text-white rounded-xl text-base font-bold hover:bg-[#5a9a2e] disabled:opacity-60"
           >
-            Send now
+            {sending ? 'Sending…' : 'Send now'}
           </button>
         </div>
       </div>
