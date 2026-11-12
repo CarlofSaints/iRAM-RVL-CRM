@@ -563,17 +563,21 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
   const dnMinRowH = 40;
   const dnHeaderH = 20;
 
-  // Header
-  ensureSpace(dnHeaderH + dnMinRowH);
-  let colX = tableX;
-  doc.font('Helvetica-Bold').fontSize(8);
+  // Header (redrawn at the top of each continuation page)
   const dnHeaders = ['Pick Slip / Store', 'GRN/GRV (Return Order) & Date', 'Boxes', 'Value'];
-  for (let c = 0; c < dnCols.length; c++) {
-    doc.rect(colX, y, dnCols[c], dnHeaderH).stroke();
-    doc.text(dnHeaders[c], colX + 4, y + 6, { width: dnCols[c] - 8, align: c >= 2 ? 'right' : 'left' });
-    colX += dnCols[c];
-  }
-  y += dnHeaderH;
+  const drawDnHeader = () => {
+    let hx = tableX;
+    doc.font('Helvetica-Bold').fontSize(8);
+    for (let c = 0; c < dnCols.length; c++) {
+      doc.rect(hx, y, dnCols[c], dnHeaderH).stroke();
+      doc.text(dnHeaders[c], hx + 4, y + 6, { width: dnCols[c] - 8, align: c >= 2 ? 'right' : 'left' });
+      hx += dnCols[c];
+    }
+    y += dnHeaderH;
+  };
+  ensureSpace(dnHeaderH + dnMinRowH);
+  drawDnHeader();
+  let colX = tableX;
 
   // Rows — one per slip
   for (const slip of slips) {
@@ -589,8 +593,19 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
     const refText = formatStoreRefs(slipRefs) || '—';
     doc.font('Helvetica').fontSize(8);
     const refH = doc.heightOfString(refText, { width: dnCols[1] - 8 });
-    const dnRowH = Math.max(dnMinRowH, refH + (slip.receiptGrnDate ? 22 : 12));
-    ensureSpace(dnRowH + 6);
+    // a long store name wraps too
+    const storeLabel = `${slip.siteName} (${slip.siteCode})`;
+    const nameH = doc.heightOfString(storeLabel, { width: dnCols[0] - 8 });
+    const dnRowH = Math.max(
+      dnMinRowH,
+      refH + (slip.receiptGrnDate ? 22 : 12),
+      17 + nameH + (slip.manual ? 14 : 6),
+    );
+    if (y + dnRowH + 6 > pageH - marginB) {
+      doc.addPage();
+      y = marginT;
+      drawDnHeader();
+    }
 
     colX = tableX;
     // cell heights are uniform; draw all borders first
@@ -603,10 +618,10 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
     doc.font('Helvetica-Bold').fontSize(8).fillColor('#000000');
     doc.text(slip.pickSlipId, tableX + 4, y + 5, { width: dnCols[0] - 8 });
     doc.font('Helvetica').fontSize(8);
-    doc.text(`${slip.siteName} (${slip.siteCode})`, tableX + 4, y + 17, { width: dnCols[0] - 8 });
+    doc.text(storeLabel, tableX + 4, y + 17, { width: dnCols[0] - 8 });
     if (slip.manual) {
       doc.font('Helvetica-Bold').fontSize(6).fillColor('#CC0000');
-      doc.text('MANUAL CAPTURE', tableX + 4, y + 29, { width: dnCols[0] - 8 });
+      doc.text('MANUAL CAPTURE', tableX + 4, y + 19 + nameH, { width: dnCols[0] - 8 });
       doc.fillColor('#000000');
     }
 
