@@ -220,9 +220,11 @@ export async function generateDeliveryNotePdf(params: DeliveryNotePdfParams): Pr
   if (refPairs.length > 0 || receiptGrnDate) {
     doc.font('Helvetica-Bold').fontSize(10);
     const refText = formatStoreRefs(refPairs) || '—';
-    doc.text(`GRN/GRV: ${refText}${receiptGrnDate ? `   |   Date: ${receiptGrnDate}` : ''}`, leftX, y, { width: usableW });
+    const grnLine = `GRN/GRV: ${refText}${receiptGrnDate ? `   |   Date: ${receiptGrnDate}` : ''}`;
+    doc.text(grnLine, leftX, y, { width: usableW });
+    // grow with the text: a long list wraps to several lines
+    y += Math.max(16, doc.heightOfString(grnLine, { width: usableW }) + 4);
     doc.font('Helvetica').fontSize(10);
-    y += 16;
   }
 
   // Manual/Uploaded indicator
@@ -558,26 +560,52 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
   const dnCols = dnColWidths.map(w => Math.round(w * dnScale));
   const dnSum = dnCols.reduce((a, b) => a + b, 0);
   dnCols[dnCols.length - 1] += (Math.round(usableW) - dnSum);
-  const dnRowH = 40;
+  const dnMinRowH = 40;
   const dnHeaderH = 20;
 
-  // Header
-  ensureSpace(dnHeaderH + dnRowH);
-  let colX = tableX;
-  doc.font('Helvetica-Bold').fontSize(8);
+  // Header (redrawn at the top of each continuation page)
   const dnHeaders = ['Pick Slip / Store', 'GRN/GRV (Return Order) & Date', 'Boxes', 'Value'];
-  for (let c = 0; c < dnCols.length; c++) {
-    doc.rect(colX, y, dnCols[c], dnHeaderH).stroke();
-    doc.text(dnHeaders[c], colX + 4, y + 6, { width: dnCols[c] - 8, align: c >= 2 ? 'right' : 'left' });
-    colX += dnCols[c];
-  }
-  y += dnHeaderH;
+  const drawDnHeader = () => {
+    let hx = tableX;
+    doc.font('Helvetica-Bold').fontSize(8);
+    for (let c = 0; c < dnCols.length; c++) {
+      doc.rect(hx, y, dnCols[c], dnHeaderH).stroke();
+      doc.text(dnHeaders[c], hx + 4, y + 6, { width: dnCols[c] - 8, align: c >= 2 ? 'right' : 'left' });
+      hx += dnCols[c];
+    }
+    y += dnHeaderH;
+  };
+  ensureSpace(dnHeaderH + dnMinRowH);
+  drawDnHeader();
+  let colX = tableX;
 
   // Rows — one per slip
   for (const slip of slips) {
     const slipVal = documentValue(slip.receiptValue, slip.rows);
     grandVal += slipVal;
-    ensureSpace(dnRowH + 6);
+
+    // Row grows to fit the GRN/GRV list — aged-stock returns (Vermont) can carry
+    // 8+ documents per store, which overflowed a fixed 40pt row into the next one.
+    const slipRefs =
+      slip.refs && slip.refs.length > 0
+        ? slip.refs
+        : slip.storeRefs.map(g => ({ grn: g, returnOrder: '' }));
+    const refText = formatStoreRefs(slipRefs) || '—';
+    doc.font('Helvetica').fontSize(8);
+    const refH = doc.heightOfString(refText, { width: dnCols[1] - 8 });
+    // a long store name wraps too
+    const storeLabel = `${slip.siteName} (${slip.siteCode})`;
+    const nameH = doc.heightOfString(storeLabel, { width: dnCols[0] - 8 });
+    const dnRowH = Math.max(
+      dnMinRowH,
+      refH + (slip.receiptGrnDate ? 22 : 12),
+      17 + nameH + (slip.manual ? 14 : 6),
+    );
+    if (y + dnRowH + 6 > pageH - marginB) {
+      doc.addPage();
+      y = marginT;
+      drawDnHeader();
+    }
 
     colX = tableX;
     // cell heights are uniform; draw all borders first
@@ -590,24 +618,20 @@ export async function generateMultiSlipDeliveryNotePdf(params: MultiSlipDelivery
     doc.font('Helvetica-Bold').fontSize(8).fillColor('#000000');
     doc.text(slip.pickSlipId, tableX + 4, y + 5, { width: dnCols[0] - 8 });
     doc.font('Helvetica').fontSize(8);
-    doc.text(`${slip.siteName} (${slip.siteCode})`, tableX + 4, y + 17, { width: dnCols[0] - 8 });
+    doc.text(storeLabel, tableX + 4, y + 17, { width: dnCols[0] - 8 });
     if (slip.manual) {
       doc.font('Helvetica-Bold').fontSize(6).fillColor('#CC0000');
-      doc.text('MANUAL CAPTURE', tableX + 4, y + 29, { width: dnCols[0] - 8 });
+      doc.text('MANUAL CAPTURE', tableX + 4, y + 19 + nameH, { width: dnCols[0] - 8 });
       doc.fillColor('#000000');
     }
 
     // Col 1: GRN/GRV + date
     const c1x = tableX + dnCols[0];
     doc.font('Helvetica').fontSize(8);
-    const slipRefs =
-      slip.refs && slip.refs.length > 0
-        ? slip.refs
-        : slip.storeRefs.map(g => ({ grn: g, returnOrder: '' }));
-    doc.text(formatStoreRefs(slipRefs) || '—', c1x + 4, y + 5, { width: dnCols[1] - 8 });
+    doc.text(refText, c1x + 4, y + 5, { width: dnCols[1] - 8 });
     if (slip.receiptGrnDate) {
       doc.fillColor('#555555');
-      doc.text(`Date: ${slip.receiptGrnDate}`, c1x + 4, y + 22, { width: dnCols[1] - 8 });
+      doc.text(`Date: ${slip.receiptGrnDate}`, c1x + 4, y + 7 + refH, { width: dnCols[1] - 8 });
       doc.fillColor('#000000');
     }
 
